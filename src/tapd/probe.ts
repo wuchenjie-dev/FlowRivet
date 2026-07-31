@@ -1,11 +1,11 @@
 import type { FlowRivetConfig } from "../config.js";
-import type { DoctorProbe, ProbeResult } from "../doctor.js";
+import type { ProbeResult } from "../doctor.js";
 
 interface TapdProbeOptions {
   fetcher?: typeof fetch;
 }
 
-export class TapdDoctorProbe implements DoctorProbe {
+export class TapdDoctorProbe {
   private readonly fetcher: typeof fetch;
 
   constructor(options: TapdProbeOptions = {}) {

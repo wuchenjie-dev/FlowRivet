@@ -14,6 +14,9 @@ const env = {
   TAPD_SOURCE_WORKSPACE_ID: "56536239",
   TAPD_SANDBOX_WORKSPACE_ID: "50396062",
   FLOWRIVET_POC_OWNER: "wuchenjie",
+  FEISHU_API_ENDPOINT: "https://open.feishu.cn/open-apis",
+  FEISHU_APP_ID: "cli_test",
+  FEISHU_APP_SECRET: "feishu-secret",
 };
 
 class CliFieldAdmin implements FieldAdmin, PocStoryAdmin {
@@ -48,6 +51,7 @@ class CliFieldAdmin implements FieldAdmin, PocStoryAdmin {
 const passingProbe: DoctorProbe = {
   checkPersonalAccess: async () => ({ ok: true, detail: "source readable" }),
   checkAdminAccess: async () => ({ ok: true, detail: "sandbox writable" }),
+  checkFeishuAccess: async () => ({ ok: true, detail: "Feishu app authenticated" }),
 };
 
 function dependencies(admin: CliFieldAdmin): CliDependencies {

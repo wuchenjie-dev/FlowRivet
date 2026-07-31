@@ -8,10 +8,11 @@ export interface ProbeResult {
 export interface DoctorProbe {
   checkPersonalAccess(config: FlowRivetConfig): Promise<ProbeResult>;
   checkAdminAccess(config: FlowRivetConfig): Promise<ProbeResult>;
+  checkFeishuAccess(config: FlowRivetConfig): Promise<ProbeResult>;
 }
 
 export interface DoctorCheck extends ProbeResult {
-  code: "CONFIG_ISOLATED" | "PERSONAL_AUTH" | "ADMIN_AUTH";
+  code: "CONFIG_ISOLATED" | "PERSONAL_AUTH" | "ADMIN_AUTH" | "FEISHU_AUTH";
 }
 
 export interface DoctorReport {
@@ -36,6 +37,7 @@ export async function runDoctor(
     },
     { code: "PERSONAL_AUTH", ...(await probe.checkPersonalAccess(config)) },
     { code: "ADMIN_AUTH", ...(await probe.checkAdminAccess(config)) },
+    { code: "FEISHU_AUTH", ...(await probe.checkFeishuAccess(config)) },
   ];
 
   return { ok: checks.every((check) => check.ok), checks };

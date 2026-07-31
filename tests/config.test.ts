@@ -9,6 +9,9 @@ const validEnv = {
   TAPD_API_PASSWORD: "api-password",
   TAPD_SOURCE_WORKSPACE_ID: "56536239",
   TAPD_SANDBOX_WORKSPACE_ID: "50396062",
+  FEISHU_API_ENDPOINT: "https://open.feishu.cn/open-apis",
+  FEISHU_APP_ID: "cli_test",
+  FEISHU_APP_SECRET: "feishu-secret",
 };
 
 describe("loadConfig", () => {
@@ -23,6 +26,12 @@ describe("loadConfig", () => {
   it("rejects missing administrator credentials", () => {
     expect(() => loadConfig({ ...validEnv, TAPD_API_PASSWORD: undefined })).toThrow(
       /TAPD_API_PASSWORD/,
+    );
+  });
+
+  it("rejects missing Feishu application credentials", () => {
+    expect(() => loadConfig({ ...validEnv, FEISHU_APP_SECRET: undefined })).toThrow(
+      /FEISHU_APP_SECRET/,
     );
   });
 

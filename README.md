@@ -11,6 +11,7 @@ FlowRivet 使用 Codex 串联 TAPD、飞书和 GitLab，建立从产品需求、
 - TAPD 需求分页读取和项目级动态字段映射。
 - 用户 VOC 与技术、质量、安全等替代证据的准入门禁。
 - 三类脱敏 ABF 需求的批量 PoC 评估。
+- 飞书自建应用鉴权检查，结果不暴露 access token。
 
 ## 环境要求
 
@@ -24,6 +25,7 @@ FlowRivet 使用 Codex 串联 TAPD、飞书和 GitLab，建立从产品需求、
 $token = Read-Host "TAPD 个人 Token"
 $apiUser = Read-Host "TAPD API 账号"
 $apiPassword = Read-Host "TAPD API 口令"
+$feishuSecret = Read-Host "飞书 App Secret"
 
 [Environment]::SetEnvironmentVariable("TAPD_TOKEN", $token, "User")
 [Environment]::SetEnvironmentVariable("TAPD_API_USER", $apiUser, "User")
@@ -32,7 +34,11 @@ $apiPassword = Read-Host "TAPD API 口令"
 [Environment]::SetEnvironmentVariable("TAPD_SOURCE_WORKSPACE_ID", "56536239", "User")
 [Environment]::SetEnvironmentVariable("TAPD_SANDBOX_WORKSPACE_ID", "50396062", "User")
 [Environment]::SetEnvironmentVariable("FLOWRIVET_POC_OWNER", "你的TAPD用户名", "User")
+[Environment]::SetEnvironmentVariable("FEISHU_APP_ID", "你的飞书App ID", "User")
+[Environment]::SetEnvironmentVariable("FEISHU_APP_SECRET", $feishuSecret, "User")
 ```
+
+以上用户环境变量仅用于本地 POC。正式插件不得要求终端用户持有企业 API 密码或飞书 App Secret；这些凭据应由远程 FlowRivet MCP 从 Secret Manager 注入，Codex 只连接带身份认证和审计的 MCP 服务。详见 [凭据安全架构](./docs/architecture/credential-boundary.md)。
 
 ## 使用
 

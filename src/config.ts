@@ -10,6 +10,9 @@ const environmentSchema = z.object({
   FLOWRIVET_DRY_RUN: z.enum(["true", "false"]).default("true"),
   FLOWRIVET_ALLOW_LIVE_WRITES: z.enum(["true", "false"]).default("false"),
   FLOWRIVET_POC_OWNER: z.string().min(1).optional(),
+  FEISHU_API_ENDPOINT: z.url().default("https://open.feishu.cn/open-apis"),
+  FEISHU_APP_ID: z.string().min(1),
+  FEISHU_APP_SECRET: z.string().min(1),
 });
 
 export interface FlowRivetConfig {
@@ -22,6 +25,9 @@ export interface FlowRivetConfig {
   dryRun: boolean;
   allowLiveWrites: boolean;
   pocOwner?: string;
+  feishuApiEndpoint: string;
+  feishuAppId: string;
+  feishuAppSecret: string;
 }
 
 export function loadConfig(
@@ -49,5 +55,8 @@ export function loadConfig(
     dryRun: parsed.FLOWRIVET_DRY_RUN === "true",
     allowLiveWrites,
     pocOwner: parsed.FLOWRIVET_POC_OWNER,
+    feishuApiEndpoint: parsed.FEISHU_API_ENDPOINT.replace(/\/$/, ""),
+    feishuAppId: parsed.FEISHU_APP_ID,
+    feishuAppSecret: parsed.FEISHU_APP_SECRET,
   };
 }

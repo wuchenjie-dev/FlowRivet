@@ -10,6 +10,7 @@ import { POC_REQUIREMENTS, seedPocRequirements, type PocStoryAdmin } from "./poc
 import { initializeFields, type FieldAdmin } from "./tapd/fields.js";
 import { TapdDoctorProbe } from "./tapd/probe.js";
 import { TapdReadClient, type RequirementReader } from "./tapd/read-client.js";
+import { FeishuClient } from "./feishu/client.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -25,7 +26,19 @@ export interface CliResult {
 }
 
 const defaultDependencies: CliDependencies = {
-  createDoctorProbe: () => new TapdDoctorProbe(),
+  createDoctorProbe: (config) => {
+    const tapd = new TapdDoctorProbe();
+    const feishu = new FeishuClient({
+      endpoint: config.feishuApiEndpoint,
+      appId: config.feishuAppId,
+      appSecret: config.feishuAppSecret,
+    });
+    return {
+      checkPersonalAccess: (current) => tapd.checkPersonalAccess(current),
+      checkAdminAccess: (current) => tapd.checkAdminAccess(current),
+      checkFeishuAccess: () => feishu.checkAccess(),
+    };
+  },
   createFieldAdmin: (config) =>
     TapdClient.forAdmin({
       endpoint: config.apiEndpoint,

@@ -11,6 +11,9 @@ const config = {
   sandboxWorkspaceId: "50396062",
   dryRun: true,
   allowLiveWrites: false,
+  feishuApiEndpoint: "https://open.feishu.cn/open-apis",
+  feishuAppId: "cli_test",
+  feishuAppSecret: "feishu-secret",
 };
 
 describe("runDoctor", () => {
@@ -18,6 +21,7 @@ describe("runDoctor", () => {
     const probe: DoctorProbe = {
       checkPersonalAccess: async () => ({ ok: true, detail: "source readable" }),
       checkAdminAccess: async () => ({ ok: true, detail: "sandbox writable" }),
+      checkFeishuAccess: async () => ({ ok: true, detail: "Feishu app authenticated" }),
     };
 
     const report = await runDoctor(config, probe);
@@ -27,6 +31,7 @@ describe("runDoctor", () => {
       "CONFIG_ISOLATED",
       "PERSONAL_AUTH",
       "ADMIN_AUTH",
+      "FEISHU_AUTH",
     ]);
   });
 
@@ -34,12 +39,16 @@ describe("runDoctor", () => {
     const probe: DoctorProbe = {
       checkPersonalAccess: async () => ({ ok: true, detail: "source readable" }),
       checkAdminAccess: async () => ({ ok: false, detail: "sandbox forbidden" }),
+      checkFeishuAccess: async () => ({ ok: true, detail: "Feishu app authenticated" }),
     };
 
     const report = await runDoctor(config, probe);
 
     expect(report.ok).toBe(false);
-    expect(report.checks.at(-1)).toMatchObject({ code: "ADMIN_AUTH", ok: false });
+    expect(report.checks.find((check) => check.code === "ADMIN_AUTH")).toMatchObject({
+      code: "ADMIN_AUTH",
+      ok: false,
+    });
     expect(JSON.stringify(report)).not.toContain("secret");
   });
 });
