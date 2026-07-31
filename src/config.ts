@@ -1,0 +1,50 @@
+import { z } from "zod";
+
+const environmentSchema = z.object({
+  TAPD_API_ENDPOINT: z.url().default("https://api.tapd.cn"),
+  TAPD_TOKEN: z.string().min(1),
+  TAPD_API_USER: z.string().min(1),
+  TAPD_API_PASSWORD: z.string().min(1),
+  TAPD_SOURCE_WORKSPACE_ID: z.string().regex(/^\d+$/),
+  TAPD_SANDBOX_WORKSPACE_ID: z.string().regex(/^\d+$/),
+  FLOWRIVET_DRY_RUN: z.enum(["true", "false"]).default("true"),
+  FLOWRIVET_ALLOW_LIVE_WRITES: z.enum(["true", "false"]).default("false"),
+});
+
+export interface FlowRivetConfig {
+  apiEndpoint: string;
+  personalToken: string;
+  apiUser: string;
+  apiPassword: string;
+  sourceWorkspaceId: string;
+  sandboxWorkspaceId: string;
+  dryRun: boolean;
+  allowLiveWrites: boolean;
+}
+
+export function loadConfig(
+  environment: Record<string, string | undefined> = process.env,
+): FlowRivetConfig {
+  const parsed = environmentSchema.parse(environment);
+  const allowLiveWrites = parsed.FLOWRIVET_ALLOW_LIVE_WRITES === "true";
+
+  if (
+    parsed.TAPD_SOURCE_WORKSPACE_ID === parsed.TAPD_SANDBOX_WORKSPACE_ID &&
+    !allowLiveWrites
+  ) {
+    throw new Error(
+      "TAPD_SOURCE_WORKSPACE_ID and TAPD_SANDBOX_WORKSPACE_ID must be different",
+    );
+  }
+
+  return {
+    apiEndpoint: parsed.TAPD_API_ENDPOINT.replace(/\/$/, ""),
+    personalToken: parsed.TAPD_TOKEN,
+    apiUser: parsed.TAPD_API_USER,
+    apiPassword: parsed.TAPD_API_PASSWORD,
+    sourceWorkspaceId: parsed.TAPD_SOURCE_WORKSPACE_ID,
+    sandboxWorkspaceId: parsed.TAPD_SANDBOX_WORKSPACE_ID,
+    dryRun: parsed.FLOWRIVET_DRY_RUN === "true",
+    allowLiveWrites,
+  };
+}

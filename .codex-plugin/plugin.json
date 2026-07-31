@@ -1,0 +1,25 @@
+{
+  "name": "flowrivet",
+  "version": "0.1.0",
+  "description": "Connect Codex with TAPD, Feishu, and GitLab for governed delivery workflows.",
+  "author": {
+    "name": "wuchenjie-dev",
+    "url": "https://github.com/wuchenjie-dev"
+  },
+  "homepage": "https://github.com/wuchenjie-dev/FlowRivet",
+  "repository": "https://github.com/wuchenjie-dev/FlowRivet",
+  "keywords": ["tapd", "feishu", "gitlab", "workflow", "codex"],
+  "interface": {
+    "displayName": "FlowRivet",
+    "shortDescription": "Govern product-to-delivery workflows.",
+    "longDescription": "FlowRivet checks TAPD workflow gates and connects product requirements with Feishu collaboration and GitLab delivery evidence.",
+    "developerName": "wuchenjie-dev",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "检查 FlowRivet 环境和 TAPD 项目权限。",
+      "预览 TAPD 需求字段初始化结果。",
+      "检查需求准入和准出门禁。"
+    ]
+  }
+}
