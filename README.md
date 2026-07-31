@@ -31,6 +31,7 @@ $apiPassword = Read-Host "TAPD API 口令"
 [Environment]::SetEnvironmentVariable("TAPD_API_ENDPOINT", "https://api.tapd.cn", "User")
 [Environment]::SetEnvironmentVariable("TAPD_SOURCE_WORKSPACE_ID", "56536239", "User")
 [Environment]::SetEnvironmentVariable("TAPD_SANDBOX_WORKSPACE_ID", "50396062", "User")
+[Environment]::SetEnvironmentVariable("FLOWRIVET_POC_OWNER", "你的TAPD用户名", "User")
 ```
 
 ## 使用
@@ -41,15 +42,20 @@ npm run build
 node dist/src/cli.js doctor
 node dist/src/cli.js tapd init-fields
 node dist/src/cli.js tapd check-admission <requirement-id>
+node dist/src/cli.js tapd seed-poc
+node dist/src/cli.js tapd verify-poc
 ```
 
 字段初始化默认仅预览。确认目标是沙箱项目后，显式应用：
 
 ```powershell
 node dist/src/cli.js tapd init-fields --apply
+node dist/src/cli.js tapd seed-poc --apply
 ```
 
-`check-admission` 是只读命令。门禁通过时退出码为 `0`，门禁阻断时退出码为 `3`，接口或配置错误时退出码为 `1`。
+`seed-poc` 默认仅预览，只有 `--apply` 才会创建三条带 `[FLOWRIVET_POC]` 前缀的脱敏需求；重复执行会跳过同名需求。`check-admission` 和 `verify-poc` 是只读命令。门禁通过时退出码为 `0`，门禁阻断时退出码为 `3`，接口或配置错误时退出码为 `1`。
+
+首次使用不依赖浏览器会话。个人 Token 和企业 API 账号只需保存为用户环境变量；重新打开终端或 Codex 后，运行 `doctor` 验证凭据与两个项目的权限边界。若沙箱成员不同，只需修改 `FLOWRIVET_POC_OWNER`，不要把用户名写死在代码中。
 
 完整 PoC 范围、门禁和 E2E 验证矩阵见 [poc.md](./poc.md)。
 

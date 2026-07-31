@@ -26,6 +26,7 @@ FlowRivet 使用两类 TAPD 凭证，不能混用：
 | `TAPD_API_PASSWORD` | Basic Auth 口令 | 企业管理员初始化 |
 | `TAPD_SOURCE_WORKSPACE_ID` | 项目 ID | 源项目，只读 |
 | `TAPD_SANDBOX_WORKSPACE_ID` | 项目 ID | 沙箱项目，允许受控写入 |
+| `FLOWRIVET_POC_OWNER` | TAPD 用户名 | POC 需求的负责人，必须是沙箱项目成员 |
 
 Windows 用户环境初始化示例：
 
@@ -39,6 +40,7 @@ $apiPassword = Read-Host "TAPD API 口令"
 [Environment]::SetEnvironmentVariable("TAPD_API_PASSWORD", $apiPassword, "User")
 [Environment]::SetEnvironmentVariable("TAPD_SOURCE_WORKSPACE_ID", "56536239", "User")
 [Environment]::SetEnvironmentVariable("TAPD_SANDBOX_WORKSPACE_ID", "50396062", "User")
+[Environment]::SetEnvironmentVariable("FLOWRIVET_POC_OWNER", "你的TAPD用户名", "User")
 ```
 
 安装或初始化流程只能检查变量是否存在，禁止打印、记录或提交凭证值。
@@ -58,6 +60,8 @@ $apiPassword = Read-Host "TAPD API 口令"
 - 已实现 TAPD 需求分页读取、单需求读取和按字段名动态映射。
 - 已实现确定性需求准入门禁，用户需求要求 VOC，其他类型接受对应替代证据。
 - 已使用用户功能、技术架构和跨模块三类脱敏 ABF 样本验证批量评估链路。
+- 已通过 Basic API 在沙箱创建三条 POC 需求，重复执行未产生重复数据。
+- 已从 TAPD 回读三条需求并运行准入门禁：两条通过，一条按预设被成功指标和阻断问题拦截。
 
 ## 5. 沙箱字段基线
 
@@ -140,9 +144,9 @@ VOC 不是所有需求的强制条件。客户需求应提供 VOC；技术、质
 
 ## 10. 下一步
 
-1. 已完成字段初始化 CLI、`doctor`、dry-run、需求读取和准入门禁。
+1. 已完成字段初始化 CLI、`doctor`、dry-run、需求创建、沙箱回读和准入门禁。
 2. 在沙箱项目一次性配置或复制标准工作流。
-3. 使用企业 API 账号创建三类沙箱需求，补齐真实 TAPD 门禁 E2E。
+3. 将门禁结果回写 TAPD，并验证状态流转前后的准入、准出保护。
 4. 建立 TAPD 与飞书测试用户映射，验证提醒、去重和审计。
 5. 接入 GitLab 测试仓库，验证需求到 MR、CI 和验收的追溯。
 6. PoC 通过后，再申请源企业 API 账号并制定全量 ABF 迁移方案。

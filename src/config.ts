@@ -9,6 +9,7 @@ const environmentSchema = z.object({
   TAPD_SANDBOX_WORKSPACE_ID: z.string().regex(/^\d+$/),
   FLOWRIVET_DRY_RUN: z.enum(["true", "false"]).default("true"),
   FLOWRIVET_ALLOW_LIVE_WRITES: z.enum(["true", "false"]).default("false"),
+  FLOWRIVET_POC_OWNER: z.string().min(1).optional(),
 });
 
 export interface FlowRivetConfig {
@@ -20,6 +21,7 @@ export interface FlowRivetConfig {
   sandboxWorkspaceId: string;
   dryRun: boolean;
   allowLiveWrites: boolean;
+  pocOwner?: string;
 }
 
 export function loadConfig(
@@ -46,5 +48,6 @@ export function loadConfig(
     sandboxWorkspaceId: parsed.TAPD_SANDBOX_WORKSPACE_ID,
     dryRun: parsed.FLOWRIVET_DRY_RUN === "true",
     allowLiveWrites,
+    pocOwner: parsed.FLOWRIVET_POC_OWNER,
   };
 }

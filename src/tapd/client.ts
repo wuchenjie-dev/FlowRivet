@@ -1,4 +1,8 @@
 import type { CustomField, FieldAdmin, FieldDefinition } from "./fields.js";
+import type { PocStoryAdmin, PocStoryInput } from "../poc/seed.js";
+import type { Requirement } from "../domain/requirement.js";
+import type { RequirementReader } from "./read-client.js";
+import { buildFieldMapping, mapTapdStory } from "./mapper.js";
 
 interface AdminClientOptions {
   endpoint: string;
@@ -22,7 +26,7 @@ interface TapdCustomFieldConfig {
   enabled: string;
 }
 
-export class TapdClient implements FieldAdmin {
+export class TapdClient implements FieldAdmin, PocStoryAdmin, RequirementReader {
   private constructor(
     private readonly endpoint: string,
     private readonly workspaceId: string,
@@ -84,6 +88,52 @@ export class TapdClient implements FieldAdmin {
     };
   }
 
+  async findStoryByExactTitle(title: string): Promise<{ id: string } | undefined> {
+    const query = new URLSearchParams({
+      workspace_id: this.workspaceId,
+      name: title,
+      limit: "200",
+    });
+    const data = await this.request<unknown[]>(`/stories?${query.toString()}`);
+    for (const entry of data) {
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      const story =
+        record.Story && typeof record.Story === "object"
+          ? (record.Story as Record<string, unknown>)
+          : record;
+      if (story.name === title && story.id) return { id: String(story.id) };
+    }
+    return undefined;
+  }
+
+  async createStory(input: PocStoryInput): Promise<{ id: string }> {
+    const body = new URLSearchParams({
+      workspace_id: this.workspaceId,
+      name: input.name,
+      owner: input.owner,
+    });
+    for (const [field, value] of Object.entries(input.fields)) body.set(field, value);
+
+    const data = await this.request<{ Story: { id: string } }>("/stories", {
+      method: "POST",
+      body,
+    });
+    return { id: String(data.Story.id) };
+  }
+
+  async getRequirement(id: string): Promise<Requirement> {
+    const mapping = buildFieldMapping(await this.listCustomFields());
+    const query = new URLSearchParams({
+      workspace_id: this.workspaceId,
+      id,
+      limit: "1",
+    });
+    const data = await this.request<unknown[]>(`/stories?${query.toString()}`);
+    if (data.length === 0) throw new Error(`TAPD requirement ${id} not found`);
+    return mapTapdStory(unwrapStory(data[0]), mapping);
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("authorization", this.authorization);
@@ -109,4 +159,11 @@ function parseOptions(value: string | null | undefined): string[] {
   if (!value) return [];
   const parsed = JSON.parse(value) as string[] | Record<string, string>;
   return Array.isArray(parsed) ? parsed : Object.values(parsed);
+}
+
+function unwrapStory(entry: unknown): Record<string, unknown> {
+  if (!entry || typeof entry !== "object") throw new Error("Invalid TAPD story response");
+  const record = entry as Record<string, unknown>;
+  const story = record.Story;
+  return story && typeof story === "object" ? (story as Record<string, unknown>) : record;
 }
