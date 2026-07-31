@@ -43,4 +43,49 @@ describe("FeishuClient", () => {
     expect(result).toEqual({ ok: false, detail: "Feishu access failed (10003): invalid app secret" });
     expect(JSON.stringify(result)).not.toContain("app-secret");
   });
+
+  it("checks bot chat visibility without returning chat data", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", tenant_access_token: "tenant-secret-token", expire: 7200,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", data: { items: [{ chat_id: "oc_secret", name: "私密测试群" }] },
+      }));
+    const client = new FeishuClient({
+      endpoint: "https://open.feishu.cn/open-apis",
+      appId: "cli_test",
+      appSecret: "app-secret",
+      fetcher,
+    });
+
+    const result = await client.checkMessagingAccess();
+
+    expect(result).toEqual({ ok: true, detail: "Feishu bot can access 1 chat(s)" });
+    expect(JSON.stringify(result)).not.toContain("oc_secret");
+    const headers = new Headers(fetcher.mock.calls[1]?.[1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer tenant-secret-token");
+  });
+
+  it("reports missing messaging permission without exposing credentials", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", tenant_access_token: "tenant-secret-token", expire: 7200,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        code: 99991672, msg: "Access denied. One of the following scopes is required",
+      }));
+    const client = new FeishuClient({
+      endpoint: "https://open.feishu.cn/open-apis",
+      appId: "cli_test",
+      appSecret: "app-secret",
+      fetcher,
+    });
+
+    const result = await client.checkMessagingAccess();
+
+    expect(result).toMatchObject({ ok: false });
+    expect(result.detail).toContain("99991672");
+    expect(JSON.stringify(result)).not.toContain("tenant-secret-token");
+  });
 });

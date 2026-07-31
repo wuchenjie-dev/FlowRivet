@@ -10,7 +10,7 @@ import { POC_REQUIREMENTS, seedPocRequirements, type PocStoryAdmin } from "./poc
 import { initializeFields, type FieldAdmin } from "./tapd/fields.js";
 import { TapdDoctorProbe } from "./tapd/probe.js";
 import { TapdReadClient, type RequirementReader } from "./tapd/read-client.js";
-import { FeishuClient } from "./feishu/client.js";
+import { FeishuClient, type FeishuMessagingProbe } from "./feishu/client.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -18,6 +18,7 @@ export interface CliDependencies {
   createPocStoryAdmin(config: FlowRivetConfig): PocStoryAdmin;
   createRequirementReader(config: FlowRivetConfig): RequirementReader;
   createSandboxRequirementReader(config: FlowRivetConfig): RequirementReader;
+  createFeishuMessagingProbe(config: FlowRivetConfig): FeishuMessagingProbe;
 }
 
 export interface CliResult {
@@ -65,6 +66,12 @@ const defaultDependencies: CliDependencies = {
       workspaceId: config.sandboxWorkspaceId,
       apiUser: config.apiUser,
       apiPassword: config.apiPassword,
+    }),
+  createFeishuMessagingProbe: (config) =>
+    new FeishuClient({
+      endpoint: config.feishuApiEndpoint,
+      appId: config.feishuAppId,
+      appSecret: config.feishuAppSecret,
     }),
 };
 
@@ -143,6 +150,17 @@ export async function runCli(
       };
     }
 
+    if (args[0] === "feishu" && args[1] === "check-messaging" && args.length === 2) {
+      const config = loadConfig(environment);
+      const result = await dependencies
+        .createFeishuMessagingProbe(config)
+        .checkMessagingAccess();
+      return {
+        exitCode: result.ok ? 0 : 4,
+        output: JSON.stringify(result, null, 2),
+      };
+    }
+
     return usage("Unknown command");
   } catch (error) {
     return {
@@ -158,7 +176,7 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging`,
   };
 }
 

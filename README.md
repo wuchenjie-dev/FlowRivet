@@ -50,6 +50,7 @@ node dist/src/cli.js tapd init-fields
 node dist/src/cli.js tapd check-admission <requirement-id>
 node dist/src/cli.js tapd seed-poc
 node dist/src/cli.js tapd verify-poc
+node dist/src/cli.js feishu check-messaging
 ```
 
 字段初始化默认仅预览。确认目标是沙箱项目后，显式应用：
@@ -60,6 +61,8 @@ node dist/src/cli.js tapd seed-poc --apply
 ```
 
 `seed-poc` 默认仅预览，只有 `--apply` 才会创建三条带 `[FLOWRIVET_POC]` 前缀的脱敏需求；重复执行会跳过同名需求。`check-admission` 和 `verify-poc` 是只读命令。门禁通过时退出码为 `0`，门禁阻断时退出码为 `3`，接口或配置错误时退出码为 `1`。
+
+`feishu check-messaging` 是只读权限探测，只返回机器人可访问的群数量，不输出群 ID、群名、成员或 access token。消息发送必须使用显式测试群白名单。
 
 首次使用不依赖浏览器会话。个人 Token 和企业 API 账号只需保存为用户环境变量；重新打开终端或 Codex 后，运行 `doctor` 验证凭据与两个项目的权限边界。若沙箱成员不同，只需修改 `FLOWRIVET_POC_OWNER`，不要把用户名写死在代码中。
 

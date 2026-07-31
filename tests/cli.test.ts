@@ -110,6 +110,12 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
           blockerQuestions: [],
         }),
     }),
+    createFeishuMessagingProbe: () => ({
+      checkMessagingAccess: async () => ({
+        ok: true,
+        detail: "Feishu bot can access 1 chat(s)",
+      }),
+    }),
   };
 }
 
@@ -209,5 +215,16 @@ describe("runCli", () => {
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.output) as { requirements: unknown[] };
     expect(output.requirements).toHaveLength(3);
+  });
+
+  it("checks Feishu messaging access without sending messages", async () => {
+    const result = await runCli(
+      ["feishu", "check-messaging"],
+      env,
+      dependencies(new CliFieldAdmin()),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("Feishu bot can access 1 chat(s)");
   });
 });
