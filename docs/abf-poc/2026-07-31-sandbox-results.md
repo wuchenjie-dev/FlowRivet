@@ -37,3 +37,5 @@ TAPD 沙箱的字段初始化、需求创建、幂等去重、动态字段映射
 - 消息权限补充：机器人群列表接口调用成功，可访问 4 个群；检查结果未输出群数据。
 - 已创建“FlowRivet POC 验证群”并加入“阿在”机器人；API 回读后机器人可访问群数量增至 5。
 - 卡片发送命令已完成 dry-run，目标 chat_id 不出现在输出中，实发前需要显式 `--apply`。
+- 2026-08-01 已向“FlowRivet POC 验证群”实发一次卡片；API 返回成功，飞书群列表显示“阿在：FlowRivet POC 验证”。
+- 实发结果未输出 chat_id、message_id 或 access token，请求使用 `flowrivet-poc-20260801-v1` 作为幂等键。
