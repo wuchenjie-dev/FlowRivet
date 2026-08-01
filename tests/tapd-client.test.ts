@@ -133,4 +133,37 @@ describe("TapdClient", () => {
     expect(requirement.sourceType).toBe("用户VOC");
     expect(fetcher.mock.calls[1]?.[0]).toContain("id=100");
   });
+
+  it("reads and adds requirement comments with the documented TAPD fields", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        status: 1,
+        info: "success",
+        data: [{ Comment: { description: "existing" } }],
+      }))
+      .mockResolvedValueOnce(Response.json({
+        status: 1,
+        info: "success",
+        data: { Comment: { id: "comment-1" } },
+      }));
+    const client = TapdClient.forAdmin({
+      endpoint: "https://api.tapd.cn", workspaceId: "50396062",
+      apiUser: "api-user", apiPassword: "api-password", fetcher,
+    });
+
+    const comments = await client.listRequirementComments("story-1");
+    await client.addRequirementComment({
+      requirementId: "story-1",
+      author: "wuchenjie",
+      description: "<p>FlowRivet trace</p>",
+    });
+
+    expect(comments).toEqual(["existing"]);
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain("entry_type=stories");
+    const body = fetcher.mock.calls[1]?.[1]?.body as URLSearchParams;
+    expect(body.get("workspace_id")).toBe("50396062");
+    expect(body.get("entry_type")).toBe("stories");
+    expect(body.get("entry_id")).toBe("story-1");
+    expect(body.get("author")).toBe("wuchenjie");
+  });
 });

@@ -17,6 +17,10 @@ import {
 } from "./feishu/client.js";
 import { verifyIdentityBinding } from "./identity/binding.js";
 import { buildAdmissionReminder } from "./reminders/admission.js";
+import {
+  recordAdmissionReminder,
+  type RequirementCommentAdmin,
+} from "./tapd/reminder-record.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -26,6 +30,7 @@ export interface CliDependencies {
   createSandboxRequirementReader(config: FlowRivetConfig): RequirementReader;
   createFeishuMessagingProbe(config: FlowRivetConfig): FeishuMessagingProbe;
   createFeishuNotifier(config: FlowRivetConfig): FeishuNotifier;
+  createRequirementCommentAdmin(config: FlowRivetConfig): RequirementCommentAdmin;
 }
 
 export interface CliResult {
@@ -85,6 +90,13 @@ const defaultDependencies: CliDependencies = {
       endpoint: config.feishuApiEndpoint,
       appId: config.feishuAppId,
       appSecret: config.feishuAppSecret,
+    }),
+  createRequirementCommentAdmin: (config) =>
+    TapdClient.forAdmin({
+      endpoint: config.apiEndpoint,
+      workspaceId: config.sandboxWorkspaceId,
+      apiUser: config.apiUser,
+      apiPassword: config.apiPassword,
     }),
 };
 
@@ -160,6 +172,26 @@ export async function runCli(
       return {
         exitCode: passed ? 0 : 3,
         output: JSON.stringify({ workspaceId: config.sandboxWorkspaceId, passed, requirements }, null, 2),
+      };
+    }
+
+    if (args[0] === "tapd" && args[1] === "record-blocker-reminder") {
+      const unsupported = args.slice(2).filter((arg) => arg !== "--apply");
+      if (unsupported.length > 0) return usage(`Unknown option: ${unsupported[0]}`);
+      const config = loadConfig(environment);
+      const plan = await loadBlockedPocReminder(config, dependencies);
+      const result = await recordAdmissionReminder(
+        dependencies.createRequirementCommentAdmin(config),
+        plan,
+        { dryRun: !args.includes("--apply"), author: config.pocTapdUser },
+      );
+      return {
+        exitCode: 0,
+        output: JSON.stringify({
+          ...result,
+          requirementId: plan.requirementId,
+          findingCodes: plan.findings.map((finding) => finding.code),
+        }, null, 2),
       };
     }
 
@@ -256,7 +288,7 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet tapd record-blocker-reminder [--apply]\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]`,
   };
 }
 

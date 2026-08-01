@@ -5,6 +5,7 @@ import type { DoctorProbe } from "../src/doctor.js";
 import { FLOWRIVET_FIELDS, type CustomField, type FieldAdmin, type FieldDefinition } from "../src/tapd/fields.js";
 import { parseRequirement, type Requirement } from "../src/domain/requirement.js";
 import type { PocStoryAdmin, PocStoryInput } from "../src/poc/seed.js";
+import type { RequirementCommentAdmin } from "../src/tapd/reminder-record.js";
 
 const env = {
   TAPD_API_ENDPOINT: "https://api.tapd.cn",
@@ -58,6 +59,10 @@ const passingProbe: DoctorProbe = {
 };
 
 function dependencies(admin: CliFieldAdmin): CliDependencies {
+  const commentAdmin: RequirementCommentAdmin = {
+    listRequirementComments: async () => [],
+    addRequirementComment: async () => undefined,
+  };
   return {
     createDoctorProbe: () => passingProbe,
     createFieldAdmin: () => admin,
@@ -131,6 +136,7 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
           : "Blocker reminder sent",
       }),
     }),
+    createRequirementCommentAdmin: () => commentAdmin,
   };
 }
 
@@ -355,5 +361,55 @@ describe("runCli", () => {
     expect(sent.exitCode).toBe(0);
     expect(applied).toBe(true);
     expect(sent.output).toContain('"dryRun": false');
+  });
+
+  it("records the blocker reminder in TAPD only with the apply flag", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    const comments: string[] = [];
+    deps.createRequirementCommentAdmin = () => ({
+      listRequirementComments: async () => comments,
+      addRequirementComment: async ({ description }) => {
+        comments.push(description);
+      },
+    });
+    deps.createPocStoryAdmin = () => ({
+      listCustomFields: async () => [],
+      findStoryByExactTitle: async () => ({ id: "1150396062001000019" }),
+      createStory: async () => ({ id: "unused" }),
+    });
+    deps.createSandboxRequirementReader = () => ({
+      getRequirement: async () =>
+        parseRequirement({
+          id: "1150396062001000019",
+          workspaceId: "50396062",
+          title: "[FLOWRIVET_POC] 跨模块：ABF 检测结果闭环",
+          status: "规划中",
+          sourceType: "产品规划",
+          evidenceLinks: ["https://example.test/plan/poc-cross-1"],
+          targetUsers: "产品、研发和测试人员",
+          scenario: "跨模块协作",
+          problem: "缺少闭环",
+          goal: "建立闭环",
+          successMetrics: "",
+          scope: "TAPD 与飞书",
+          outOfScope: "自动审批",
+          owners: { product: "wuchenjie", development: "wuchenjie", test: "wuchenjie" },
+          blockerQuestions: ["确认身份映射"],
+        }),
+    });
+
+    const preview = await runCli(["tapd", "record-blocker-reminder"], env, deps);
+    expect(preview.exitCode).toBe(0);
+    expect(comments).toHaveLength(0);
+
+    const applied = await runCli(
+      ["tapd", "record-blocker-reminder", "--apply"],
+      env,
+      deps,
+    );
+    expect(applied.exitCode).toBe(0);
+    expect(comments).toHaveLength(1);
+    expect(applied.output).toContain('"created": true');
+    expect(applied.output).not.toContain("ou_test_user");
   });
 });

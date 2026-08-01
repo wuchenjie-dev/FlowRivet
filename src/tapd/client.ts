@@ -3,6 +3,7 @@ import type { PocStoryAdmin, PocStoryInput } from "../poc/seed.js";
 import type { Requirement } from "../domain/requirement.js";
 import type { RequirementReader } from "./read-client.js";
 import { buildFieldMapping, mapTapdStory } from "./mapper.js";
+import type { RequirementCommentAdmin } from "./reminder-record.js";
 
 interface AdminClientOptions {
   endpoint: string;
@@ -26,7 +27,7 @@ interface TapdCustomFieldConfig {
   enabled: string;
 }
 
-export class TapdClient implements FieldAdmin, PocStoryAdmin, RequirementReader {
+export class TapdClient implements FieldAdmin, PocStoryAdmin, RequirementReader, RequirementCommentAdmin {
   private constructor(
     private readonly endpoint: string,
     private readonly workspaceId: string,
@@ -132,6 +133,40 @@ export class TapdClient implements FieldAdmin, PocStoryAdmin, RequirementReader 
     const data = await this.request<unknown[]>(`/stories?${query.toString()}`);
     if (data.length === 0) throw new Error(`TAPD requirement ${id} not found`);
     return mapTapdStory(unwrapStory(data[0]), mapping);
+  }
+
+  async listRequirementComments(requirementId: string): Promise<string[]> {
+    const query = new URLSearchParams({
+      workspace_id: this.workspaceId,
+      entry_type: "stories",
+      entry_id: requirementId,
+      limit: "200",
+    });
+    const data = await this.request<unknown[]>(`/comments?${query.toString()}`);
+    return data.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const record = entry as Record<string, unknown>;
+      const comment =
+        record.Comment && typeof record.Comment === "object"
+          ? (record.Comment as Record<string, unknown>)
+          : record;
+      return typeof comment.description === "string" ? [comment.description] : [];
+    });
+  }
+
+  async addRequirementComment(input: {
+    requirementId: string;
+    author: string;
+    description: string;
+  }): Promise<void> {
+    const body = new URLSearchParams({
+      workspace_id: this.workspaceId,
+      entry_type: "stories",
+      entry_id: input.requirementId,
+      description: input.description,
+      author: input.author,
+    });
+    await this.request("/comments", { method: "POST", body });
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
