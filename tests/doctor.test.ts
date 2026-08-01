@@ -15,6 +15,8 @@ const config = {
   feishuAppId: "cli_test",
   feishuAppSecret: "feishu-secret",
   feishuTestChatId: "oc_test_chat",
+  feishuPocUserOpenId: "ou_test_user",
+  pocTapdUser: "wuchenjie",
 };
 
 describe("runDoctor", () => {

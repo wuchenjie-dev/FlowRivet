@@ -13,6 +13,8 @@ const validEnv = {
   FEISHU_APP_ID: "cli_test",
   FEISHU_APP_SECRET: "feishu-secret",
   FEISHU_TEST_CHAT_ID: "oc_test_chat",
+  FEISHU_POC_USER_OPEN_ID: "ou_test_user",
+  FLOWRIVET_POC_TAPD_USER: "wuchenjie",
 };
 
 describe("loadConfig", () => {

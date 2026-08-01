@@ -15,6 +15,7 @@ import {
   type FeishuMessagingProbe,
   type FeishuNotifier,
 } from "./feishu/client.js";
+import { verifyIdentityBinding } from "./identity/binding.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -183,6 +184,15 @@ export async function runCli(
       return { exitCode: 0, output: JSON.stringify(result, null, 2) };
     }
 
+    if (args[0] === "feishu" && args[1] === "verify-identity" && args.length === 2) {
+      const config = loadConfig(environment);
+      const result = verifyIdentityBinding({
+        tapdUser: config.pocTapdUser,
+        feishuOpenId: config.feishuPocUserOpenId,
+      });
+      return { exitCode: 0, output: JSON.stringify(result, null, 2) };
+    }
+
     return usage("Unknown command");
   } catch (error) {
     return {
@@ -198,7 +208,7 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity`,
   };
 }
 

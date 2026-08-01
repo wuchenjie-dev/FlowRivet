@@ -14,6 +14,8 @@ const environmentSchema = z.object({
   FEISHU_APP_ID: z.string().min(1),
   FEISHU_APP_SECRET: z.string().min(1),
   FEISHU_TEST_CHAT_ID: z.string().min(1),
+  FEISHU_POC_USER_OPEN_ID: z.string().min(1),
+  FLOWRIVET_POC_TAPD_USER: z.string().min(1),
 });
 
 export interface FlowRivetConfig {
@@ -30,6 +32,8 @@ export interface FlowRivetConfig {
   feishuAppId: string;
   feishuAppSecret: string;
   feishuTestChatId: string;
+  feishuPocUserOpenId: string;
+  pocTapdUser: string;
 }
 
 export function loadConfig(
@@ -61,5 +65,7 @@ export function loadConfig(
     feishuAppId: parsed.FEISHU_APP_ID,
     feishuAppSecret: parsed.FEISHU_APP_SECRET,
     feishuTestChatId: parsed.FEISHU_TEST_CHAT_ID,
+    feishuPocUserOpenId: parsed.FEISHU_POC_USER_OPEN_ID,
+    pocTapdUser: parsed.FLOWRIVET_POC_TAPD_USER,
   };
 }

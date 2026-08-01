@@ -30,6 +30,8 @@ FlowRivet 使用两类 TAPD 凭证，不能混用：
 | `FEISHU_APP_ID` | 飞书应用 ID | 本地 POC 鉴权 |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 仅本地 POC；正式环境由远程密钥服务注入 |
 | `FEISHU_TEST_CHAT_ID` | 飞书群 ID | 唯一允许发送 POC 消息的白名单群 |
+| `FEISHU_POC_USER_OPEN_ID` | 飞书 Open ID | 本地 POC 稳定用户标识，不提交到仓库 |
+| `FLOWRIVET_POC_TAPD_USER` | TAPD 用户名 | 与飞书 Open ID 显式绑定的 TAPD 账号 |
 
 Windows 用户环境初始化示例：
 
@@ -66,6 +68,7 @@ $apiPassword = Read-Host "TAPD API 口令"
 - 已通过 Basic API 在沙箱创建三条 POC 需求，重复执行未产生重复数据。
 - 已从 TAPD 回读三条需求并运行准入门禁：两条通过，一条按预设被成功指标和阻断问题拦截。
 - 已验证飞书正式自建应用“阿在”的租户鉴权，令牌有效期为 7200 秒；未读取业务数据或发送消息。
+- 已基于 TAPD 用户名和飞书 Open ID 完成显式 POC 身份绑定，未使用姓名猜测。
 
 ## 5. 沙箱字段基线
 
