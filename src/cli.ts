@@ -21,6 +21,7 @@ import {
   recordAdmissionReminder,
   type RequirementCommentAdmin,
 } from "./tapd/reminder-record.js";
+import { TapdTraceClient, type RequirementTraceReader } from "./tapd/trace-client.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -31,6 +32,7 @@ export interface CliDependencies {
   createFeishuMessagingProbe(config: FlowRivetConfig): FeishuMessagingProbe;
   createFeishuNotifier(config: FlowRivetConfig): FeishuNotifier;
   createRequirementCommentAdmin(config: FlowRivetConfig): RequirementCommentAdmin;
+  createRequirementTraceReader(config: FlowRivetConfig): RequirementTraceReader;
 }
 
 export interface CliResult {
@@ -98,6 +100,12 @@ const defaultDependencies: CliDependencies = {
       apiUser: config.apiUser,
       apiPassword: config.apiPassword,
     }),
+  createRequirementTraceReader: (config) =>
+    new TapdTraceClient({
+      endpoint: config.apiEndpoint,
+      workspaceId: config.sourceWorkspaceId,
+      personalToken: config.personalToken,
+    }),
 };
 
 export async function runCli(
@@ -134,6 +142,23 @@ export async function runCli(
       return {
         exitCode: result.passed ? 0 : 3,
         output: JSON.stringify({ requirementId: requirement.id, ...result }, null, 2),
+      };
+    }
+
+    if (args[0] === "tapd" && args[1] === "check-code-trace" && args.length === 3) {
+      const config = loadConfig(environment);
+      const commits = await dependencies
+        .createRequirementTraceReader(config)
+        .getRequirementCommits(args[2] ?? "");
+      return {
+        exitCode: commits.length > 0 ? 0 : 3,
+        output: JSON.stringify({
+          requirementId: args[2],
+          traced: commits.length > 0,
+          commitCount: commits.length,
+          repositoryCount: new Set(commits.map((commit) => commit.repositoryUrl)).size,
+          scmTypes: [...new Set(commits.map((commit) => commit.scmType))].sort(),
+        }, null, 2),
       };
     }
 
@@ -288,7 +313,7 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet tapd record-blocker-reminder [--apply]\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd check-code-trace <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet tapd record-blocker-reminder [--apply]\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]`,
   };
 }
 

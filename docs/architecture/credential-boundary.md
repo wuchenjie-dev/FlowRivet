@@ -33,6 +33,7 @@ flowchart LR
 4. 生产项目、正式群和受保护分支默认拒绝写入，需要显式策略放行。
 5. 飞书 `tenant_access_token` 只在服务内存中缓存，并在过期前刷新，不落盘。
 6. Codex 通过企业 SSO/OAuth 连接 MCP，服务端再执行用户与 TAPD、飞书、GitLab 身份映射。
+7. 内网 GitLab 仓库映射以 TAPD 项目配置为准；FlowRivet 自身的 GitHub `origin` 不参与业务项目识别。
 
 ## 本地 POC 边界
 

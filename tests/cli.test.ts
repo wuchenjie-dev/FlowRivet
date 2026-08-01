@@ -6,6 +6,7 @@ import { FLOWRIVET_FIELDS, type CustomField, type FieldAdmin, type FieldDefiniti
 import { parseRequirement, type Requirement } from "../src/domain/requirement.js";
 import type { PocStoryAdmin, PocStoryInput } from "../src/poc/seed.js";
 import type { RequirementCommentAdmin } from "../src/tapd/reminder-record.js";
+import type { RequirementTraceReader } from "../src/tapd/trace-client.js";
 
 const env = {
   TAPD_API_ENDPOINT: "https://api.tapd.cn",
@@ -62,6 +63,9 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
   const commentAdmin: RequirementCommentAdmin = {
     listRequirementComments: async () => [],
     addRequirementComment: async () => undefined,
+  };
+  const traceReader: RequirementTraceReader = {
+    getRequirementCommits: async () => [],
   };
   return {
     createDoctorProbe: () => passingProbe,
@@ -137,6 +141,7 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
       }),
     }),
     createRequirementCommentAdmin: () => commentAdmin,
+    createRequirementTraceReader: () => traceReader,
   };
 }
 
@@ -411,5 +416,25 @@ describe("runCli", () => {
     expect(comments).toHaveLength(1);
     expect(applied.output).toContain('"created": true');
     expect(applied.output).not.toContain("ou_test_user");
+  });
+
+  it("reports TAPD-managed code trace without exposing the internal repository URL", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    deps.createRequirementTraceReader = () => ({
+      getRequirementCommits: async () => [{
+        commitId: "abc123",
+        repositoryUrl: "http://gitlab.internal/team/abf",
+        ref: "refs/heads/feature/abf",
+        scmType: "gitlab",
+      }],
+    });
+
+    const result = await runCli(["tapd", "check-code-trace", "story-1"], env, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('"commitCount": 1');
+    expect(result.output).toContain('"scmTypes"');
+    expect(result.output).not.toContain("gitlab.internal");
+    expect(result.output).not.toContain("abc123");
   });
 });
