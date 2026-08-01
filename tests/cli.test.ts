@@ -17,6 +17,7 @@ const env = {
   FEISHU_API_ENDPOINT: "https://open.feishu.cn/open-apis",
   FEISHU_APP_ID: "cli_test",
   FEISHU_APP_SECRET: "feishu-secret",
+  FEISHU_TEST_CHAT_ID: "oc_test_chat",
 };
 
 class CliFieldAdmin implements FieldAdmin, PocStoryAdmin {
@@ -114,6 +115,12 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
       checkMessagingAccess: async () => ({
         ok: true,
         detail: "Feishu bot can access 1 chat(s)",
+      }),
+    }),
+    createFeishuNotifier: () => ({
+      sendPocCard: async ({ dryRun }) => ({
+        dryRun,
+        detail: dryRun ? "POC card ready for configured test chat" : "POC card sent",
       }),
     }),
   };
@@ -226,5 +233,17 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("Feishu bot can access 1 chat(s)");
+  });
+
+  it("previews the Feishu POC card by default", async () => {
+    const result = await runCli(
+      ["feishu", "send-poc-card"],
+      env,
+      dependencies(new CliFieldAdmin()),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('"dryRun": true');
+    expect(result.output).not.toContain("oc_test_chat");
   });
 });

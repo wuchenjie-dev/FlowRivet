@@ -29,6 +29,7 @@ FlowRivet 使用两类 TAPD 凭证，不能混用：
 | `FLOWRIVET_POC_OWNER` | TAPD 用户名 | POC 需求的负责人，必须是沙箱项目成员 |
 | `FEISHU_APP_ID` | 飞书应用 ID | 本地 POC 鉴权 |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 仅本地 POC；正式环境由远程密钥服务注入 |
+| `FEISHU_TEST_CHAT_ID` | 飞书群 ID | 唯一允许发送 POC 消息的白名单群 |
 
 Windows 用户环境初始化示例：
 

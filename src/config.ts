@@ -13,6 +13,7 @@ const environmentSchema = z.object({
   FEISHU_API_ENDPOINT: z.url().default("https://open.feishu.cn/open-apis"),
   FEISHU_APP_ID: z.string().min(1),
   FEISHU_APP_SECRET: z.string().min(1),
+  FEISHU_TEST_CHAT_ID: z.string().min(1),
 });
 
 export interface FlowRivetConfig {
@@ -28,6 +29,7 @@ export interface FlowRivetConfig {
   feishuApiEndpoint: string;
   feishuAppId: string;
   feishuAppSecret: string;
+  feishuTestChatId: string;
 }
 
 export function loadConfig(
@@ -58,5 +60,6 @@ export function loadConfig(
     feishuApiEndpoint: parsed.FEISHU_API_ENDPOINT.replace(/\/$/, ""),
     feishuAppId: parsed.FEISHU_APP_ID,
     feishuAppSecret: parsed.FEISHU_APP_SECRET,
+    feishuTestChatId: parsed.FEISHU_TEST_CHAT_ID,
   };
 }

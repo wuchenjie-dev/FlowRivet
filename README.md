@@ -36,6 +36,7 @@ $feishuSecret = Read-Host "飞书 App Secret"
 [Environment]::SetEnvironmentVariable("FLOWRIVET_POC_OWNER", "你的TAPD用户名", "User")
 [Environment]::SetEnvironmentVariable("FEISHU_APP_ID", "你的飞书App ID", "User")
 [Environment]::SetEnvironmentVariable("FEISHU_APP_SECRET", $feishuSecret, "User")
+[Environment]::SetEnvironmentVariable("FEISHU_TEST_CHAT_ID", "测试群chat_id", "User")
 ```
 
 以上用户环境变量仅用于本地 POC。正式插件不得要求终端用户持有企业 API 密码或飞书 App Secret；这些凭据应由远程 FlowRivet MCP 从 Secret Manager 注入，Codex 只连接带身份认证和审计的 MCP 服务。详见 [凭据安全架构](./docs/architecture/credential-boundary.md)。
@@ -51,6 +52,7 @@ node dist/src/cli.js tapd check-admission <requirement-id>
 node dist/src/cli.js tapd seed-poc
 node dist/src/cli.js tapd verify-poc
 node dist/src/cli.js feishu check-messaging
+node dist/src/cli.js feishu send-poc-card
 ```
 
 字段初始化默认仅预览。确认目标是沙箱项目后，显式应用：
@@ -63,6 +65,8 @@ node dist/src/cli.js tapd seed-poc --apply
 `seed-poc` 默认仅预览，只有 `--apply` 才会创建三条带 `[FLOWRIVET_POC]` 前缀的脱敏需求；重复执行会跳过同名需求。`check-admission` 和 `verify-poc` 是只读命令。门禁通过时退出码为 `0`，门禁阻断时退出码为 `3`，接口或配置错误时退出码为 `1`。
 
 `feishu check-messaging` 是只读权限探测，只返回机器人可访问的群数量，不输出群 ID、群名、成员或 access token。消息发送必须使用显式测试群白名单。
+
+`feishu send-poc-card` 默认仅生成预览；确认白名单群后使用 `--apply` 发送。请求携带稳定 `uuid`，重复执行不会在飞书的一小时幂等窗口内产生重复消息。
 
 首次使用不依赖浏览器会话。个人 Token 和企业 API 账号只需保存为用户环境变量；重新打开终端或 Codex 后，运行 `doctor` 验证凭据与两个项目的权限边界。若沙箱成员不同，只需修改 `FLOWRIVET_POC_OWNER`，不要把用户名写死在代码中。
 

@@ -10,7 +10,11 @@ import { POC_REQUIREMENTS, seedPocRequirements, type PocStoryAdmin } from "./poc
 import { initializeFields, type FieldAdmin } from "./tapd/fields.js";
 import { TapdDoctorProbe } from "./tapd/probe.js";
 import { TapdReadClient, type RequirementReader } from "./tapd/read-client.js";
-import { FeishuClient, type FeishuMessagingProbe } from "./feishu/client.js";
+import {
+  FeishuClient,
+  type FeishuMessagingProbe,
+  type FeishuNotifier,
+} from "./feishu/client.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -19,6 +23,7 @@ export interface CliDependencies {
   createRequirementReader(config: FlowRivetConfig): RequirementReader;
   createSandboxRequirementReader(config: FlowRivetConfig): RequirementReader;
   createFeishuMessagingProbe(config: FlowRivetConfig): FeishuMessagingProbe;
+  createFeishuNotifier(config: FlowRivetConfig): FeishuNotifier;
 }
 
 export interface CliResult {
@@ -68,6 +73,12 @@ const defaultDependencies: CliDependencies = {
       apiPassword: config.apiPassword,
     }),
   createFeishuMessagingProbe: (config) =>
+    new FeishuClient({
+      endpoint: config.feishuApiEndpoint,
+      appId: config.feishuAppId,
+      appSecret: config.feishuAppSecret,
+    }),
+  createFeishuNotifier: (config) =>
     new FeishuClient({
       endpoint: config.feishuApiEndpoint,
       appId: config.feishuAppId,
@@ -161,6 +172,17 @@ export async function runCli(
       };
     }
 
+    if (args[0] === "feishu" && args[1] === "send-poc-card") {
+      const unsupported = args.slice(2).filter((arg) => arg !== "--apply");
+      if (unsupported.length > 0) return usage(`Unknown option: ${unsupported[0]}`);
+      const config = loadConfig(environment);
+      const result = await dependencies.createFeishuNotifier(config).sendPocCard({
+        dryRun: !args.includes("--apply"),
+        chatId: config.feishuTestChatId,
+      });
+      return { exitCode: 0, output: JSON.stringify(result, null, 2) };
+    }
+
     return usage("Unknown command");
   } catch (error) {
     return {
@@ -176,7 +198,7 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]`,
   };
 }
 

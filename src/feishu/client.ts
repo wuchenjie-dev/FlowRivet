@@ -24,7 +24,16 @@ export interface FeishuMessagingProbe {
   checkMessagingAccess(): Promise<ProbeResult>;
 }
 
-export class FeishuClient implements FeishuMessagingProbe {
+export interface FeishuPocCardResult {
+  dryRun: boolean;
+  detail: string;
+}
+
+export interface FeishuNotifier {
+  sendPocCard(options: { dryRun: boolean; chatId: string }): Promise<FeishuPocCardResult>;
+}
+
+export class FeishuClient implements FeishuMessagingProbe, FeishuNotifier {
   private readonly endpoint: string;
   private readonly fetcher: typeof fetch;
 
@@ -68,6 +77,41 @@ export class FeishuClient implements FeishuMessagingProbe {
     }
   }
 
+  async sendPocCard(options: {
+    dryRun: boolean;
+    chatId: string;
+  }): Promise<FeishuPocCardResult> {
+    if (options.dryRun) {
+      return { dryRun: true, detail: "POC card ready for configured test chat" };
+    }
+
+    const token = await this.getTenantToken();
+    if (!token.ok) throw new Error(token.result.detail);
+    const response = await this.fetcher(
+      `${this.endpoint}/im/v1/messages?receive_id_type=chat_id`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token.value}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          receive_id: options.chatId,
+          msg_type: "interactive",
+          uuid: "flowrivet-poc-20260801-v1",
+          content: JSON.stringify(buildPocCard()),
+        }),
+      },
+    );
+    const payload = (await response.json()) as { code: number; msg: string };
+    if (!response.ok || payload.code !== 0) {
+      throw new Error(
+        `Feishu message send failed (${payload.code ?? response.status}): ${payload.msg ?? "unknown error"}`,
+      );
+    }
+    return { dryRun: false, detail: "POC card sent" };
+  }
+
   private async getTenantToken(): Promise<
     | { ok: true; value: string; expire: number }
     | { ok: false; result: ProbeResult }
@@ -103,4 +147,25 @@ export class FeishuClient implements FeishuMessagingProbe {
       } };
     }
   }
+}
+
+function buildPocCard(): Record<string, unknown> {
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: "blue",
+      title: { tag: "plain_text", content: "FlowRivet POC 验证" },
+    },
+    elements: [
+      {
+        tag: "markdown",
+        content:
+          "**TAPD → FlowRivet → 飞书链路已就绪**\n\n" +
+          "✅ 用户功能需求：准入通过\n" +
+          "✅ 技术架构需求：准入通过\n" +
+          "⛔ 跨模块需求：缺少成功指标，阻断问题未关闭\n\n" +
+          "[打开 TAPD 沙箱](https://www.tapd.cn/tapd_fe/50396062/story/list)",
+      },
+    ],
+  };
 }

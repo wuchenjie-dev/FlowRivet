@@ -14,6 +14,7 @@ const config = {
   feishuApiEndpoint: "https://open.feishu.cn/open-apis",
   feishuAppId: "cli_test",
   feishuAppSecret: "feishu-secret",
+  feishuTestChatId: "oc_test_chat",
 };
 
 describe("runDoctor", () => {

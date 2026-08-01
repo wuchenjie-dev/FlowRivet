@@ -88,4 +88,52 @@ describe("FeishuClient", () => {
     expect(result.detail).toContain("99991672");
     expect(JSON.stringify(result)).not.toContain("tenant-secret-token");
   });
+
+  it("previews a POC card without calling Feishu", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = new FeishuClient({
+      endpoint: "https://open.feishu.cn/open-apis",
+      appId: "cli_test",
+      appSecret: "app-secret",
+      fetcher,
+    });
+
+    const result = await client.sendPocCard({ dryRun: true, chatId: "oc_secret" });
+
+    expect(result).toEqual({
+      dryRun: true,
+      detail: "POC card ready for configured test chat",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("oc_secret");
+  });
+
+  it("sends a card with a stable idempotency key", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", tenant_access_token: "tenant-secret-token", expire: 7200,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", data: { message_id: "om_secret" },
+      }));
+    const client = new FeishuClient({
+      endpoint: "https://open.feishu.cn/open-apis",
+      appId: "cli_test",
+      appSecret: "app-secret",
+      fetcher,
+    });
+
+    const result = await client.sendPocCard({ dryRun: false, chatId: "oc_secret" });
+
+    expect(result).toEqual({ dryRun: false, detail: "POC card sent" });
+    const url = String(fetcher.mock.calls[1]?.[0]);
+    expect(url).toContain("receive_id_type=chat_id");
+    const body = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body)) as {
+      receive_id: string;
+      uuid: string;
+    };
+    expect(body.receive_id).toBe("oc_secret");
+    expect(body.uuid).toBe("flowrivet-poc-20260801-v1");
+    expect(JSON.stringify(result)).not.toContain("om_secret");
+  });
 });

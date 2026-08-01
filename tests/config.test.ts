@@ -12,6 +12,7 @@ const validEnv = {
   FEISHU_API_ENDPOINT: "https://open.feishu.cn/open-apis",
   FEISHU_APP_ID: "cli_test",
   FEISHU_APP_SECRET: "feishu-secret",
+  FEISHU_TEST_CHAT_ID: "oc_test_chat",
 };
 
 describe("loadConfig", () => {
