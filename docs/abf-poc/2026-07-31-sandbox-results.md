@@ -41,4 +41,5 @@ TAPD 沙箱的字段初始化、需求创建、幂等去重、动态字段映射
 - 实发结果未输出 chat_id、message_id 或 access token，请求使用 `flowrivet-poc-20260801-v1` 作为幂等键。
 - 身份映射：TAPD 沙箱用户 `wuchenjie` 与测试群唯一非机器人成员的飞书 Open ID 已显式绑定；CLI 校验成功且不输出 Open ID。
 - 定向提醒：已通过 `--apply` 向白名单飞书群真实发送 `@责任人` 阻塞卡片；2026-08-01 由用户确认收到，需求 ID、负责人绑定和两项阻塞问题均正确。
+- TAPD 留痕：已在需求 `1150396062001000019` 下真实创建 FlowRivet 阻塞提醒评论；再次执行返回 `duplicate: true`，未创建重复评论。
 - 定向提醒 dry-run：需求 `1150396062001000019` 负责人绑定有效，生成 `ADM-METRIC-MISSING` 和 `GATE-BLOCKING-QUESTION-OPEN` 两项阻断提醒，未发送消息。
