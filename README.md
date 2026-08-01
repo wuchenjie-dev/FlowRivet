@@ -56,6 +56,7 @@ node dist/src/cli.js tapd verify-poc
 node dist/src/cli.js feishu check-messaging
 node dist/src/cli.js feishu send-poc-card
 node dist/src/cli.js feishu verify-identity
+node dist/src/cli.js feishu preview-blocker-reminder
 ```
 
 字段初始化默认仅预览。确认目标是沙箱项目后，显式应用：
@@ -72,6 +73,8 @@ node dist/src/cli.js tapd seed-poc --apply
 `feishu send-poc-card` 默认仅生成预览；确认白名单群后使用 `--apply` 发送。请求携带稳定 `uuid`，重复执行不会在飞书的一小时幂等窗口内产生重复消息。
 
 `feishu verify-identity` 只接受显式 TAPD 用户名和飞书 `ou_...` Open ID，不按姓名推断，也不在输出中显示 Open ID。
+
+`feishu preview-blocker-reminder` 从 TAPD 沙箱回读阻断需求，重新运行门禁并校验负责人绑定，仅生成定向提醒预览。负责人没有显式绑定或需求已经通过时安全失败。
 
 首次使用不依赖浏览器会话。个人 Token 和企业 API 账号只需保存为用户环境变量；重新打开终端或 Codex 后，运行 `doctor` 验证凭据与两个项目的权限边界。若沙箱成员不同，只需修改 `FLOWRIVET_POC_OWNER`，不要把用户名写死在代码中。
 

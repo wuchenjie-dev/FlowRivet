@@ -40,3 +40,4 @@ TAPD 沙箱的字段初始化、需求创建、幂等去重、动态字段映射
 - 2026-08-01 已向“FlowRivet POC 验证群”实发一次卡片；API 返回成功，飞书群列表显示“阿在：FlowRivet POC 验证”。
 - 实发结果未输出 chat_id、message_id 或 access token，请求使用 `flowrivet-poc-20260801-v1` 作为幂等键。
 - 身份映射：TAPD 沙箱用户 `wuchenjie` 与测试群唯一非机器人成员的飞书 Open ID 已显式绑定；CLI 校验成功且不输出 Open ID。
+- 定向提醒 dry-run：需求 `1150396062001000019` 负责人绑定有效，生成 `ADM-METRIC-MISSING` 和 `GATE-BLOCKING-QUESTION-OPEN` 两项阻断提醒，未发送消息。

@@ -260,4 +260,43 @@ describe("runCli", () => {
     expect(result.output).toContain('"ok": true');
     expect(result.output).not.toContain("ou_test_user");
   });
+
+  it("previews a blocker reminder without exposing the Feishu Open ID", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    deps.createPocStoryAdmin = () => ({
+      listCustomFields: async () => [],
+      findStoryByExactTitle: async () => ({ id: "1150396062001000019" }),
+      createStory: async () => ({ id: "unused" }),
+    });
+    deps.createSandboxRequirementReader = () => ({
+      getRequirement: async () =>
+        parseRequirement({
+          id: "1150396062001000019",
+          workspaceId: "50396062",
+          title: "[FLOWRIVET_POC] 跨模块：ABF 检测结果闭环",
+          status: "规划中",
+          sourceType: "产品规划",
+          evidenceLinks: ["https://example.test/plan/poc-cross-1"],
+          targetUsers: "产品、研发和测试人员",
+          scenario: "跨模块协作",
+          problem: "缺少闭环",
+          goal: "建立闭环",
+          successMetrics: "",
+          scope: "TAPD 与飞书",
+          outOfScope: "自动审批",
+          owners: {
+            product: "wuchenjie",
+            development: "wuchenjie",
+            test: "wuchenjie",
+          },
+          blockerQuestions: ["确认身份映射"],
+        }),
+    });
+
+    const result = await runCli(["feishu", "preview-blocker-reminder"], env, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('"findingCount": 2');
+    expect(result.output).not.toContain("ou_test_user");
+  });
 });

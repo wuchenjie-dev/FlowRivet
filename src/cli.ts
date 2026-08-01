@@ -16,6 +16,7 @@ import {
   type FeishuNotifier,
 } from "./feishu/client.js";
 import { verifyIdentityBinding } from "./identity/binding.js";
+import { buildAdmissionReminder } from "./reminders/admission.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -193,6 +194,46 @@ export async function runCli(
       return { exitCode: 0, output: JSON.stringify(result, null, 2) };
     }
 
+    if (
+      args[0] === "feishu" &&
+      args[1] === "preview-blocker-reminder" &&
+      args.length === 2
+    ) {
+      const config = loadConfig(environment);
+      const definition = POC_REQUIREMENTS.find((item) => item.title.includes("跨模块"));
+      if (!definition) throw new Error("Blocked POC requirement definition not found");
+      const story = await dependencies
+        .createPocStoryAdmin(config)
+        .findStoryByExactTitle(definition.title);
+      if (!story) throw new Error(`POC requirement not found: ${definition.title}`);
+      const requirement = await dependencies
+        .createSandboxRequirementReader(config)
+        .getRequirement(story.id);
+      const plan = buildAdmissionReminder({
+        requirement,
+        admission: checkRequirementAdmission(requirement),
+        binding: {
+          tapdUser: config.pocTapdUser,
+          feishuOpenId: config.feishuPocUserOpenId,
+        },
+      });
+      return {
+        exitCode: 0,
+        output: JSON.stringify(
+          {
+            dryRun: true,
+            requirementId: plan.requirementId,
+            title: plan.title,
+            recipientBound: true,
+            findingCount: plan.findings.length,
+            findingCodes: plan.findings.map((finding) => finding.code),
+          },
+          null,
+          2,
+        ),
+      };
+    }
+
     return usage("Unknown command");
   } catch (error) {
     return {
@@ -208,7 +249,7 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder`,
   };
 }
 
