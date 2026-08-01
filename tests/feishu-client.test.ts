@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FeishuClient } from "../src/feishu/client.js";
+import type { AdmissionReminderPlan } from "../src/reminders/admission.js";
+
+const reminder: AdmissionReminderPlan = {
+  requirementId: "1150396062001000019",
+  title: "[FLOWRIVET_POC] 跨模块：ABF 检测结果闭环",
+  requirementUrl: "https://www.tapd.cn/50396062/prong/stories/view/1150396062001000019",
+  recipientOpenId: "ou_test_user",
+  findings: [
+    { code: "ADM-METRIC-MISSING", message: "缺少可度量的成功指标" },
+    { code: "GATE-BLOCKING-QUESTION-OPEN", message: "仍有 1 个阻断问题未关闭" },
+  ],
+};
 
 describe("FeishuClient", () => {
   it("authenticates a self-built application without exposing the token", async () => {
@@ -135,5 +147,61 @@ describe("FeishuClient", () => {
     expect(body.receive_id).toBe("oc_secret");
     expect(body.uuid).toBe("flowrivet-poc-20260801-v1");
     expect(JSON.stringify(result)).not.toContain("om_secret");
+  });
+
+  it("previews a blocker reminder without calling Feishu or exposing the Open ID", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = new FeishuClient({
+      endpoint: "https://open.feishu.cn/open-apis",
+      appId: "cli_test",
+      appSecret: "app-secret",
+      fetcher,
+    });
+
+    const result = await client.sendAdmissionReminder({
+      dryRun: true,
+      chatId: "oc_secret",
+      reminder,
+    });
+
+    expect(result).toEqual({
+      dryRun: true,
+      detail: "Blocker reminder ready for configured test chat",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("ou_test_user");
+  });
+
+  it("sends an attributed blocker card with a stable state-based idempotency key", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", tenant_access_token: "tenant-secret-token", expire: 7200,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        code: 0, msg: "ok", data: { message_id: "om_secret" },
+      }));
+    const client = new FeishuClient({
+      endpoint: "https://open.feishu.cn/open-apis",
+      appId: "cli_test",
+      appSecret: "app-secret",
+      fetcher,
+    });
+
+    const result = await client.sendAdmissionReminder({
+      dryRun: false,
+      chatId: "oc_secret",
+      reminder,
+    });
+
+    expect(result).toEqual({ dryRun: false, detail: "Blocker reminder sent" });
+    const body = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body)) as {
+      uuid: string;
+      content: string;
+    };
+    const card = JSON.parse(body.content) as { elements: Array<{ content?: string }> };
+    expect(body.uuid).toMatch(/^flowrivet-admission-[a-f0-9]{24}$/);
+    expect(card.elements[0]?.content).toContain('<at id="ou_test_user"></at>');
+    expect(card.elements[0]?.content).toContain("ADM-METRIC-MISSING");
+    expect(card.elements[0]?.content).toContain(reminder.requirementUrl);
   });
 });

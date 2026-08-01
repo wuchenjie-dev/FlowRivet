@@ -55,6 +55,7 @@ node dist/src/cli.js tapd seed-poc
 node dist/src/cli.js tapd verify-poc
 node dist/src/cli.js feishu check-messaging
 node dist/src/cli.js feishu send-poc-card
+node dist/src/cli.js feishu send-blocker-reminder
 node dist/src/cli.js feishu verify-identity
 node dist/src/cli.js feishu preview-blocker-reminder
 ```
@@ -71,6 +72,10 @@ node dist/src/cli.js tapd seed-poc --apply
 `feishu check-messaging` 是只读权限探测，只返回机器人可访问的群数量，不输出群 ID、群名、成员或 access token。消息发送必须使用显式测试群白名单。
 
 `feishu send-poc-card` 默认仅生成预览；确认白名单群后使用 `--apply` 发送。请求携带稳定 `uuid`，重复执行不会在飞书的一小时幂等窗口内产生重复消息。
+
+`feishu send-blocker-reminder` 会实时读取 TAPD 沙箱中的阻塞需求，执行准入检查并通过显式身份绑定生成 `@责任人` 卡片。默认仅返回脱敏预览；人工确认后增加 `--apply` 才会发送。幂等键由需求 ID 和当前阻塞项生成，同一阻塞状态重复执行不会产生重复提醒，阻塞项变化后可发送新提醒。
+
+本地验证时将 `TAPD_TOKEN`、企业 API 凭据、`FEISHU_APP_SECRET` 等写入用户级环境变量；远程部署时应只配置在 MCP 服务端的密钥管理或运行时 Secret 中，不进入插件包、仓库、日志或 Codex 对话。插件用户只需配置服务地址并完成身份绑定。
 
 `feishu verify-identity` 只接受显式 TAPD 用户名和飞书 `ou_...` Open ID，不按姓名推断，也不在输出中显示 Open ID。
 

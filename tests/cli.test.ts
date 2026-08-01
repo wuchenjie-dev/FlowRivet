@@ -124,6 +124,12 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
         dryRun,
         detail: dryRun ? "POC card ready for configured test chat" : "POC card sent",
       }),
+      sendAdmissionReminder: async ({ dryRun }) => ({
+        dryRun,
+        detail: dryRun
+          ? "Blocker reminder ready for configured test chat"
+          : "Blocker reminder sent",
+      }),
     }),
   };
 }
@@ -298,5 +304,56 @@ describe("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain('"findingCount": 2');
     expect(result.output).not.toContain("ou_test_user");
+  });
+
+  it("sends a blocker reminder only with the apply flag", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    let applied: boolean | undefined;
+    deps.createFeishuNotifier = () => ({
+      sendPocCard: async () => ({ dryRun: true, detail: "unused" }),
+      sendAdmissionReminder: async ({ dryRun }) => {
+        applied = !dryRun;
+        return { dryRun, detail: dryRun ? "ready" : "sent" };
+      },
+    });
+    deps.createPocStoryAdmin = () => ({
+      listCustomFields: async () => [],
+      findStoryByExactTitle: async () => ({ id: "1150396062001000019" }),
+      createStory: async () => ({ id: "unused" }),
+    });
+    deps.createSandboxRequirementReader = () => ({
+      getRequirement: async () =>
+        parseRequirement({
+          id: "1150396062001000019",
+          workspaceId: "50396062",
+          title: "[FLOWRIVET_POC] 跨模块：ABF 检测结果闭环",
+          status: "规划中",
+          sourceType: "产品规划",
+          evidenceLinks: ["https://example.test/plan/poc-cross-1"],
+          targetUsers: "产品、研发和测试人员",
+          scenario: "跨模块协作",
+          problem: "缺少闭环",
+          goal: "建立闭环",
+          successMetrics: "",
+          scope: "TAPD 与飞书",
+          outOfScope: "自动审批",
+          owners: { product: "wuchenjie", development: "wuchenjie", test: "wuchenjie" },
+          blockerQuestions: ["确认身份映射"],
+        }),
+    });
+
+    const preview = await runCli(["feishu", "send-blocker-reminder"], env, deps);
+    expect(preview.exitCode).toBe(0);
+    expect(applied).toBe(false);
+    expect(preview.output).not.toContain("ou_test_user");
+
+    const sent = await runCli(
+      ["feishu", "send-blocker-reminder", "--apply"],
+      env,
+      deps,
+    );
+    expect(sent.exitCode).toBe(0);
+    expect(applied).toBe(true);
+    expect(sent.output).toContain('"dryRun": false');
   });
 });

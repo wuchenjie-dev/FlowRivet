@@ -200,23 +200,7 @@ export async function runCli(
       args.length === 2
     ) {
       const config = loadConfig(environment);
-      const definition = POC_REQUIREMENTS.find((item) => item.title.includes("跨模块"));
-      if (!definition) throw new Error("Blocked POC requirement definition not found");
-      const story = await dependencies
-        .createPocStoryAdmin(config)
-        .findStoryByExactTitle(definition.title);
-      if (!story) throw new Error(`POC requirement not found: ${definition.title}`);
-      const requirement = await dependencies
-        .createSandboxRequirementReader(config)
-        .getRequirement(story.id);
-      const plan = buildAdmissionReminder({
-        requirement,
-        admission: checkRequirementAdmission(requirement),
-        binding: {
-          tapdUser: config.pocTapdUser,
-          feishuOpenId: config.feishuPocUserOpenId,
-        },
-      });
+      const plan = await loadBlockedPocReminder(config, dependencies);
       return {
         exitCode: 0,
         output: JSON.stringify(
@@ -231,6 +215,29 @@ export async function runCli(
           null,
           2,
         ),
+      };
+    }
+
+    if (args[0] === "feishu" && args[1] === "send-blocker-reminder") {
+      const unsupported = args.slice(2).filter((arg) => arg !== "--apply");
+      if (unsupported.length > 0) return usage(`Unknown option: ${unsupported[0]}`);
+      const config = loadConfig(environment);
+      const plan = await loadBlockedPocReminder(config, dependencies);
+      const result = await dependencies.createFeishuNotifier(config).sendAdmissionReminder({
+        dryRun: !args.includes("--apply"),
+        chatId: config.feishuTestChatId,
+        reminder: plan,
+      });
+      return {
+        exitCode: 0,
+        output: JSON.stringify({
+          ...result,
+          requirementId: plan.requirementId,
+          title: plan.title,
+          recipientBound: true,
+          findingCount: plan.findings.length,
+          findingCodes: plan.findings.map((finding) => finding.code),
+        }, null, 2),
       };
     }
 
@@ -249,8 +256,31 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]`,
   };
+}
+
+async function loadBlockedPocReminder(
+  config: FlowRivetConfig,
+  dependencies: CliDependencies,
+) {
+  const definition = POC_REQUIREMENTS.find((item) => item.title.includes("跨模块"));
+  if (!definition) throw new Error("Blocked POC requirement definition not found");
+  const story = await dependencies
+    .createPocStoryAdmin(config)
+    .findStoryByExactTitle(definition.title);
+  if (!story) throw new Error(`POC requirement not found: ${definition.title}`);
+  const requirement = await dependencies
+    .createSandboxRequirementReader(config)
+    .getRequirement(story.id);
+  return buildAdmissionReminder({
+    requirement,
+    admission: checkRequirementAdmission(requirement),
+    binding: {
+      tapdUser: config.pocTapdUser,
+      feishuOpenId: config.feishuPocUserOpenId,
+    },
+  });
 }
 
 async function main(): Promise<void> {

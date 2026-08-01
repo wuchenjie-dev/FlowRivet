@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
+
 import type { ProbeResult } from "../doctor.js";
+import type { AdmissionReminderPlan } from "../reminders/admission.js";
 
 interface FeishuClientOptions {
   endpoint: string;
@@ -31,6 +34,11 @@ export interface FeishuPocCardResult {
 
 export interface FeishuNotifier {
   sendPocCard(options: { dryRun: boolean; chatId: string }): Promise<FeishuPocCardResult>;
+  sendAdmissionReminder(options: {
+    dryRun: boolean;
+    chatId: string;
+    reminder: AdmissionReminderPlan;
+  }): Promise<FeishuPocCardResult>;
 }
 
 export class FeishuClient implements FeishuMessagingProbe, FeishuNotifier {
@@ -112,6 +120,45 @@ export class FeishuClient implements FeishuMessagingProbe, FeishuNotifier {
     return { dryRun: false, detail: "POC card sent" };
   }
 
+  async sendAdmissionReminder(options: {
+    dryRun: boolean;
+    chatId: string;
+    reminder: AdmissionReminderPlan;
+  }): Promise<FeishuPocCardResult> {
+    if (options.dryRun) {
+      return {
+        dryRun: true,
+        detail: "Blocker reminder ready for configured test chat",
+      };
+    }
+
+    const token = await this.getTenantToken();
+    if (!token.ok) throw new Error(token.result.detail);
+    const response = await this.fetcher(
+      `${this.endpoint}/im/v1/messages?receive_id_type=chat_id`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token.value}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          receive_id: options.chatId,
+          msg_type: "interactive",
+          uuid: buildAdmissionReminderUuid(options.reminder),
+          content: JSON.stringify(buildAdmissionReminderCard(options.reminder)),
+        }),
+      },
+    );
+    const payload = (await response.json()) as { code: number; msg: string };
+    if (!response.ok || payload.code !== 0) {
+      throw new Error(
+        `Feishu message send failed (${payload.code ?? response.status}): ${payload.msg ?? "unknown error"}`,
+      );
+    }
+    return { dryRun: false, detail: "Blocker reminder sent" };
+  }
+
   private async getTenantToken(): Promise<
     | { ok: true; value: string; expire: number }
     | { ok: false; result: ProbeResult }
@@ -147,6 +194,36 @@ export class FeishuClient implements FeishuMessagingProbe, FeishuNotifier {
       } };
     }
   }
+}
+
+function buildAdmissionReminderUuid(reminder: AdmissionReminderPlan): string {
+  const state = [
+    reminder.requirementId,
+    ...reminder.findings.map((finding) => finding.code).sort(),
+  ].join(":");
+  return `flowrivet-admission-${createHash("sha256").update(state).digest("hex").slice(0, 24)}`;
+}
+
+function buildAdmissionReminderCard(reminder: AdmissionReminderPlan): Record<string, unknown> {
+  const findings = reminder.findings
+    .map((finding) => `- **${finding.code}**：${finding.message}`)
+    .join("\n");
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: "red",
+      title: { tag: "plain_text", content: "FlowRivet 需求准入阻塞" },
+    },
+    elements: [
+      {
+        tag: "markdown",
+        content:
+          `<at id="${reminder.recipientOpenId}"></at> 需求 **${reminder.title}** 暂未通过准入。\n\n` +
+          `${findings}\n\n` +
+          `[打开 TAPD 需求](${reminder.requirementUrl})`,
+      },
+    ],
+  };
 }
 
 function buildPocCard(): Record<string, unknown> {
