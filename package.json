@@ -3,13 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
   "bin": {
     "flowrivet": "dist/src/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run build:legacy && npm run build --workspaces --if-present",
+    "build:legacy": "tsc -p tsconfig.json",
+    "test": "npm run test:legacy && npm run test --workspaces --if-present",
+    "test:legacy": "vitest run",
+    "test:contract": "vitest run tests/contract",
+    "test:e2e": "vitest run --passWithNoTests tests/e2e",
+    "typecheck": "npm run typecheck:legacy && npm run typecheck --workspaces",
+    "typecheck:legacy": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/src/cli.js"
   },
   "dependencies": {
