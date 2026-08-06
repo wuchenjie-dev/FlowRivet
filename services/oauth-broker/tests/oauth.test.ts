@@ -18,7 +18,7 @@ describe("OAuthTransactions", () => {
     store.complete(first.state, {
       accessToken: "tapd-access-token",
       expiresIn: 7200,
-      resource: { type: "workspace", workspaceId: "50396062" },
+      resource: { type: "user", userId: "781489852", companyId: "66238498" },
     });
     expect(() => store.redeem(first.id, "wrong-verifier".repeat(5))).toThrow(
       "transaction proof",
@@ -41,10 +41,10 @@ describe("OAuthTransactions", () => {
     const transaction = store.create({
       callbackUri,
       codeChallenge: challenge,
-      expectedWorkspaceId: "50396062",
+      expectedCompanyId: "66238498",
     });
     expect(() => store.complete("wrong-state", token())).toThrow("state");
-    expect(() => store.complete(transaction.state, token("56536239"))).toThrow("resource");
+    expect(() => store.complete(transaction.state, token("46444189"))).toThrow("resource");
     now += 300_001;
     expect(() => store.complete(transaction.state, token())).toThrow("expired");
   });
@@ -82,7 +82,7 @@ describe("TAPD OAuth", () => {
             expires_in: 7200,
             token_type: "Bearer",
             scope: "story#read",
-            resource: { type: "workspace", workspace_id: 50396062 },
+            resource: { type: "user", user_id: 781489852, company_id: 66238498 },
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -102,10 +102,10 @@ describe("TAPD OAuth", () => {
   });
 });
 
-function token(workspaceId = "50396062") {
+function token(companyId = "66238498") {
   return {
     accessToken: "tapd-access-token",
     expiresIn: 7200,
-    resource: { type: "workspace" as const, workspaceId },
+    resource: { type: "user" as const, userId: "781489852", companyId },
   };
 }

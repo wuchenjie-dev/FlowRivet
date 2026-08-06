@@ -14,7 +14,7 @@ export function createOAuthBroker(config: BrokerConfig) {
         const transaction = transactions.create({
           callbackUri: config.callbackUri,
           codeChallenge: stringField(input, "codeChallenge"),
-          expectedWorkspaceId: optionalString(input, "expectedWorkspaceId"),
+          expectedCompanyId: optionalString(input, "expectedCompanyId"),
         });
         return json(response, 201, {
           transactionId: transaction.id,

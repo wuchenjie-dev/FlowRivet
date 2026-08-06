@@ -29,13 +29,21 @@ export async function exchangeTapdCode(input: {
       access_token?: string;
       expires_in?: number;
       scope?: string;
-      resource?: { type?: string; workspace_id?: string | number };
+      resource?: {
+        type?: string;
+        user_id?: string | number;
+        company_id?: string | number;
+      };
     };
   };
   if (!response.ok || payload.status !== 1 || !payload.data?.access_token) {
     throw new Error(`TAPD token exchange failed (${response.status})`);
   }
-  if (payload.data.resource?.type !== "workspace" || !payload.data.resource.workspace_id) {
+  if (
+    payload.data.resource?.type !== "user" ||
+    !payload.data.resource.user_id ||
+    !payload.data.resource.company_id
+  ) {
     throw new Error("TAPD returned an unsupported OAuth resource");
   }
   return {
@@ -43,8 +51,9 @@ export async function exchangeTapdCode(input: {
     expiresIn: payload.data.expires_in ?? 0,
     scope: payload.data.scope,
     resource: {
-      type: "workspace",
-      workspaceId: String(payload.data.resource.workspace_id),
+      type: "user",
+      userId: String(payload.data.resource.user_id),
+      companyId: String(payload.data.resource.company_id),
     },
   };
 }

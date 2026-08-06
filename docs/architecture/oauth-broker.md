@@ -27,7 +27,7 @@ sequenceDiagram
 - `state` 使用 256 位随机数并在回调时校验，事务五分钟后失效。
 - TAPD 不支持客户端 PKCE，因此 FlowRivet 使用 PKCE challenge 保护 Broker 到 CLI 的一次性交付。
 - Token 只存在于待兑换事务内存中；成功兑换后立即清除，重复兑换失败。
-- 可通过 `expectedWorkspaceId` 把事务约束到预期项目；资源不一致时拒绝交付。
+- 用户态 OAuth 返回 `user_id + company_id` 资源。可通过 `expectedCompanyId` 把事务约束到预期企业；资源不一致时拒绝交付。项目访问范围继续由该用户在 TAPD 内的项目权限决定。
 - 服务不得记录请求体、Authorization 头、授权码、state、应用密钥或 Token。
 
 当前实现是单实例内存存储。生产多副本部署前必须改为具备 TTL 和原子领取语义的加密共享存储，或固定单副本并明确不可用风险。

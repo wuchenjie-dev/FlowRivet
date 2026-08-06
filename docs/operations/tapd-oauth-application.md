@@ -25,7 +25,7 @@ FLOWRIVET_START_OAUTH_BROKER=true
 ## 授权与撤销
 
 1. CLI 创建本地 PKCE verifier，仅把 challenge 发给 Broker。
-2. 用户在 TAPD 选择企业并确认 scope；TAPD 只授予当前用户可访问的资源。
+2. 用户在 TAPD 选择企业并确认 scope；回调资源为当前 `user_id + company_id`，Broker 校验预期企业，项目 API 仍按该用户的 TAPD 项目权限授权。
 3. Broker 交换授权码，CLI 一次性兑换 Token 并写入操作系统原生凭据库。
 4. 用户退出时删除本机 Token；权限变化或 Token 过期时重新授权。
 5. 紧急撤销时先轮换 TAPD 应用密钥，再撤销用户授权并重启 Broker。

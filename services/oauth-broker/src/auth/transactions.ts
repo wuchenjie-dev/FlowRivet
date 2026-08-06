@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 export interface TapdToken {
   accessToken: string;
   expiresIn: number;
-  resource: { type: "workspace"; workspaceId: string };
+  resource: { type: "user"; userId: string; companyId: string };
   scope?: string;
 }
 
@@ -12,7 +12,7 @@ interface Transaction {
   state: string;
   callbackUri: string;
   codeChallenge: string;
-  expectedWorkspaceId?: string;
+  expectedCompanyId?: string;
   expiresAt: number;
   token?: TapdToken;
   redeemed: boolean;
@@ -38,7 +38,7 @@ export class OAuthTransactions {
   create(input: {
     callbackUri: string;
     codeChallenge: string;
-    expectedWorkspaceId?: string;
+    expectedCompanyId?: string;
   }) {
     this.purgeExpired();
     if (!this.allowedCallbacks.has(input.callbackUri)) {
@@ -53,7 +53,7 @@ export class OAuthTransactions {
       state: randomBytes(32).toString("base64url"),
       callbackUri: input.callbackUri,
       codeChallenge: input.codeChallenge,
-      expectedWorkspaceId: input.expectedWorkspaceId,
+      expectedCompanyId: input.expectedCompanyId,
       expiresAt: this.now() + this.ttlMs,
       redeemed: false,
     };
@@ -73,8 +73,8 @@ export class OAuthTransactions {
     this.assertActive(transaction);
     if (transaction.token) throw new Error("authorization code already used");
     if (
-      transaction.expectedWorkspaceId &&
-      token.resource.workspaceId !== transaction.expectedWorkspaceId
+      transaction.expectedCompanyId &&
+      token.resource.companyId !== transaction.expectedCompanyId
     ) {
       throw new Error("OAuth resource does not match the expected workspace");
     }
