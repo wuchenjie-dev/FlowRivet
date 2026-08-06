@@ -18,6 +18,9 @@
 - 普通企业不能直接作为未上架应用的测试安装目标；应用必须先完善扩展模块、事件订阅、发布资料和测试版本，并通过平台上架审核。
 - 开放平台提供独立的开发者测试企业路径，可免审核验证应用，但每个开发者仅能创建一个；当前按用户选择暂不创建。
 - 未上架应用仍可对普通企业发起用户态 OAuth：使用 `scope=story%23read&auth_by=user` 已成功进入公司选择和 FlowRivet 授权确认页，因此 OAuth 权限继承验证不依赖应用安装或上架。
+- 用户态授权码交换成功，实际资源类型为 `user`（包含用户和企业标识），不是旧文档示例中的 `workspace`；Broker 已按预期企业校验该资源。
+- 同一 OAuth Token 使用 `story#read` 调用需求 API 成功，确认 Token 和 Bearer 鉴权可用。
+- `users/info` 和 `workspaces` 在本次 `story#read workspace#read` Token 下均返回 `403 scope limited`；官方 MCP 启动时无条件调用 `users/info`，因此在返回 MCP initialize 响应前以 HTTP 403 退出。
 
 验证过程只输出工具名、Schema 和成功状态，未记录 Token、项目名称、项目 ID、成员或业务数据。
 
@@ -25,11 +28,11 @@
 
 | 能力 | 官方 MCP / API | OAuth scope 候选 | 个人 Token | 用户 OAuth | 管理员 | 普通成员 | 无权限用户 | 当前结论 |
 |---|---|---|---|---|---|---|---|---|
-| 获取当前用户 | TAPD OAuth resource | `user` | 不适用 | 待验证 | 待验证 | 待验证 | 待验证 | Broker 前置能力 |
+| 获取当前用户 | TAPD OAuth resource / `users/info` | `user#read` 候选 | 不适用 | 资源已返回；API 在未申请 `user#read` 时 403 | 待验证 | 待验证 | 待验证 | 官方 MCP 启动的隐式前置能力 |
 | 用户参与项目 | `get_user_participant_projects` | `workspace#read` | 已通过 | 待验证 | 待验证 | 待验证 | 待验证 | 工具存在 |
 | 项目信息 | `get_workspace_info` | `workspace#read` | 源项目通过、跨企业拒绝 | 待验证 | 待验证 | 待验证 | 已验证跨企业拒绝 | 需要 `workspace_id` |
 | 项目成员与角色 | `get_workspace_users` | `member` / `workspace#read` | 源项目通过、跨企业拒绝 | 待验证 | 待验证 | 待验证 | 已验证跨企业拒绝 | 需确认是否返回可靠角色 |
-| 需求和任务读取 | `get_stories_or_tasks` | `story` / `task` | 工具存在 | 待验证 | 待验证 | 待验证 | 待验证 | 需三账号验证 |
+| 需求和任务读取 | `get_stories_or_tasks` | `story#read` / `task#read` | 工具存在 | `story#read` 真实 API 已通过 | 待验证 | 待验证 | 待验证 | 需继续三账号验证 |
 | 需求和任务写入 | `create_story_or_task`, `update_story_or_task` | `story` / `task` | 工具存在 | 待验证 | 待验证 | 待验证 | 待验证 | 禁止在能力探测中实写生产项目 |
 | 评论读写 | `get_comments`, `create_comments`, `update_comments` | 依附对象 scope | 工具存在 | 待验证 | 待验证 | 待验证 | 待验证 | 需三账号验证 |
 | 自定义字段读取 | `get_entity_custom_fields` | `setting` | 源项目通过、跨企业拒绝 | 待验证 | 待验证 | 待验证 | 已验证跨企业拒绝 | 只读工具 |
@@ -43,8 +46,8 @@
 
 当前为 **Blocked / 待外部条件**，不能进入 OAuth Broker 实现：
 
-1. 当前机器没有 TAPD 用户 OAuth Access Token，尚未验证官方 MCP 是否接受该 Token。
-2. FlowRivet TAPD OAuth 应用已创建并配置全量研发协作读写权限和本机回调，普通企业用户态授权页已通过；尚未完成授权码交换和 Access Token 验证。
+1. TAPD 用户 OAuth Access Token 已成功兑换且需求 API 调用通过；官方 MCP 会在初始化时调用 `users/info`，当前 scope 下返回 403，需要补充并验证 `user#read`，或修复官方 MCP 的启动依赖。
+2. FlowRivet TAPD OAuth 应用、普通企业授权、Broker 交换和企业资源校验均已通过；`workspace#read` 对 `workspaces` API 的实际映射仍需澄清。
 3. 只有一个个人 Token，尚未完成管理员、普通成员、无权限用户矩阵。
 4. 尚未证明 TAPD API 能读取项目已关联的 GitLab 仓库稳定标识或 URL。
 5. 官方 MCP `get_workflows_all_transitions` 在有权项目中存在运行时错误，需要上游修复或本地适配。
