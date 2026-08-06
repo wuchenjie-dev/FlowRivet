@@ -1,12 +1,13 @@
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   exchangeTapdCode,
   TapdTokenExchangeError,
 } from "../src/auth/token-exchange.js";
-import { createOAuthBroker } from "../src/index.js";
+import { createOAuthBroker, startOAuthBroker } from "../src/index.js";
 import { createLogger } from "../src/logging.js";
 import { resolveRequestId } from "../src/request-context.js";
 
@@ -179,6 +180,41 @@ describe("OAuth Broker HTTP observability", () => {
     expect(broker.output()).not.toContain("upstream-code-secret");
     expect(broker.output()).not.toContain(state);
   });
+
+  it("logs broker startup only after the server is listening", async () => {
+    const capture = logCapture();
+    const config = brokerConfig(0);
+
+    const server = await startOAuthBroker(config, { logger: capture.logger });
+    servers.push(server);
+
+    const address = server.address() as AddressInfo;
+    expect(capture.event("broker.started")).toMatchObject({
+      host: "127.0.0.1",
+      port: address.port,
+      callbackPath: "/oauth/callback",
+      scopes: ["user", "story#read", "workspace#read"],
+    });
+  });
+
+  it("logs a classified startup failure", async () => {
+    const occupied = createServer();
+    await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
+    servers.push(occupied);
+    const port = (occupied.address() as AddressInfo).port;
+    const capture = logCapture();
+
+    await expect(
+      startOAuthBroker(brokerConfig(port), { logger: capture.logger }),
+    ).rejects.toBeDefined();
+
+    expect(capture.event("broker.start_failed")).toMatchObject({
+      host: "127.0.0.1",
+      port,
+      errorType: "listen_failed",
+    });
+    expect(capture.output()).not.toContain("fixture-secret");
+  });
 });
 
 type ExchangeCode = (
@@ -186,28 +222,40 @@ type ExchangeCode = (
 ) => ReturnType<typeof exchangeTapdCode>;
 
 async function startBroker(options: { exchangeCode?: ExchangeCode } = {}) {
-  const destination = new PassThrough();
-  let logs = "";
-  destination.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  const logger = createLogger("info", destination);
+  const capture = logCapture();
   const server = createOAuthBroker(
-    {
-      clientId: "fixture-client",
-      clientSecret: "fixture-secret",
-      callbackUri: "http://127.0.0.1:43119/oauth/callback",
-      scopes: ["user", "story#read", "workspace#read"],
-      port: 43119,
-      logLevel: "info",
-    },
-    { logger, exchangeCode: options.exchangeCode },
+    brokerConfig(43119),
+    { logger: capture.logger, exchangeCode: options.exchangeCode },
   );
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
+    output: capture.output,
+    event: capture.event,
+  };
+}
+
+function brokerConfig(port: number) {
+  return {
+    clientId: "fixture-client",
+    clientSecret: "fixture-secret",
+    callbackUri: "http://127.0.0.1:43119/oauth/callback",
+    scopes: ["user", "story#read", "workspace#read"],
+    port,
+    logLevel: "info" as const,
+  };
+}
+
+function logCapture() {
+  const destination = new PassThrough();
+  let logs = "";
+  destination.on("data", (chunk) => {
+    logs += chunk.toString();
+  });
+  return {
+    logger: createLogger("info", destination),
     output: () => logs,
     event: (name: string) => {
       const entry = logs

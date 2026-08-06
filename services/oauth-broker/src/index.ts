@@ -126,6 +126,57 @@ export function createOAuthBroker(
   });
 }
 
+export async function startOAuthBroker(
+  config: BrokerConfig,
+  options: {
+    logger?: AppLogger;
+    now?: () => number;
+    exchangeCode?: typeof exchangeTapdCode;
+    host?: string;
+  } = {},
+) {
+  const logger = options.logger ?? createLogger(config.logLevel);
+  const host = options.host ?? "127.0.0.1";
+  const server = createOAuthBroker(config, {
+    logger,
+    now: options.now,
+    exchangeCode: options.exchangeCode,
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(config.port, host);
+    });
+  } catch (error) {
+    logger.error({
+      event: "broker.start_failed",
+      host,
+      port: config.port,
+      errorType: "listen_failed",
+    });
+    throw error;
+  }
+
+  const address = server.address();
+  logger.info({
+    event: "broker.started",
+    host,
+    port: typeof address === "object" && address ? address.port : config.port,
+    callbackPath: new URL(config.callbackUri).pathname,
+    scopes: config.scopes,
+  });
+  return server;
+}
+
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -161,6 +212,16 @@ function json(response: ServerResponse, status: number, value: unknown) {
 }
 
 if (process.env.FLOWRIVET_START_OAUTH_BROKER === "true") {
-  const config = loadBrokerConfig();
-  createOAuthBroker(config).listen(config.port, "127.0.0.1");
+  try {
+    const config = loadBrokerConfig();
+    void startOAuthBroker(config).catch(() => {
+      process.exitCode = 1;
+    });
+  } catch {
+    createLogger("info").error({
+      event: "broker.start_failed",
+      errorType: "invalid_config",
+    });
+    process.exitCode = 1;
+  }
 }
