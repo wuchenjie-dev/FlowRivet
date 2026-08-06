@@ -7,11 +7,15 @@
     "build": "npm run build:server && npm run build:ui",
     "build:server": "tsc -p tsconfig.json",
     "build:ui": "vite build",
+    "start": "node dist/server/index.js",
+    "dev:server": "node --watch dist/server/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
