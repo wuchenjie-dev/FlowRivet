@@ -1,9 +1,12 @@
+import type { LogLevel } from "./logging.js";
+
 export interface BrokerConfig {
   clientId: string;
   clientSecret: string;
   callbackUri: string;
   scopes: string[];
   port: number;
+  logLevel: LogLevel;
 }
 
 export function loadBrokerConfig(
@@ -24,7 +27,16 @@ export function loadBrokerConfig(
       .split(/\s+/)
       .filter(Boolean),
     port: Number(environment.PORT ?? "43119"),
+    logLevel: parseLogLevel(environment.FLOWRIVET_LOG_LEVEL),
   };
+}
+
+function parseLogLevel(value: string | undefined): LogLevel {
+  const level = value ?? "info";
+  if (level === "debug" || level === "info" || level === "warn" || level === "error") {
+    return level;
+  }
+  throw new Error("FLOWRIVET_LOG_LEVEL must be debug, info, warn, or error");
 }
 
 function required(environment: Record<string, string | undefined>, key: string) {

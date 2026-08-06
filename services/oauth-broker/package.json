@@ -8,5 +8,8 @@
     "start": "node dist/src/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "pino": "^10.3.1"
   }
 }

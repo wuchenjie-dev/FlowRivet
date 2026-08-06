@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OAuthTransactions } from "../src/auth/transactions.js";
 import { buildAuthorizationUrl, redactOAuthData } from "../src/auth/tapd-oauth.js";
 import { exchangeTapdCode } from "../src/auth/token-exchange.js";
+import { loadBrokerConfig } from "../src/config.js";
 
 const callbackUri = "https://oauth.flowrivet.example/tapd/callback";
 const verifier = "v".repeat(64);
@@ -99,6 +100,24 @@ describe("TAPD OAuth", () => {
     const [, init] = request.mock.calls[0];
     expect(String(init?.headers)).not.toContain("fixture-secret");
     expect(init?.body).not.toContain("fixture-secret");
+  });
+});
+
+describe("broker config", () => {
+  const environment = {
+    TAPD_OAUTH_CLIENT_ID: "client",
+    TAPD_OAUTH_CLIENT_SECRET: "secret",
+    FLOWRIVET_OAUTH_CALLBACK_URI: "http://127.0.0.1:43119/oauth/callback",
+  };
+
+  it("defaults the log level to info", () => {
+    expect(loadBrokerConfig(environment).logLevel).toBe("info");
+  });
+
+  it("rejects an unsupported log level", () => {
+    expect(() =>
+      loadBrokerConfig({ ...environment, FLOWRIVET_LOG_LEVEL: "verbose" }),
+    ).toThrow("FLOWRIVET_LOG_LEVEL");
   });
 });
 
