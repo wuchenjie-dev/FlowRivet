@@ -3,12 +3,34 @@ import { buildAuthorizationUrl } from "./auth/tapd-oauth.js";
 import { OAuthTransactions } from "./auth/transactions.js";
 import { exchangeTapdCode } from "./auth/token-exchange.js";
 import { loadBrokerConfig, type BrokerConfig } from "./config.js";
+import { createLogger, type AppLogger } from "./logging.js";
+import { resolveRequestId } from "./request-context.js";
 
-export function createOAuthBroker(config: BrokerConfig) {
+export function createOAuthBroker(
+  config: BrokerConfig,
+  options: { logger?: AppLogger; now?: () => number } = {},
+) {
   const transactions = new OAuthTransactions({ allowedCallbacks: [config.callbackUri] });
+  const logger = options.logger ?? createLogger(config.logLevel);
+  const now = options.now ?? Date.now;
   return createServer(async (request, response) => {
+    const startedAt = now();
+    const requestId = resolveRequestId(request.headers);
+    response.setHeader("x-request-id", requestId);
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    const requestLogger = logger.child({
+      requestId,
+      method: request.method ?? "UNKNOWN",
+      path: url.pathname,
+    });
+    response.once("finish", () => {
+      requestLogger.info({
+        event: "http.request.completed",
+        statusCode: response.statusCode,
+        durationMs: Math.max(0, now() - startedAt),
+      });
+    });
     try {
-      const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
       if (request.method === "POST" && url.pathname === "/oauth/transactions") {
         const input = await readJson(request);
         const transaction = transactions.create({
@@ -53,6 +75,11 @@ export function createOAuthBroker(config: BrokerConfig) {
       }
       json(response, 404, { error: "not_found" });
     } catch (error) {
+      requestLogger.warn({
+        event: "http.request.rejected",
+        statusCode: 400,
+        errorType: "invalid_request",
+      });
       json(response, 400, { error: error instanceof Error ? error.message : "request_failed" });
     }
   });
