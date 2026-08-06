@@ -1,18 +1,26 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { buildAuthorizationUrl } from "./auth/tapd-oauth.js";
 import { OAuthTransactions } from "./auth/transactions.js";
-import { exchangeTapdCode } from "./auth/token-exchange.js";
+import {
+  exchangeTapdCode,
+  TapdTokenExchangeError,
+} from "./auth/token-exchange.js";
 import { loadBrokerConfig, type BrokerConfig } from "./config.js";
-import { createLogger, type AppLogger } from "./logging.js";
+import { createLogger, transactionRef, type AppLogger } from "./logging.js";
 import { resolveRequestId } from "./request-context.js";
 
 export function createOAuthBroker(
   config: BrokerConfig,
-  options: { logger?: AppLogger; now?: () => number } = {},
+  options: {
+    logger?: AppLogger;
+    now?: () => number;
+    exchangeCode?: typeof exchangeTapdCode;
+  } = {},
 ) {
   const transactions = new OAuthTransactions({ allowedCallbacks: [config.callbackUri] });
   const logger = options.logger ?? createLogger(config.logLevel);
   const now = options.now ?? Date.now;
+  const exchangeCode = options.exchangeCode ?? exchangeTapdCode;
   return createServer(async (request, response) => {
     const startedAt = now();
     const requestId = resolveRequestId(request.headers);
@@ -38,6 +46,12 @@ export function createOAuthBroker(
           codeChallenge: stringField(input, "codeChallenge"),
           expectedCompanyId: optionalString(input, "expectedCompanyId"),
         });
+        requestLogger.info({
+          event: "oauth.transaction.created",
+          transactionRef: transactionRef(transaction.id),
+          expiresAt: transaction.expiresAt,
+          expectedCompany: optionalString(input, "expectedCompanyId") !== undefined,
+        });
         return json(response, 201, {
           transactionId: transaction.id,
           expiresAt: transaction.expiresAt,
@@ -52,25 +66,51 @@ export function createOAuthBroker(
       if (request.method === "GET" && url.pathname === new URL(config.callbackUri).pathname) {
         const state = requiredQuery(url, "state");
         const transaction = transactions.getByState(state);
-        const token = await exchangeTapdCode({
-          clientId: config.clientId,
-          clientSecret: config.clientSecret,
-          code: requiredQuery(url, "code"),
-          callbackUri: transaction.callbackUri,
-        });
+        const reference = transactionRef(transaction.id);
+        let token;
+        try {
+          token = await exchangeCode({
+            clientId: config.clientId,
+            clientSecret: config.clientSecret,
+            code: requiredQuery(url, "code"),
+            callbackUri: transaction.callbackUri,
+          });
+        } catch (error) {
+          if (error instanceof TapdTokenExchangeError) {
+            requestLogger.error({
+              event: "tapd.token_exchange.failed",
+              transactionRef: reference,
+              upstreamStatus: error.upstreamStatus,
+              errorType: error.errorType,
+            });
+          }
+          throw error;
+        }
         transactions.complete(state, token);
+        requestLogger.info({
+          event: "oauth.callback.completed",
+          transactionRef: reference,
+          companyId: token.resource.companyId,
+          scope: token.scope,
+        });
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         return response.end("<!doctype html><title>FlowRivet</title><p>授权完成，可以关闭此页面。</p>");
       }
       if (request.method === "POST" && url.pathname === "/oauth/redeem") {
         const input = await readJson(request);
+        const transactionId = stringField(input, "transactionId");
+        const token = transactions.redeem(
+          transactionId,
+          stringField(input, "codeVerifier"),
+        );
+        requestLogger.info({
+          event: "oauth.token.redeemed",
+          transactionRef: transactionRef(transactionId),
+        });
         return json(
           response,
           200,
-          transactions.redeem(
-            stringField(input, "transactionId"),
-            stringField(input, "codeVerifier"),
-          ),
+          token,
         );
       }
       json(response, 404, { error: "not_found" });
@@ -78,7 +118,8 @@ export function createOAuthBroker(
       requestLogger.warn({
         event: "http.request.rejected",
         statusCode: 400,
-        errorType: "invalid_request",
+        errorType:
+          error instanceof TapdTokenExchangeError ? error.errorType : "invalid_request",
       });
       json(response, 400, { error: error instanceof Error ? error.message : "request_failed" });
     }

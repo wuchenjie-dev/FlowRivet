@@ -1,6 +1,11 @@
 import type { AddressInfo } from "node:net";
+import { createHash } from "node:crypto";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  exchangeTapdCode,
+  TapdTokenExchangeError,
+} from "../src/auth/token-exchange.js";
 import { createOAuthBroker } from "../src/index.js";
 import { createLogger } from "../src/logging.js";
 import { resolveRequestId } from "../src/request-context.js";
@@ -85,9 +90,102 @@ describe("OAuth Broker HTTP observability", () => {
     );
     expect(broker.output()).not.toContain("not-json-fixture-secret");
   });
+
+  it("correlates the OAuth lifecycle without logging credentials", async () => {
+    const broker = await startBroker({
+      exchangeCode: async () => ({
+        accessToken: "fixture-access-token",
+        expiresIn: 7200,
+        scope: "user story#read workspace#read",
+        resource: { type: "user", userId: "fixture-user", companyId: "66238498" },
+      }),
+    });
+    const verifier = "fixture-verifier-".padEnd(64, "v");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+
+    const createdResponse = await fetch(`${broker.baseUrl}/oauth/transactions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "create-request-123" },
+      body: JSON.stringify({ codeChallenge: challenge, expectedCompanyId: "66238498" }),
+    });
+    const created = (await createdResponse.json()) as {
+      transactionId: string;
+      authorizationUrl: string;
+    };
+    const state = new URL(created.authorizationUrl).searchParams.get("state")!;
+    await fetch(
+      `${broker.baseUrl}/oauth/callback?code=fixture-auth-code&state=${encodeURIComponent(state)}`,
+      { headers: { "x-request-id": "callback-request-123" } },
+    );
+    await fetch(`${broker.baseUrl}/oauth/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": "redeem-request-123" },
+      body: JSON.stringify({ transactionId: created.transactionId, codeVerifier: verifier }),
+    });
+
+    const oauthEvents = [
+      broker.event("oauth.transaction.created"),
+      broker.event("oauth.callback.completed"),
+      broker.event("oauth.token.redeemed"),
+    ];
+    expect(new Set(oauthEvents.map(({ transactionRef }) => transactionRef)).size).toBe(1);
+    expect(oauthEvents.map(({ requestId }) => requestId)).toEqual([
+      "create-request-123",
+      "callback-request-123",
+      "redeem-request-123",
+    ]);
+    for (const secret of [
+      created.transactionId,
+      state,
+      verifier,
+      challenge,
+      "fixture-access-token",
+      "fixture-auth-code",
+      "fixture-user",
+    ]) {
+      expect(broker.output()).not.toContain(secret);
+    }
+  });
+
+  it("logs a classified TAPD token exchange failure without its response body", async () => {
+    const broker = await startBroker({
+      exchangeCode: async () => {
+        throw new TapdTokenExchangeError(503);
+      },
+    });
+    const verifier = "upstream-verifier-".padEnd(64, "v");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const createdResponse = await fetch(`${broker.baseUrl}/oauth/transactions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ codeChallenge: challenge }),
+    });
+    const created = (await createdResponse.json()) as {
+      authorizationUrl: string;
+    };
+    const state = new URL(created.authorizationUrl).searchParams.get("state")!;
+
+    const response = await fetch(
+      `${broker.baseUrl}/oauth/callback?code=upstream-code-secret&state=${encodeURIComponent(state)}`,
+      { headers: { "x-request-id": "upstream-request-123" } },
+    );
+
+    expect(response.status).toBe(400);
+    expect(broker.event("tapd.token_exchange.failed")).toMatchObject({
+      requestId: "upstream-request-123",
+      upstreamStatus: 503,
+      errorType: "tapd_token_exchange_failed",
+    });
+    expect(broker.output()).not.toContain("upstream-code-secret");
+    expect(broker.output()).not.toContain(state);
+  });
 });
 
-async function startBroker() {
+type ExchangeCode = (
+  input: Parameters<typeof exchangeTapdCode>[0],
+) => ReturnType<typeof exchangeTapdCode>;
+
+async function startBroker(options: { exchangeCode?: ExchangeCode } = {}) {
   const destination = new PassThrough();
   let logs = "";
   destination.on("data", (chunk) => {
@@ -103,7 +201,7 @@ async function startBroker() {
       port: 43119,
       logLevel: "info",
     },
-    { logger },
+    { logger, exchangeCode: options.exchangeCode },
   );
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

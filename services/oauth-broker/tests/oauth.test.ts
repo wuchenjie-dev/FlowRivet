@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { OAuthTransactions } from "../src/auth/transactions.js";
 import { buildAuthorizationUrl, redactOAuthData } from "../src/auth/tapd-oauth.js";
-import { exchangeTapdCode } from "../src/auth/token-exchange.js";
+import {
+  exchangeTapdCode,
+  TapdTokenExchangeError,
+} from "../src/auth/token-exchange.js";
 import { loadBrokerConfig } from "../src/config.js";
 
 const callbackUri = "https://oauth.flowrivet.example/tapd/callback";
@@ -100,6 +103,27 @@ describe("TAPD OAuth", () => {
     const [, init] = request.mock.calls[0];
     expect(String(init?.headers)).not.toContain("fixture-secret");
     expect(init?.body).not.toContain("fixture-secret");
+  });
+
+  it("classifies token endpoint failures without retaining the response body", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("fixture-upstream-secret", { status: 503 }),
+    );
+
+    const failure = exchangeTapdCode({
+      clientId: "client",
+      clientSecret: "fixture-secret",
+      code: "fixture-code",
+      callbackUri,
+      fetch: request,
+    });
+
+    await expect(failure).rejects.toBeInstanceOf(TapdTokenExchangeError);
+    await expect(failure).rejects.toMatchObject({
+      upstreamStatus: 503,
+      errorType: "tapd_token_exchange_failed",
+    });
+    await expect(failure).rejects.not.toHaveProperty("responseBody");
   });
 });
 

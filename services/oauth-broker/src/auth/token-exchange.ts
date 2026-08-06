@@ -1,5 +1,14 @@
 import type { TapdToken } from "./transactions.js";
 
+export class TapdTokenExchangeError extends Error {
+  readonly errorType = "tapd_token_exchange_failed";
+
+  constructor(readonly upstreamStatus: number) {
+    super(`TAPD token exchange failed (${upstreamStatus})`);
+    this.name = "TapdTokenExchangeError";
+  }
+}
+
 export async function exchangeTapdCode(input: {
   clientId: string;
   clientSecret: string;
@@ -22,6 +31,7 @@ export async function exchangeTapdCode(input: {
     },
     body: body.toString(),
   });
+  if (!response.ok) throw new TapdTokenExchangeError(response.status);
   const payload = (await response.json()) as {
     status?: number;
     info?: string;
@@ -36,8 +46,8 @@ export async function exchangeTapdCode(input: {
       };
     };
   };
-  if (!response.ok || payload.status !== 1 || !payload.data?.access_token) {
-    throw new Error(`TAPD token exchange failed (${response.status})`);
+  if (payload.status !== 1 || !payload.data?.access_token) {
+    throw new TapdTokenExchangeError(response.status);
   }
   if (
     payload.data.resource?.type !== "user" ||
