@@ -8,6 +8,8 @@
   },
   "homepage": "https://github.com/wuchenjie-dev/FlowRivet",
   "repository": "https://github.com/wuchenjie-dev/FlowRivet",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "keywords": ["tapd", "feishu", "gitlab", "workflow", "codex"],
   "interface": {
     "displayName": "FlowRivet",
@@ -17,9 +19,9 @@
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "defaultPrompt": [
-      "检查 FlowRivet 环境和 TAPD 项目权限。",
-      "预览 TAPD 需求字段初始化结果。",
-      "检查需求准入和准出门禁。"
+      "打开我的 TAPD 待办看板。",
+      "检查 FlowRivet 本地 Companion 是否可用。",
+      "演示 FlowRivet 看板的项目筛选和拖动。"
     ]
   }
 }
