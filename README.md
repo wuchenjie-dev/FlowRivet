@@ -15,6 +15,10 @@ FlowRivet 自身可以托管在 GitHub，但受管业务项目的代码事实源
 - 三类脱敏 ABF 需求的批量 PoC 评估。
 - 飞书自建应用鉴权检查，结果不暴露 access token。
 
+## Codex 看板 Demo
+
+Phase 0 已提供可注册到 Codex 的“我的 TAPD 待办”交互看板，当前使用 Demo 数据，不读取或写入 TAPD。安装、启动和验收步骤见 [Codex 看板 Demo 运行手册](./docs/operations/codex-plugin-demo.md)，交互与后续真实接入边界见 [看板设计规格](./docs/superpowers/specs/2026-08-06-tapd-my-work-taskboard-design.md)。
+
 ## 环境要求
 
 - Node.js 22 或更高版本。
