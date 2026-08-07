@@ -117,3 +117,64 @@ test("keyboard reaches filters, refresh, connection menu, and cards", async ({ p
   await board.locator(".work-card").first().focus();
   await expect(board.locator(".work-card").first()).toBeFocused();
 });
+
+test("discovers projects, saves one selection and enters the board", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=projects-unselected");
+  const board = boardFrame(page);
+
+  await expect(board.getByRole("heading", { name: "选择项目" })).toBeVisible();
+  await board.getByRole("button", { name: "重新发现项目" }).click();
+  await expect(board.getByRole("checkbox", { name: "选择项目：ABF 产品研发" })).toBeVisible();
+  await board.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }).check();
+  await board.getByRole("button", { name: "使用 1 个项目" }).click();
+
+  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "筛选项目：ABF 产品研发" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "筛选项目：学科工具" })).toHaveCount(0);
+});
+
+test("reopens with the saved project already in the sidebar", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=projects-selected");
+  const board = boardFrame(page);
+
+  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "筛选项目：ABF 产品研发" })).toBeVisible();
+  await board.getByRole("button", { name: "管理项目" }).click();
+  await expect(board.getByRole("checkbox", { name: "选择项目：ABF 产品研发" })).toBeChecked();
+});
+
+test("preserves projects and reports stale discovery", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=projects-stale");
+  const board = boardFrame(page);
+
+  await expect(board.getByRole("heading", { name: "选择项目" })).toBeVisible();
+  await expect(board.getByText(/当前显示上次保存的项目/)).toBeVisible();
+  await expect(board.getByText("ABF 产品研发")).toBeVisible();
+  await board.getByRole("button", { name: "重新发现项目" }).click();
+  await expect(board.getByText(/当前显示上次保存的项目/)).toBeVisible();
+});
+
+test("adds a project URL manually", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=projects-unselected");
+  const board = boardFrame(page);
+
+  await board.getByLabel("项目 ID 或 URL").fill("https://www.tapd.cn/9001");
+  await board.getByRole("button", { name: "添加项目" }).click();
+  await expect(board.getByText("手工验证项目")).toBeVisible();
+  await expect(board.getByText("手工添加")).toBeVisible();
+});
+
+test("project selector stays within a 900 by 700 viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.goto("/src/ui/demo-harness.html?scenario=projects-unselected");
+  const board = boardFrame(page);
+  await expect(board.getByRole("heading", { name: "选择项目" })).toBeVisible();
+
+  const selector = await board.locator(".project-selector").boundingBox();
+  const toolbar = await board.locator(".selector-toolbar").boundingBox();
+  const manual = await board.locator(".manual-project").boundingBox();
+  const actions = await board.locator(".selector-actions").boundingBox();
+  expect(selector && selector.y + selector.height <= 700).toBe(true);
+  expect(toolbar && manual && toolbar.y + toolbar.height <= manual.y).toBe(true);
+  expect(manual && actions && manual.y + manual.height <= actions.y + 1).toBe(true);
+});
