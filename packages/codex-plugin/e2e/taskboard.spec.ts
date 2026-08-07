@@ -39,20 +39,45 @@ test("compact viewport keeps controls separate and board scrollable", async ({ p
   expect(refresh && account && refresh.x + refresh.width <= account.x).toBe(true);
 });
 
-test("disconnected scenario shows login entry without empty columns", async ({ page }) => {
+test("disconnected scenario shows token login without empty columns", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=disconnected");
   const board = boardFrame(page);
 
-  await expect(board.getByRole("button", { name: "登录 TAPD" })).toBeVisible();
+  await expect(board.getByLabel("TAPD Token")).toHaveAttribute("type", "password");
+  await expect(board.getByRole("button", { name: "连接 TAPD" })).toBeVisible();
   await expect(board.locator(".task-column")).toHaveCount(0);
 });
 
-test("expired scenario shows stale data and disables dragging", async ({ page }) => {
+test("expired scenario requires login again and hides stale data", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=expired");
   const board = boardFrame(page);
 
-  await expect(board.locator(".stale-banner")).toContainText("TAPD 登录已失效");
-  await expect(board.locator(".work-card").first()).toHaveAttribute("aria-disabled", "true");
+  await expect(board.getByRole("button", { name: "重新连接 TAPD" })).toBeVisible();
+  await expect(board.locator(".work-card")).toHaveCount(0);
+});
+
+test("token login opens the board and clears the secret input", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=disconnected");
+  const board = boardFrame(page);
+  const token = board.getByLabel("TAPD Token");
+
+  await token.fill("e2e-placeholder-token");
+  await board.getByRole("button", { name: "连接 TAPD" }).click();
+
+  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
+  await expect(token).toHaveCount(0);
+  await expect(board.locator(".task-column")).toHaveCount(4);
+});
+
+test("disconnect removes board data and returns to login", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  await board.getByRole("button", { name: "断开 TAPD" }).click();
+
+  await expect(board.getByRole("button", { name: "连接 TAPD" })).toBeVisible();
+  await expect(board.locator(".work-card")).toHaveCount(0);
 });
 
 test("dragging a card updates counts and exposes demo notice", async ({ page }) => {

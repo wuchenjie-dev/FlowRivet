@@ -75,10 +75,29 @@ function DemoHarness() {
       }
 
       if (message.method === "tools/call" && message.id !== undefined) {
+        const toolName = message.params?.name;
+        const connectedSnapshot = scenarioSnapshot("connected");
+        const structuredContent = toolName === "login_with_tapd_token"
+          ? {
+              ok: true,
+              connection: {
+                tapd: "connected",
+                userName: connectedSnapshot.connection.userName,
+                companyName: connectedSnapshot.connection.companyName,
+              },
+            }
+          : toolName === "open_my_taskboard"
+            ? connectedSnapshot
+            : toolName === "disconnect_tapd"
+              ? { ok: true, connection: { tapd: "disconnected" } }
+              : undefined;
         send({
           jsonrpc: "2.0",
           id: message.id,
-          result: { content: [{ type: "text", text: "pong" }] },
+          result: {
+            content: [{ type: "text", text: structuredContent ? "ok" : "pong" }],
+            ...(structuredContent ? { structuredContent } : {}),
+          },
         });
       }
     };
