@@ -31,6 +31,7 @@ export const workItemSchema = z.object({
   providerStatus: z.string(),
   priority: z.string().optional(),
   dueAt: z.string().optional(),
+  completedAt: z.string().optional(),
   externalUrl: z.string(),
 });
 
@@ -52,6 +53,13 @@ export const taskboardSnapshotSchema = z.object({
     z.literal("done"),
   ]),
   items: z.array(workItemSchema),
+  readOnly: z.literal(true),
+  syncSummary: z.object({
+    successfulProjects: z.number().int().nonnegative(),
+    failedProjects: z.number().int().nonnegative(),
+    itemCount: z.number().int().nonnegative(),
+  }),
+  syncErrorCode: z.literal("work_item_sync_failed").optional(),
   lastSyncedAt: z.string(),
 });
 

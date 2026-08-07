@@ -89,5 +89,11 @@ export const demoTaskboardSnapshot = taskboardSnapshotSchema.parse({
       stage: "in_review",
     },
   ],
+  readOnly: true,
+  syncSummary: {
+    successfulProjects: 2,
+    failedProjects: 0,
+    itemCount: 7,
+  },
   lastSyncedAt: "2026-08-06T19:30:00+08:00",
 });
