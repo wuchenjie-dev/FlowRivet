@@ -1,4 +1,4 @@
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, Maximize2, RefreshCw } from "lucide-react";
 
 import type { TaskboardSnapshot } from "../../contracts/taskboard.js";
 
@@ -6,6 +6,9 @@ interface AppHeaderProps {
   connection: TaskboardSnapshot["connection"];
   lastSyncedAt: string;
   menuOpen: boolean;
+  showFullscreen: boolean;
+  fullscreenPending: boolean;
+  onFullscreen: () => void;
   onRefresh: () => void;
   onToggleMenu: () => void;
 }
@@ -21,6 +24,9 @@ export function AppHeader({
   connection,
   lastSyncedAt,
   menuOpen,
+  showFullscreen,
+  fullscreenPending,
+  onFullscreen,
   onRefresh,
   onToggleMenu,
 }: AppHeaderProps) {
@@ -43,6 +49,18 @@ export function AppHeader({
           {statusCopy[connection.tapd]}
         </span>
         <span className="sync-time">最后同步 {syncedAt}</span>
+        {showFullscreen ? (
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onFullscreen}
+            disabled={fullscreenPending}
+            aria-label="全屏打开看板"
+            title="全屏打开看板"
+          >
+            <Maximize2 size={16} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           className="icon-button"
           type="button"

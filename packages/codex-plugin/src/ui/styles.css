@@ -40,6 +40,7 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .sync-time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius); color: #4d5560; background: var(--surface); cursor: pointer; }
 .icon-button:hover { background: var(--surface-subtle); border-color: var(--border-strong); }
+.icon-button:disabled { cursor: wait; opacity: .55; }
 .account-button { gap: 8px; min-width: 148px; padding: 4px 8px 4px 5px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); background: var(--surface); cursor: pointer; text-align: left; }
 .avatar { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; background: #e8ebef; color: #414852; font-size: 12px; font-weight: 700; }
 .account-copy { min-width: 0; flex: 1; display: grid; }

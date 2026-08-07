@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogIn, ShieldAlert } from "lucide-react";
 
 import type { CanonicalStage, TaskboardSnapshot } from "../contracts/taskboard.js";
@@ -19,8 +19,32 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [pingState, setPingState] = useState<"idle" | "pending" | "success" | "error">("idle");
   const [notice, setNotice] = useState<string>();
+  const [displayState, setDisplayState] = useState(() => bridge.getDisplayState());
+  const [fullscreenPending, setFullscreenPending] = useState(false);
   const tapdState = initialSnapshot.connection.tapd;
   const canDrag = tapdState === "connected";
+
+  async function enterFullscreen(automatic = false) {
+    setFullscreenPending(true);
+    try {
+      setDisplayState(await bridge.requestFullscreen());
+      setNotice(undefined);
+    } catch {
+      setNotice(automatic
+        ? "无法自动进入全屏，可使用右上角按钮重试"
+        : "无法进入全屏，看板仍可在当前页面使用");
+    } finally {
+      setFullscreenPending(false);
+    }
+  }
+
+  useEffect(() => {
+    if (displayState.canFullscreen && !displayState.isFullscreen) {
+      void enterFullscreen(true);
+    }
+    // The host display capability is fixed for this mounted MCP App.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridge]);
 
   const filteredItems = items.filter((item) => {
     if (selectedFilter === "all") return true;
@@ -63,6 +87,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         connection={initialSnapshot.connection}
         lastSyncedAt={initialSnapshot.lastSyncedAt}
         menuOpen={menuOpen}
+        showFullscreen={displayState.canFullscreen && !displayState.isFullscreen}
+        fullscreenPending={fullscreenPending}
+        onFullscreen={() => void enterFullscreen()}
         onRefresh={refreshDemo}
         onToggleMenu={() => setMenuOpen((open) => !open)}
       />
