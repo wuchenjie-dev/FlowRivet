@@ -30,7 +30,11 @@ export function WorkItemCard({ item }: WorkItemCardProps) {
         <span className="tapd-id">{item.externalId}</span>
         <span className="provider-status">{item.providerStatus}</span>
       </div>
-      <h3>{item.title}</h3>
+      <h3>
+        <a href={item.externalUrl} target="_blank" rel="noreferrer">
+          {item.title}
+        </a>
+      </h3>
       <div className="card-meta">
         <span className="project-name">{item.projectName}</span>
         {item.priority ? <span className={`priority priority--${item.priority}`}>{item.priority}</span> : null}

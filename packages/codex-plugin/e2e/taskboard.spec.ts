@@ -80,13 +80,16 @@ test("disconnect removes board data and returns to login", async ({ page }) => {
   await expect(board.locator(".work-card")).toHaveCount(0);
 });
 
-test("dragging a card updates counts and exposes demo notice", async ({ page }) => {
+test("cards are read-only and pointer movement cannot change counts", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
   const todo = board.getByRole("region", { name: "待处理列" });
   const progress = board.getByRole("region", { name: "进行中列" });
 
+  await expect(board.locator(".work-card")).toHaveCount(7);
+  await expect(board.locator('.work-card[aria-readonly="true"]')).toHaveCount(7);
+  await expect(board.locator(".drag-handle")).toHaveCount(0);
   await expect(todo.locator(".column-header span")).toHaveText("2");
   await expect(progress.locator(".column-header span")).toHaveText("2");
   const cardBox = await board.getByText("统一检索结果的排序与筛选体验").boundingBox();
@@ -99,12 +102,12 @@ test("dragging a card updates counts and exposes demo notice", async ({ page }) 
   await page.mouse.move(cardBox.x + cardBox.width / 2 + 12, cardBox.y + cardBox.height / 2, { steps: 4 });
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + 90, { steps: 12 });
   await page.mouse.up();
-  await expect(todo.locator(".column-header span")).toHaveText("1");
-  await expect(progress.locator(".column-header span")).toHaveText("3");
-  await expect(board.getByText("Demo：看板位置已更新，未写入 TAPD")).toBeVisible();
+  await expect(todo.locator(".column-header span")).toHaveText("2");
+  await expect(progress.locator(".column-header span")).toHaveText("2");
+  await expect(board.getByText(/看板位置已更新/)).toHaveCount(0);
 });
 
-test("keyboard reaches filters, refresh, connection menu, and cards", async ({ page }) => {
+test("keyboard reaches filters, refresh, connection menu, and work item links", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
@@ -114,67 +117,63 @@ test("keyboard reaches filters, refresh, connection menu, and cards", async ({ p
   await expect(board.getByRole("button", { name: "打开连接菜单" })).toBeFocused();
   await board.getByRole("button", { name: "筛选项目：ABF 产品研发" }).focus();
   await expect(board.getByRole("button", { name: "筛选项目：ABF 产品研发" })).toBeFocused();
-  await board.locator(".work-card").first().focus();
-  await expect(board.locator(".work-card").first()).toBeFocused();
+  const workItemLink = board.getByRole("link", { name: "统一检索结果的排序与筛选体验" });
+  await workItemLink.focus();
+  await expect(workItemLink).toBeFocused();
+  await expect(workItemLink).toHaveAttribute("target", "_blank");
 });
 
-test("discovers projects, saves one selection and enters the board", async ({ page }) => {
-  await page.goto("/src/ui/demo-harness.html?scenario=projects-unselected");
-  const board = boardFrame(page);
-
-  await expect(board.getByRole("heading", { name: "选择项目" })).toBeVisible();
-  await board.getByRole("button", { name: "重新发现项目" }).click();
-  await expect(board.getByRole("checkbox", { name: "选择项目：ABF 产品研发" })).toBeVisible();
-  await board.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }).check();
-  await board.getByRole("button", { name: "使用 1 个项目" }).click();
-
-  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
-  await expect(board.getByRole("button", { name: "筛选项目：ABF 产品研发" })).toBeVisible();
-  await expect(board.getByRole("button", { name: "筛选项目：学科工具" })).toHaveCount(0);
-});
-
-test("reopens with the saved project already in the sidebar", async ({ page }) => {
-  await page.goto("/src/ui/demo-harness.html?scenario=projects-selected");
+test("opens all accessible projects without a selection step", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
   await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
   await expect(board.getByRole("button", { name: "筛选项目：ABF 产品研发" })).toBeVisible();
-  await board.getByRole("button", { name: "管理项目" }).click();
-  await expect(board.getByRole("checkbox", { name: "选择项目：ABF 产品研发" })).toBeChecked();
+  await expect(board.getByRole("button", { name: "筛选项目：学科工具" })).toBeVisible();
+  await expect(board.getByRole("heading", { name: "选择项目" })).toHaveCount(0);
+  await expect(board.getByRole("button", { name: "管理项目" })).toHaveCount(0);
+  await expect(board.getByText(/Demo/)).toHaveCount(0);
 });
 
-test("preserves projects and reports stale discovery", async ({ page }) => {
-  await page.goto("/src/ui/demo-harness.html?scenario=projects-stale");
+test("refreshes the real read-only snapshot", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
-  await expect(board.getByRole("heading", { name: "选择项目" })).toBeVisible();
-  await expect(board.getByText(/当前显示上次保存的项目/)).toBeVisible();
-  await expect(board.getByText("ABF 产品研发")).toBeVisible();
-  await board.getByRole("button", { name: "重新发现项目" }).click();
-  await expect(board.getByText(/当前显示上次保存的项目/)).toBeVisible();
+  await board.getByRole("button", { name: "刷新看板" }).click();
+  await expect(board.getByText("已同步 7 个工作项")).toBeVisible();
+  await expect(board.locator(".work-card")).toHaveCount(7);
 });
 
-test("adds a project URL manually", async ({ page }) => {
-  await page.goto("/src/ui/demo-harness.html?scenario=projects-unselected");
+test("partial sync preserves available work items and reports the failed project", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=partial");
   const board = boardFrame(page);
 
-  await board.getByLabel("项目 ID 或 URL").fill("https://www.tapd.cn/9001");
-  await board.getByRole("button", { name: "添加项目" }).click();
-  await expect(board.getByText("手工验证项目")).toBeVisible();
-  await expect(board.getByText("手工添加")).toBeVisible();
+  await expect(board.getByText("1 个项目同步失败，已保留其他结果")).toBeVisible();
+  await expect(board.locator(".work-card")).toHaveCount(7);
 });
 
-test("project selector stays within a 900 by 700 viewport", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 700 });
-  await page.goto("/src/ui/demo-harness.html?scenario=projects-unselected");
+test("full sync failure is not presented as an empty success", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=error");
   const board = boardFrame(page);
-  await expect(board.getByRole("heading", { name: "选择项目" })).toBeVisible();
 
-  const selector = await board.locator(".project-selector").boundingBox();
-  const toolbar = await board.locator(".selector-toolbar").boundingBox();
-  const manual = await board.locator(".manual-project").boundingBox();
-  const actions = await board.locator(".selector-actions").boundingBox();
-  expect(selector && selector.y + selector.height <= 700).toBe(true);
-  expect(toolbar && manual && toolbar.y + toolbar.height <= manual.y).toBe(true);
-  expect(manual && actions && manual.y + manual.height <= actions.y + 1).toBe(true);
+  await expect(board.getByText("工作项同步失败，请重试")).toBeVisible();
+  await expect(board.locator(".work-card")).toHaveCount(0);
+  await expect(board.getByText(/已同步 0 个工作项/)).toHaveCount(0);
+});
+
+test("mobile viewport keeps controls visible without outer overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "刷新看板" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "打开连接菜单" })).toBeVisible();
+  expect(await board.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+  const boardMetrics = await board.locator(".task-board").evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(boardMetrics.scrollWidth).toBeGreaterThan(boardMetrics.clientWidth);
 });
