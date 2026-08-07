@@ -105,6 +105,7 @@ npm run test:e2e --workspace @flowrivet/codex-plugin
 - 仍看到旧页面：刷新 cachebuster，重新安装插件，并新建 Codex 任务。
 - 插件列表没有 FlowRivet：重新执行 `codex plugin marketplace add`，然后重启 Codex。
 - 显示“未能加载插件连接”：使用桌面内置 `$desktopCodex` 执行 `plugin list`；若为 `not installed`，执行 `plugin add flowrivet@flowrivet-local`，不要只注册 marketplace。
+- 插件页整体显示“无法加载插件”：API Key 登录模式下，Codex 远程插件目录可能返回 401，因为远程目录要求 ChatGPT 登录。该提示不代表本地 FlowRivet 失败；以 `$desktopCodex plugin list` 的 `installed, enabled` 状态和新任务中 `demo_ping` 的实际结果为准，直接在新任务输入“打开我的 TAPD 待办看板”。
 
 ## 后续阶段
 
