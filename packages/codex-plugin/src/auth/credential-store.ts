@@ -27,13 +27,24 @@ export function createCredentialStore(options: {
 } = {}): CredentialStore {
   const platform = options.platform ?? process.platform;
   if (platform !== "win32") {
-    throw new CredentialStoreError("unsupported_platform");
+    return unavailableStore("unsupported_platform");
   }
   const localAppData = options.localAppData ?? process.env.LOCALAPPDATA;
   if (!localAppData) {
-    throw new CredentialStoreError("credential_store_failed");
+    return unavailableStore("credential_store_failed");
   }
   return new WindowsDpapiCredentialStore({
     directory: join(localAppData, "FlowRivet"),
   });
+}
+
+function unavailableStore(code: CredentialStoreErrorCode): CredentialStore {
+  const reject = async (): Promise<never> => {
+    throw new CredentialStoreError(code);
+  };
+  return {
+    readTapdToken: reject,
+    writeTapdToken: reject,
+    deleteTapdToken: reject,
+  };
 }

@@ -110,8 +110,10 @@ describe("Windows DPAPI credential store", () => {
 });
 
 describe("credential store factory", () => {
-  it("rejects unsupported platforms with a stable error", () => {
-    expect(() => createCredentialStore({ platform: "linux" })).toThrowError(
+  it("keeps the app startable and rejects operations on unsupported platforms", async () => {
+    const store = createCredentialStore({ platform: "linux" });
+
+    await expect(store.readTapdToken()).rejects.toEqual(
       expect.objectContaining<Partial<CredentialStoreError>>({
         code: "unsupported_platform",
       }),

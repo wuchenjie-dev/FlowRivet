@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { TapdAuthenticator } from "../src/auth/tapd-auth-service.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import {
   createTaskboardMcpServer,
@@ -31,8 +32,28 @@ async function createBundle(contents = "<html><body>FlowRivet</body></html>") {
   return bundlePath;
 }
 
-async function connectClient(uiBundlePath: string) {
-  const server = createTaskboardMcpServer({ uiBundlePath });
+function authenticator(
+  tapd: "connected" | "disconnected" | "expired" = "connected",
+): TapdAuthenticator {
+  const connection = tapd === "connected"
+    ? { tapd, userName: "吴晨杰", companyName: "FlowRivet 演示企业" } as const
+    : { tapd } as const;
+  return {
+    login: async () => ({ ok: true, connection: {
+      tapd: "connected",
+      userName: "吴晨杰",
+      companyName: "FlowRivet 测试企业",
+    } }),
+    getConnectionStatus: async () => ({ ok: true, connection }),
+    disconnect: async () => ({ ok: true, connection: { tapd: "disconnected" } }),
+  };
+}
+
+async function connectClient(
+  uiBundlePath: string,
+  authService: TapdAuthenticator = authenticator(),
+) {
+  const server = createTaskboardMcpServer({ uiBundlePath, authService });
   const client = new Client({ name: "flowrivet-test", version: "0.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -55,7 +76,13 @@ describe("taskboard MCP app", () => {
     try {
       const { tools } = await connection.client.listTools();
       expect(tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(["open_my_taskboard", "demo_ping"]),
+        expect.arrayContaining([
+          "open_my_taskboard",
+          "demo_ping",
+          "get_connection_status",
+          "login_with_tapd_token",
+          "disconnect_tapd",
+        ]),
       );
 
       const openTool = tools.find((tool) => tool.name === "open_my_taskboard");
@@ -105,6 +132,85 @@ describe("taskboard MCP app", () => {
         ok: true,
         message: "hello",
       });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("returns an empty workspace when TAPD is disconnected", async () => {
+    const connection = await connectClient(
+      await createBundle(),
+      authenticator("disconnected"),
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "open_my_taskboard",
+        arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        connection: { tapd: "disconnected" },
+        projects: [],
+        items: [],
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("logs in without returning the submitted token", async () => {
+    const login = vi.fn().mockResolvedValue({
+      ok: true,
+      connection: {
+        tapd: "connected",
+        userName: "吴晨杰",
+        companyName: "FlowRivet 测试企业",
+      },
+    });
+    const authService = { ...authenticator("disconnected"), login };
+    const connection = await connectClient(await createBundle(), authService);
+    const token = "sensitive-personal-token";
+
+    try {
+      const result = await connection.client.callTool({
+        name: "login_with_tapd_token",
+        arguments: { token },
+      });
+      expect(login).toHaveBeenCalledWith(token);
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        connection: { tapd: "connected", userName: "吴晨杰" },
+      });
+      expect(JSON.stringify(result)).not.toContain(token);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("returns connection status and disconnects without UI metadata", async () => {
+    const disconnect = vi.fn().mockResolvedValue({
+      ok: true,
+      connection: { tapd: "disconnected" },
+    });
+    const authService = { ...authenticator(), disconnect };
+    const connection = await connectClient(await createBundle(), authService);
+
+    try {
+      const status = await connection.client.callTool({
+        name: "get_connection_status",
+        arguments: {},
+      });
+      const disconnected = await connection.client.callTool({
+        name: "disconnect_tapd",
+        arguments: {},
+      });
+      expect(status.structuredContent).toMatchObject({
+        connection: { tapd: "connected" },
+      });
+      expect(disconnected.structuredContent).toMatchObject({
+        connection: { tapd: "disconnected" },
+      });
+      expect(disconnect).toHaveBeenCalledOnce();
     } finally {
       await connection.close();
     }
