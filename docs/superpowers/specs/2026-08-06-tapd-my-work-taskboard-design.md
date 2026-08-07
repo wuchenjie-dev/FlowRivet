@@ -11,7 +11,7 @@ FlowRivet 的第一个产品需求是在 Codex 中提供“我的 TAPD 待办”
 - 用户不需要逐个打开 TAPD 项目即可扫描自己的工作。
 - 不同项目、需求、任务和缺陷被归一化为一致的四阶段工作流。
 - Codex 与用户共享同一组 MCP 工具，既能显示看板，也能在对话中查询或推进工作项。
-- TAPD OAuth Token 留在本机系统凭据库，为后续访问内网 GitLab 保留本地数据平面。
+- TAPD 个人 Token 由本地 Companion 验证，并使用操作系统保护能力加密保存，为后续访问内网 GitLab 保留本地数据平面。
 
 ## 3. 已确认范围
 
@@ -66,8 +66,8 @@ Phase 0 明确不实现 OAuth、TAPD API、SQLite、系统凭据库和真实状�
 
 Phase 1 在已验证的 UI 和插件链路上增加：
 
-- TAPD 登录和 Token 交付。
-- 本机系统凭据存储。
+- TAPD 个人 Token 登录、连接状态和断开连接。
+- Windows DPAPI 安全存储，以及 Linux/macOS 凭据适配接口。
 - 项目发现与项目链接兜底。
 - 需求、任务、缺陷读取和归一化。
 - SQLite 缓存、状态映射和同步元数据。
@@ -77,7 +77,7 @@ Phase 1 在已验证的 UI 和插件链路上增加：
 
 ## 5. 架构
 
-采用“官方插件 UI + 本地 Companion + 远程 OAuth Broker”的混合架构。
+第一阶段采用“官方插件 UI + 本地 Companion + TAPD 个人 Token”的本地架构。远程 OAuth Broker 保留为后续团队分发时的可选登录方式，不参与个人 Token 登录闭环。
 
 ```text
 Codex Plugin UI (React + shadcn)
@@ -87,18 +87,18 @@ Codex Plugin UI (React + shadcn)
         ├─ MCP tools 与 UI Resource
         ├─ TAPD 聚合与状态映射
         ├─ SQLite 缓存
-        ├─ 系统凭据库中的 TAPD Token
+        ├─ Windows DPAPI 加密的 TAPD Token
         ├─ 直接访问 TAPD 工作项 API
         └─ 未来访问内网 GitLab
                  ▲
-                 │ 一次性 Token 交付
-远程 OAuth Broker ───────── TAPD OAuth
+                 │ 看板内一次性提交
+用户 TAPD 个人 Token
 ```
 
 ### 5.1 选择理由
 
-- 远程 Broker 独占 TAPD 应用 Secret，避免把企业级凭据分发到用户设备。
-- OAuth Token 兑换后进入本机系统凭据库，不集中保存在 FlowRivet 服务端。
+- 个人 POC 不需要 TAPD OAuth 应用的 `client_id` 或 `client_secret`，也不需要部署远程服务。
+- Token 使用当前 Windows 用户的 DPAPI 密钥加密，仓库、SQLite、日志和 UI 结果中均不保存明文。
 - 本地 Companion 能访问未来的内网 GitLab。
 - 官方 MCP Apps UI 避免 Codex DOM 注入和 CSP 绕过。
 - 工具与 UI 解耦，Codex 可在不打开看板时完成同等操作。
@@ -124,17 +124,26 @@ Codex Plugin UI (React + shadcn)
 - 注册数据工具、写工具和 `open_my_taskboard` 渲染工具。
 - 托管 MCP Apps UI Resource。
 - 管理 TAPD 同步、缓存、状态映射和登录状态。
-- 读取系统凭据库，不向 UI 返回 Token。
+- 通过 `CredentialStore` 读取 DPAPI 密文，不向 UI 返回 Token。
 
-### 6.4 远程 OAuth Broker
+### 6.4 本地凭据存储
 
+- 定义跨平台 `CredentialStore` 接口，首版实现 Windows DPAPI 适配器。
+- 密文和非敏感元数据保存到 `%LOCALAPPDATA%\FlowRivet`；密文只能由当前 Windows 用户解密。
+- DPAPI 或文件写入失败时登录失败，禁止降级为明文文件。
+- Linux Secret Service 和 macOS Keychain 只保留适配边界，本轮返回 `unsupported_platform`。
+- `TAPD_TOKEN` 仅作为开发兼容入口，UI 和 MCP 响应不回显其值。
+
+### 6.5 可选远程 OAuth Broker
+
+- 不参与 Phase 1A 个人 Token 登录，保留现有实现供未来团队分发使用。
 - 创建五分钟授权事务。
 - 使用服务端 TAPD 应用 Secret 交换授权码。
 - 校验 TAPD 用户和企业资源。
 - 通过 PKCE 证明向本地 Companion 一次性交付 Token。
 - 不代理日常 TAPD 工作项 API。
 
-### 6.5 TAPD 适配器
+### 6.6 TAPD 适配器
 
 - 获取当前用户。
 - 自动发现参与项目。
@@ -150,8 +159,7 @@ Codex Plugin UI (React + shadcn)
 | 工具 | 类型 | 作用 |
 |---|---|---|
 | `get_connection_status` | 读取 | 返回 TAPD、GitLab 连接状态，不返回凭据 |
-| `begin_tapd_login` | 操作 | 创建登录事务并返回授权 URL 与轮询标识 |
-| `get_tapd_login_status` | 读取 | 查询授权是否完成、失败或过期 |
+| `login_with_tapd_token` | 操作 | 验证一次性提交的个人 Token，成功后用 DPAPI 加密保存 |
 | `disconnect_tapd` | 操作 | 删除本机 TAPD 凭据和连接元数据 |
 | `discover_tapd_projects` | 读取 | 自动发现项目并返回失败原因 |
 | `add_tapd_project` | 操作 | 从项目链接或 ID 添加兜底项目 |
@@ -199,15 +207,17 @@ SQLite 只保存项目元数据、状态映射、工作项缓存、最后同步�
 ### 9.1 未登录
 
 - 看板不显示误导性的空列。
-- 显示“连接 TAPD 后查看我的待办”和“登录 TAPD”按钮。
+- 显示 TAPD Token 密码输入框和“连接 TAPD”按钮。
+- Token 只在本次工具调用中提交；UI 不持久化、不回显，也不写入 URL。
 - 说明登录后会自动发现项目；无法发现时可粘贴项目链接。
 
 ### 9.2 登录中
 
-- Companion 生成 verifier/challenge，请求远程 Broker 创建事务。
-- UI 打开 TAPD 授权 URL。
-- UI 轮询 Companion 登录状态，授权完成后 Companion 兑换并写入系统凭据库。
-- 登录成功后自动发现项目和首次同步。
+- UI 禁用输入和提交按钮，并调用 `login_with_tapd_token`。
+- Companion 使用 Token 调用 TAPD 当前用户接口，验证用户、企业和权限。
+- 验证成功后使用 Windows DPAPI 加密并原子写入本地凭据文件。
+- MCP 只返回用户、企业和连接状态；UI 随即清空密码输入框。
+- Phase 1A 登录成功后仍展示明确标记的 Demo 工作项；真实项目发现和同步由后续子任务实现。
 
 ### 9.3 已登录
 
@@ -220,6 +230,13 @@ SQLite 只保存项目元数据、状态映射、工作项缓存、最后同步�
 - 保留最后缓存并标记“数据可能过期”。
 - 禁止拖动和写操作。
 - 提供重新登录；成功后恢复同步。
+
+### 9.5 恢复与断开
+
+- 重新打开看板时，Companion 读取并解密本机凭据，再调用 TAPD 验证有效性。
+- TAPD 暂时不可用时返回 `tapd_unavailable`，不删除或覆盖已有凭据。
+- Token 明确无效时连接状态切换为 `expired`，允许重新输入或断开。
+- `disconnect_tapd` 删除密文与连接元数据，完成后无法从本机恢复 Token。
 
 ## 10. 项目发现
 
@@ -282,6 +299,11 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 | 场景 | 行为 |
 |---|---|
 | Token 失效 | 展示缓存、禁止写入、引导重新登录 |
+| Token 无效 | 返回 `invalid_token`，不创建或覆盖本机凭据 |
+| 权限不足 | 返回 `permission_denied`，不保存 Token |
+| TAPD 暂时不可用 | 返回 `tapd_unavailable`，保留已有凭据并允许重试 |
+| DPAPI 或文件写入失败 | 返回 `credential_store_failed`，禁止明文降级 |
+| 非 Windows 平台 | 返回 `unsupported_platform`，等待对应安全存储适配器 |
 | 单项目读取失败 | 其他项目继续展示，侧栏标记并允许重试 |
 | 无权限流转 | 卡片回退，显示当前账号无权执行 |
 | 非法工作流流转 | 卡片回退，显示 TAPD 合法目标状态 |
@@ -311,14 +333,15 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 - 最近 7 天完成过滤边界。
 - 自动项目发现和项目 URL 解析。
 - 状态自动匹配、歧义和映射隔离。
-- 系统凭据存储接口契约，禁止 SQLite Token 持久化。
-- 登录状态机、过期事务和 Token 失效。
+- `CredentialStore` 接口与 Windows DPAPI 适配器，禁止 SQLite 和日志持久化明文 Token。
+- 登录成功、无效 Token、权限不足、TAPD 不可用、存储失败、恢复、过期和断开状态机。
+- 凭据文件只包含密文和非敏感元数据；日志和 MCP 响应不包含 Token 或 Authorization。
 - 并发冲突、权限错误和网络错误分类。
 - 所有 MCP 工具输入输出 Schema。
 
 ### 15.3 Phase 1 E2E
 
-1. 未登录到 TAPD OAuth，再自动返回看板。
+1. 在看板内提交个人 Token，验证成功后自动返回已连接看板。
 2. 自动发现多个项目并聚合当前用户的需求、任务和缺陷。
 3. 自动发现失败后通过项目链接加载。
 4. 四阶段映射与首次歧义选择。
@@ -328,6 +351,7 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 8. 最近 7 天已完成过滤。
 9. UI 与无界面 MCP 工具结果一致。
 10. Windows、Linux、macOS 配置路径和凭据存储契约。
+11. 重启 Companion 后恢复连接，断开后凭据不可恢复。
 
 ## 16. 准入与准出标准
 
@@ -347,14 +371,23 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 - UI 到 MCP 的演示调用成功。
 - 测试、类型检查、生产构建和 Playwright 视觉验证通过。
 
-### 16.3 Phase 1 准入
+### 16.3 Phase 1A 个人 Token 登录准入
 
 - Phase 0 已通过，不再变更插件 UI 承载方式。
-- TAPD OAuth scope 至少包含 `user`、需求/任务/缺陷读取和对应写入权限。
-- 测试企业提供可读写的需求、任务和缺陷样本。
-- 项目自动发现接口已再次验证；失败路径已有项目链接兜底。
+- Windows 测试用户可使用 DPAPI，`%LOCALAPPDATA%` 可写。
+- 测试账号提供可调用当前用户接口的 TAPD 个人 Token。
+- 没有真实测试 Token 时只完成自动化合约测试，不宣称真实 E2E 通过。
 
-### 16.4 Phase 1 准出
+### 16.4 Phase 1A 个人 Token 登录准出
+
+- 看板内可提交 Token，成功后只显示用户、企业和连接状态。
+- Token 不出现在仓库、SQLite、日志、MCP 响应、URL 或浏览器持久化中。
+- 重启 Companion 后可以从 DPAPI 密文恢复连接。
+- 无效 Token 不创建凭据；存储失败不降级为明文。
+- 断开连接后凭据文件被删除且 Token 无法恢复。
+- Windows 真实 Token E2E 通过；Linux/macOS 返回稳定的 `unsupported_platform`。
+
+### 16.5 Phase 1 完整准出
 
 - 真实测试企业完成登录、项目加载、三类型读取和拖动回写闭环。
 - 自动刷新连续运行且不会产生重复同步。
