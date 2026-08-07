@@ -7,7 +7,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TapdAuthenticator } from "../src/auth/tapd-auth-service.js";
+import type { ProjectCatalogResult } from "../src/contracts/projects.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
+import type { ProjectOperationLogger } from "../src/observability/project-operation-logger.js";
+import type { ProjectCatalog } from "../src/projects/project-catalog-service.js";
 import {
   createTaskboardMcpServer,
   TASKBOARD_RESOURCE_URI,
@@ -52,8 +55,15 @@ function authenticator(
 async function connectClient(
   uiBundlePath: string,
   authService: TapdAuthenticator = authenticator(),
+  projectCatalog: ProjectCatalog = catalog().service,
+  projectLogger?: ProjectOperationLogger,
 ) {
-  const server = createTaskboardMcpServer({ uiBundlePath, authService });
+  const server = createTaskboardMcpServer({
+    uiBundlePath,
+    authService,
+    projectCatalog,
+    ...(projectLogger ? { projectLogger } : {}),
+  });
   const client = new Client({ name: "flowrivet-test", version: "0.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -66,6 +76,39 @@ async function connectClient(
       await client.close();
       await server.close();
     },
+  };
+}
+
+function catalog(projects: ProjectCatalogResult["projects"] = []) {
+  const result: ProjectCatalogResult = {
+    provider: {
+      providerId: "tapd",
+      displayName: "TAPD",
+      state: "connected",
+      accountDisplayName: "吴晨杰",
+    },
+    projects,
+    stale: false,
+  };
+  const service: ProjectCatalog = {
+    getCatalog: vi.fn().mockResolvedValue(result),
+    discover: vi.fn().mockResolvedValue(result),
+    saveSelection: vi.fn().mockResolvedValue(result),
+    addProject: vi.fn().mockResolvedValue(result),
+    clear: vi.fn().mockResolvedValue(undefined),
+  };
+  return { result, service };
+}
+
+function project(externalId: string, selected = true) {
+  return {
+    providerId: "tapd",
+    externalId,
+    name: `Project ${externalId}`,
+    selected,
+    available: true,
+    source: "discovered" as const,
+    lastVerifiedAt: "2026-08-07T00:00:00.000Z",
   };
 }
 
@@ -82,6 +125,9 @@ describe("taskboard MCP app", () => {
           "get_connection_status",
           "login_with_tapd_token",
           "disconnect_tapd",
+          "discover_projects",
+          "save_project_selection",
+          "add_project",
         ]),
       );
 
@@ -89,6 +135,134 @@ describe("taskboard MCP app", () => {
       const pingTool = tools.find((tool) => tool.name === "demo_ping");
       expect(openTool?._meta?.ui).toEqual({ resourceUri: TASKBOARD_RESOURCE_URI });
       expect(pingTool?._meta?.ui).toBeUndefined();
+      for (const name of ["discover_projects", "save_project_selection", "add_project"]) {
+        expect(tools.find((tool) => tool.name === name)?._meta?.ui).toBeUndefined();
+      }
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("calls project catalog tools and returns provider-neutral catalogs", async () => {
+    const fixture = catalog([project("50396062")]);
+    const connection = await connectClient(
+      await createBundle(),
+      authenticator(),
+      fixture.service,
+    );
+
+    try {
+      const discovered = await connection.client.callTool({
+        name: "discover_projects",
+        arguments: { providerId: "tapd" },
+      });
+      const saved = await connection.client.callTool({
+        name: "save_project_selection",
+        arguments: { providerId: "tapd", externalIds: ["50396062"] },
+      });
+      const added = await connection.client.callTool({
+        name: "add_project",
+        arguments: { providerId: "tapd", input: "https://www.tapd.cn/50396062" },
+      });
+
+      expect(discovered.structuredContent).toEqual(fixture.result);
+      expect(saved.structuredContent).toEqual(fixture.result);
+      expect(added.structuredContent).toEqual(fixture.result);
+      expect(fixture.service.discover).toHaveBeenCalledOnce();
+      expect(fixture.service.saveSelection).toHaveBeenCalledWith(["50396062"]);
+      expect(fixture.service.addProject).toHaveBeenCalledWith("https://www.tapd.cn/50396062");
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("loads selected projects without forcing discovery and keeps demo items unattributed", async () => {
+    const fixture = catalog([project("50396062"), project("56536239", false)]);
+    const connection = await connectClient(await createBundle(), authenticator(), fixture.service);
+
+    try {
+      const result = await connection.client.callTool({
+        name: "open_my_taskboard",
+        arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        projects: [{ externalId: "50396062", count: 0 }],
+      });
+      expect((result.structuredContent as typeof demoTaskboardSnapshot).items.every(
+        (item) => item.providerId === "demo" && item.projectExternalId === "demo",
+      )).toBe(true);
+      expect(fixture.service.getCatalog).toHaveBeenCalledOnce();
+      expect(fixture.service.discover).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("clears the project catalog on disconnect and account switch", async () => {
+    const fixture = catalog([project("50396062")]);
+    const status = vi.fn()
+      .mockResolvedValueOnce({ ok: true, connection: {
+        tapd: "connected", userName: "old-user", companyName: "old-company",
+      } })
+      .mockResolvedValue({ ok: true, connection: {
+        tapd: "connected", userName: "new-user", companyName: "new-company",
+      } });
+    const authService: TapdAuthenticator = {
+      ...authenticator(),
+      getConnectionStatus: status,
+      login: vi.fn().mockResolvedValue({ ok: true, connection: {
+        tapd: "connected", userName: "new-user", companyName: "new-company",
+      } }),
+    };
+    const connection = await connectClient(await createBundle(), authService, fixture.service);
+
+    try {
+      await connection.client.callTool({
+        name: "login_with_tapd_token",
+        arguments: { token: "private-token" },
+      });
+      await connection.client.callTool({ name: "disconnect_tapd", arguments: {} });
+      expect(fixture.service.clear).toHaveBeenCalledTimes(2);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("logs one sanitized completion event per project operation", async () => {
+    const fixture = catalog([project("sensitive-project-id")]);
+    const events: Parameters<ProjectOperationLogger["completed"]>[0][] = [];
+    const logger: ProjectOperationLogger = { completed: (event) => events.push(event) };
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, logger,
+    );
+
+    try {
+      await connection.client.callTool({
+        name: "discover_projects",
+        arguments: { providerId: "tapd" },
+      });
+      await connection.client.callTool({
+        name: "save_project_selection",
+        arguments: { providerId: "tapd", externalIds: ["sensitive-project-id"] },
+      });
+      await connection.client.callTool({
+        name: "add_project",
+        arguments: { providerId: "tapd", input: "https://secret.example/sensitive-project-id" },
+      });
+      expect(events).toHaveLength(3);
+      expect(events.map((event) => event.tool)).toEqual([
+        "discover_projects",
+        "save_project_selection",
+        "add_project",
+      ]);
+      expect(events).toEqual(events.map((event) => expect.objectContaining({
+        requestId: expect.any(String),
+        providerId: "tapd",
+        outcome: "success",
+        durationMs: expect.any(Number),
+      })));
+      const serialized = JSON.stringify(events);
+      expect(serialized).not.toMatch(/secret|sensitive-project-id|吴晨杰|Project/);
     } finally {
       await connection.close();
     }
@@ -114,7 +288,7 @@ describe("taskboard MCP app", () => {
     }
   });
 
-  it("returns structured board data and a working demo ping", async () => {
+  it("returns an empty unconfigured board and a working demo ping", async () => {
     const connection = await connectClient(await createBundle());
 
     try {
@@ -127,7 +301,12 @@ describe("taskboard MCP app", () => {
         arguments: { message: "hello" },
       });
 
-      expect(openResult.structuredContent).toEqual(demoTaskboardSnapshot);
+      expect(openResult.structuredContent).toMatchObject({
+        connection: { tapd: "connected" },
+        projectCatalog: { projects: [], stale: false },
+        projects: [],
+        items: [],
+      });
       expect(pingResult.structuredContent).toMatchObject({
         ok: true,
         message: "hello",
