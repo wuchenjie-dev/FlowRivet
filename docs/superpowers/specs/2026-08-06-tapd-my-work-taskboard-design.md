@@ -31,6 +31,7 @@ FlowRivet 的第一个产品需求是在 Codex 中提供“我的 TAPD 待办”
 - React + shadcn 风格的 Codex 全屏插件 UI。
 - 使用固定在 Codex 左侧栏的专用任务作为看板稳定入口。
 - 与 UI 等价的无界面 MCP 工具。
+- 项目管理系统采用 Provider 中立领域模型；第一版只启用 TAPD，未来可切换其他 Provider。
 
 ### 3.2 第一版不包含
 
@@ -75,17 +76,32 @@ Phase 1 在已验证的 UI 和插件链路上增加：
 - 拖动回写、失败回退和权限错误。
 - 真实测试企业 E2E。
 
+### 4.3 Phase 1B：Provider 中立的项目发现与选择
+
+Phase 1B 只交付真实项目目录，不读取真实工作项：
+
+- FlowRivet 使用个人 Token 直接调用 TAPD OpenAPI，不依赖第三方 MCP 或 CLI。
+- 一次只启用一个项目管理系统；首个 Provider 为 TAPD。
+- 自动发现当前用户参与的项目，过滤组织节点和无效项目。
+- 首次发现后由用户明确勾选项目，新项目默认不选。
+- 项目选择跨 Companion 重启保存；重新发现保留已有选择。
+- 失去访问权限的项目保留记录并标记不可用，由用户确认后移除。
+- 自动发现失败时支持用项目链接或项目 ID 手动添加，并验证当前账号权限。
+- 已选择项目时继续展示明确标记的 Demo 工作项，但侧栏项目必须来自真实 Provider。
+
 ## 5. 架构
 
-第一阶段采用“官方插件 UI + 本地 Companion + TAPD 个人 Token”的本地架构。远程 OAuth Broker 保留为后续团队分发时的可选登录方式，不参与个人 Token 登录闭环。
+第一阶段采用“官方插件 UI + 本地 Companion + 项目管理 Provider”的本地架构。远程 OAuth Broker 保留为后续团队分发时的可选 TAPD 登录方式，不参与个人 Token 登录闭环。
 
 ```text
 Codex Plugin UI (React + shadcn)
         │ MCP Apps bridge
         ▼
 本地 FlowRivet Companion
-        ├─ MCP tools 与 UI Resource
-        ├─ TAPD 聚合与状态映射
+        ├─ Provider 中立的 MCP tools 与 UI Resource
+        ├─ ProjectCatalogService 与 WorkItemService
+        ├─ ProjectManagementProvider
+        │      └─ TapdProvider（首个实现）
         ├─ SQLite 缓存
         ├─ Windows DPAPI 加密的 TAPD Token
         ├─ 直接访问 TAPD 工作项 API
@@ -152,17 +168,28 @@ Codex Plugin UI (React + shadcn)
 - 更新工作项状态。
 - 将 TAPD 错误映射为稳定的领域错误。
 
+### 6.7 Provider 中立的项目目录
+
+- `ProviderRegistry` 返回当前唯一启用的 `ProjectManagementProvider`；Phase 1B 固定注册 `TapdProvider`。
+- `ProjectCatalogService` 只依赖 Provider 接口、凭据解析器和项目选择存储，不解析 TAPD 响应。
+- `ProjectManagementProvider` 提供连接检查、项目发现和手动项目解析；未来 Jira、禅道等 Provider 不得要求修改项目目录服务、MCP 合同或 React 项目选择页。
+- `ProviderCredentialResolver` 是 Provider Adapter 的私有依赖。通用项目服务、MCP 返回和 UI 不得接触 Token。
+- `ProjectSelectionStore` 使用版本化 JSON 和原子替换保存非敏感项目元数据；后续可在不改变服务接口的情况下迁移到 SQLite。
+- 当前 Provider 断开或切换账号时删除该 Provider 的项目目录和选择，禁止新账号继承旧账号的项目元数据。
+- 一次只启用一个 Provider，不在 Phase 1B 聚合多个项目管理系统。
+
 ## 7. MCP 工具设计
 
 第一版至少提供：
 
 | 工具 | 类型 | 作用 |
 |---|---|---|
-| `get_connection_status` | 读取 | 返回 TAPD、GitLab 连接状态，不返回凭据 |
+| `get_connection_status` | 读取 | 返回当前 Provider 和 GitLab 占位连接状态，不返回凭据 |
 | `login_with_tapd_token` | 操作 | 验证一次性提交的个人 Token，成功后用 DPAPI 加密保存 |
 | `disconnect_tapd` | 操作 | 删除本机 TAPD 凭据和连接元数据 |
-| `discover_tapd_projects` | 读取 | 自动发现项目并返回失败原因 |
-| `add_tapd_project` | 操作 | 从项目链接或 ID 添加兜底项目 |
+| `discover_projects` | 读取 | 从当前 Provider 自动发现项目并合并已保存选择 |
+| `save_project_selection` | 操作 | 原子保存当前 Provider 的项目选择 |
+| `add_project` | 操作 | 由当前 Provider 从项目链接或 ID 验证并添加项目 |
 | `list_my_work_items` | 读取 | 返回归一化工作项、项目、同步状态和筛选元数据 |
 | `get_status_mapping_options` | 读取 | 返回某项目和类型的 TAPD 原始状态 |
 | `save_status_mapping` | 操作 | 保存四阶段到 TAPD 状态的映射 |
@@ -173,34 +200,76 @@ Codex Plugin UI (React + shadcn)
 
 数据工具和渲染工具分离。除 `open_my_taskboard` 外，工具必须在不渲染 UI 时仍然有完整、稳定的结构化返回。
 
+通用项目工具使用 `providerId`，但 UI 从当前连接取得该值，不要求用户重复选择。现有 `login_with_tapd_token` 作为 TAPD Adapter 的认证入口暂时保留；TAPD 专有命名不得扩散到项目和工作项领域工具。
+
 ## 8. 领域模型
 
-统一工作项：
+统一工作项不得暴露 Provider 专有字段：
 
 ```ts
 type CanonicalStage = "todo" | "in_progress" | "in_review" | "done";
-type WorkItemKind = "story" | "task" | "bug";
+type WorkItemKind = "requirement" | "task" | "defect" | "other";
 
 interface WorkItem {
-  key: string;              // 企业、项目、类型、TAPD ID 的稳定组合键
-  tapdId: string;
-  workspaceId: string;
-  workspaceName: string;
+  key: string;              // Provider、项目、类型、外部 ID 的稳定组合键
+  providerId: string;
+  externalId: string;
+  projectExternalId: string;
+  projectName: string;
   kind: WorkItemKind;
+  providerItemType: string;
   title: string;
   stage: CanonicalStage;
-  tapdStatus: string;
+  providerStatus: string;
   priority?: string;
   dueAt?: string;
   completedAt?: string;
   updatedAt?: string;
-  tapdUrl: string;
+  externalUrl: string;
 }
 ```
 
-状态映射键为 `companyId + workspaceId + kind + canonicalStage`。映射值保存 TAPD 状态 ID、显示名和最后验证时间。
+状态映射键为 `providerId + projectExternalId + providerItemType + canonicalStage`。映射值保存 Provider 原始状态 ID、显示名和最后验证时间。`TapdProvider` 负责把 story、task、bug 映射为 requirement、task、defect；其他 Provider 可以保留自己的原始类型，同时映射为四类 UI 类型之一。
 
 SQLite 只保存项目元数据、状态映射、工作项缓存、最后同步时间和连接的非敏感标识。Token 不进入 SQLite。
+
+Phase 1B 的 Provider 中立项目模型：
+
+```ts
+interface ProjectRef {
+  providerId: string;
+  externalId: string;
+  name: string;
+  prettyName?: string;
+  selected: boolean;
+  available: boolean;
+  source: "discovered" | "manual";
+  lastVerifiedAt: string;
+}
+
+interface ProviderConnection {
+  providerId: string;
+  state: "disconnected" | "connected" | "expired";
+  accountDisplayName?: string;
+  tenantDisplayName?: string;
+}
+
+interface ExternalProject {
+  externalId: string;
+  name: string;
+  prettyName?: string;
+}
+
+interface ProjectManagementProvider {
+  id: string;
+  displayName: string;
+  getConnection(): Promise<ProviderConnection>;
+  discoverProjects(): Promise<ExternalProject[]>;
+  resolveProject(input: string): Promise<ExternalProject>;
+}
+```
+
+选择记录以 `providerId + externalId` 为稳定组合键。Phase 1B 先使用独立 JSON Store；Phase 1 工作项缓存落地时再统一迁移到 SQLite。
 
 ## 9. 登录与连接体验
 
@@ -240,13 +309,18 @@ SQLite 只保存项目元数据、状态映射、工作项缓存、最后同步�
 
 ## 10. 项目发现
 
-1. 优先调用 TAPD 当前用户参与项目能力。
-2. 对发现结果执行权限范围内的工作项查询，不假设管理员权限。
-3. 若 OAuth scope、API 或官方 MCP 能力无法枚举项目，返回结构化 `project_discovery_unavailable`。
-4. UI 要求用户粘贴一个 TAPD 项目 URL 或项目 ID。
-5. Companion 解析并验证项目；后续保留手动添加更多项目的入口。
+1. `ProjectCatalogService` 从 `ProviderRegistry` 取得当前 Provider。
+2. `TapdProvider` 从凭据解析器取得 Token 和当前用户 `nick`，调用 `GET /workspaces/user_participant_projects?nick=...`。
+3. Provider 过滤 `category=organization`、非正常状态和缺少 ID 的记录，再返回通用 `ExternalProject`。
+4. 服务将发现结果与已保存选择合并：已有选择保持，新项目默认不选。
+5. 失去权限或不再出现的项目保留并标记 `available=false`，不静默删除。
+6. 若自动发现失败，返回结构化 `project_discovery_unavailable`，并保留上次项目目录。
+7. UI 允许用户粘贴项目 URL 或项目 ID；`TapdProvider` 支持纯数字 ID、`/tapd_fe/{workspaceId}/...` 和 `/{workspaceId}/...`，解析后调用项目详情接口验证权限。
+8. 手动添加的项目也必须由用户明确勾选，不自动启用。
 
 非管理员只能读取和修改 TAPD 已授权范围内的工作项。管理员没有额外的隐式 FlowRivet 权限；所有能力以 TAPD 返回为准。
+
+首次登录且没有选择时显示项目选择页。列表支持搜索、逐项勾选和全选当前搜索结果；至少选择一个可用项目后才能进入看板。已有选择时直接进入看板，并从侧栏进入“管理项目”。
 
 ## 11. 同步与过滤
 
@@ -311,6 +385,12 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 | 状态映射缺失 | 弹出原始状态选择，不猜测写入 |
 | 网络中断 | 展示缓存；恢复后重试读取，不重试写入 |
 | 项目自动发现不可用 | 显示项目链接/ID 兜底入口 |
+| Provider 未连接 | 返回 `provider_not_connected` 并进入对应登录流程 |
+| Provider 未授权 | 返回 `provider_unauthorized`，不修改已保存选择 |
+| Provider 暂时不可用 | 返回 `provider_unavailable`，保留上次项目目录 |
+| 手动项目不存在 | 返回 `project_not_found`，不影响已有项目 |
+| 手动项目无权限 | 返回 `project_forbidden`，不保存该项目 |
+| 项目选择写入失败 | 返回 `selection_store_failed`，旧文件保持可读 |
 
 所有日志携带 `requestId`、工具名、项目 ID 和工作项 ID。禁止记录 Token、Authorization、授权码、state、verifier、应用 Secret 或工作项正文。
 
@@ -338,6 +418,10 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 - 凭据文件只包含密文和非敏感元数据；日志和 MCP 响应不包含 Token 或 Authorization。
 - 并发冲突、权限错误和网络错误分类。
 - 所有 MCP 工具输入输出 Schema。
+- 使用假 Provider 验证项目目录服务，确保核心层不依赖 TAPD 数据结构。
+- Provider 中立项目模型、项目合并和选择存储合同。
+- TAPD Provider 的扁平/嵌套响应、组织节点过滤、401、403、5xx、超时和异常 JSON。
+- 项目链接解析、跨重启恢复、新项目默认不选、不可用项目保留和原子写入失败。
 
 ### 15.3 Phase 1 E2E
 
@@ -352,6 +436,8 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 9. UI 与无界面 MCP 工具结果一致。
 10. Windows、Linux、macOS 配置路径和凭据存储契约。
 11. 重启 Companion 后恢复连接，断开后凭据不可恢复。
+12. 首次发现项目、搜索和保存选择、重新发现保留选择、手动链接/ID 添加。
+13. 项目发现失败时保留上次目录，Provider 中立 MCP 与 UI 结果一致。
 
 ## 16. 准入与准出标准
 
@@ -395,6 +481,16 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 - Token 不出现在 SQLite、日志、UI 结果或仓库。
 - 全量测试、类型检查、生产构建和 E2E 通过。
 - Windows 可用；Linux 和 macOS 的路径与凭据后端至少通过契约测试。
+
+### 16.6 Phase 1B 项目发现准出
+
+- 使用当前个人 Token 通过 TAPD OpenAPI 发现真实项目，不依赖第三方 MCP 或 CLI。
+- 用户可明确勾选项目，并在 Companion 重启后恢复选择。
+- 重新发现保留已有选择，新项目默认不选，失去权限的项目标记不可用。
+- 项目链接和项目 ID 均可验证添加，无权限项目不得写入选择。
+- 核心项目领域、MCP 工具和 React 项目选择页不依赖 TAPD 响应结构。
+- Token 不出现在项目选择文件、日志、MCP 响应或 UI 状态。
+- 全量测试、类型检查、生产构建和浏览器 E2E 通过，并完成 Windows 真实 TAPD 只读验收。
 
 ## 17. 未决技术验证
 
