@@ -38,6 +38,31 @@ function snapshotWithTapdState(
   };
 }
 
+function projectSelectionSnapshot(): TaskboardSnapshot {
+  return {
+    ...demoTaskboardSnapshot,
+    projectCatalog: {
+      ...demoTaskboardSnapshot.projectCatalog,
+      projects: [
+        { ...demoTaskboardSnapshot.projectCatalog.projects[0], selected: false },
+        { ...demoTaskboardSnapshot.projectCatalog.projects[1], selected: false },
+        {
+          providerId: "tapd",
+          externalId: "missing",
+          name: "历史项目",
+          selected: true,
+          available: false,
+          source: "manual",
+          lastVerifiedAt: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+      stale: false,
+    },
+    projects: [],
+    items: [],
+  };
+}
+
 describe("FlowRivet taskboard", () => {
   it("renders four stages and work from every demo project", () => {
     render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge()} />);
@@ -123,6 +148,92 @@ describe("FlowRivet taskboard", () => {
 
     await user.click(screen.getByRole("button", { name: /筛选项目：全部待办/ }));
     expect(within(board).getAllByText("学科工具").length).toBeGreaterThan(0);
+  });
+
+  it("searches, selects and saves a discovered project", async () => {
+    const user = userEvent.setup();
+    const selectedCatalog = {
+      ...projectSelectionSnapshot().projectCatalog,
+      projects: projectSelectionSnapshot().projectCatalog.projects.map((project) => ({
+        ...project,
+        selected: project.externalId === "50396062",
+      })),
+    };
+    const board = {
+      ...demoTaskboardSnapshot,
+      projectCatalog: selectedCatalog,
+      projects: [{ ...selectedCatalog.projects[0], count: 0 }],
+      items: [],
+    };
+    const callTool = vi.fn(async (name: string) => ({
+      content: [],
+      structuredContent: name === "save_project_selection" ? selectedCatalog : board,
+    }));
+    render(<App initialSnapshot={projectSelectionSnapshot()} bridge={createBridge({ callTool })} />);
+
+    expect(screen.getByRole("heading", { name: "选择项目" })).toBeTruthy();
+    await user.type(screen.getByRole("searchbox", { name: "搜索项目" }), "ABF");
+    await user.click(screen.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }));
+    await user.click(screen.getByRole("button", { name: "使用 1 个项目" }));
+
+    expect(callTool).toHaveBeenCalledWith("save_project_selection", {
+      providerId: "tapd",
+      externalIds: ["50396062"],
+    });
+    expect(await screen.findByRole("region", { name: "工作项看板" })).toBeTruthy();
+  });
+
+  it("keeps checks on rediscovery and selects only filtered available projects", async () => {
+    const user = userEvent.setup();
+    const discovered = projectSelectionSnapshot().projectCatalog;
+    const callTool = vi.fn().mockResolvedValue({ content: [], structuredContent: discovered });
+    render(<App initialSnapshot={projectSelectionSnapshot()} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }));
+    await user.click(screen.getByRole("button", { name: "重新发现项目" }));
+    expect((screen.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "选择项目：历史项目" }) as HTMLInputElement).disabled).toBe(true);
+
+    await user.type(screen.getByRole("searchbox", { name: "搜索项目" }), "学科");
+    await user.click(screen.getByRole("checkbox", { name: "选择当前筛选结果" }));
+    expect((screen.getByRole("checkbox", { name: "选择项目：学科工具" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("adds a project manually and stays in selection when save fails", async () => {
+    const user = userEvent.setup();
+    const added = {
+      ...projectSelectionSnapshot().projectCatalog,
+      projects: [
+        ...projectSelectionSnapshot().projectCatalog.projects,
+        {
+          providerId: "tapd", externalId: "9001", name: "手工项目",
+          selected: false, available: true, source: "manual" as const,
+          lastVerifiedAt: "2026-08-07T00:00:00.000Z",
+        },
+      ],
+    };
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "add_project") return { content: [], structuredContent: added };
+      if (name === "save_project_selection") throw new Error("save failed");
+      return { content: [], structuredContent: projectSelectionSnapshot().projectCatalog };
+    });
+    render(<App initialSnapshot={projectSelectionSnapshot()} bridge={createBridge({ callTool })} />);
+
+    await user.type(screen.getByLabelText("项目 ID 或 URL"), "https://www.tapd.cn/9001");
+    await user.click(screen.getByRole("button", { name: "添加项目" }));
+    expect(await screen.findByText("手工项目")).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: "选择项目：手工项目" }));
+    await user.click(screen.getByRole("button", { name: "使用 1 个项目" }));
+    expect(await screen.findByText("项目选择保存失败，请重试")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "选择项目" })).toBeTruthy();
+  });
+
+  it("returns from the board to project management", async () => {
+    const user = userEvent.setup();
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge()} />);
+
+    await user.click(screen.getByRole("button", { name: "管理项目" }));
+    expect(screen.getByRole("heading", { name: "选择项目" })).toBeTruthy();
   });
 
   it("shows a login action instead of an empty board when disconnected", () => {

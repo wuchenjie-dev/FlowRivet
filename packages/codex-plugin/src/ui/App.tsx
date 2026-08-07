@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
+import { projectCatalogSchema, type ProjectCatalogResult } from "../contracts/projects.js";
 import {
   taskboardSnapshotSchema,
   type CanonicalStage,
@@ -10,6 +11,7 @@ import type { McpAppsBridge } from "./bridge.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
+import { ProjectSelector } from "./components/ProjectSelector.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin } from "./components/TapdLogin.js";
 
@@ -21,6 +23,7 @@ interface AppProps {
 export function App({ initialSnapshot, bridge }: AppProps) {
   const [items, setItems] = useState(initialSnapshot.items);
   const [projects, setProjects] = useState(initialSnapshot.projects);
+  const [projectCatalog, setProjectCatalog] = useState(initialSnapshot.projectCatalog);
   const [connection, setConnection] = useState(initialSnapshot.connection);
   const [lastSyncedAt, setLastSyncedAt] = useState(initialSnapshot.lastSyncedAt);
   const [selectedFilter, setSelectedFilter] = useState<BoardFilter>("all");
@@ -32,6 +35,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [disconnectPending, setDisconnectPending] = useState(false);
   const [displayState, setDisplayState] = useState(() => bridge.getDisplayState());
   const [fullscreenPending, setFullscreenPending] = useState(false);
+  const needsProjectSelection = connection.tapd === "connected"
+    && projectCatalog.projects.every((project) => !project.selected || !project.available);
+  const [managingProjects, setManagingProjects] = useState(needsProjectSelection);
   const tapdState = connection.tapd;
   const canDrag = tapdState === "connected";
 
@@ -88,8 +94,37 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   function applySnapshot(snapshot: TaskboardSnapshot) {
     setConnection(snapshot.connection);
     setProjects(snapshot.projects);
+    setProjectCatalog(snapshot.projectCatalog);
     setItems(snapshot.items);
     setLastSyncedAt(snapshot.lastSyncedAt);
+  }
+
+  async function callProjectTool(
+    name: "discover_projects" | "add_project",
+    arguments_: Record<string, unknown>,
+  ): Promise<ProjectCatalogResult> {
+    const result = await bridge.callTool(name, {
+      providerId: projectCatalog.provider.providerId,
+      ...arguments_,
+    });
+    const parsed = projectCatalogSchema.safeParse(result.structuredContent);
+    if (!parsed.success) throw new Error("invalid project catalog");
+    setProjectCatalog(parsed.data);
+    return parsed.data;
+  }
+
+  async function saveProjectSelection(externalIds: string[]) {
+    const result = await bridge.callTool("save_project_selection", {
+      providerId: projectCatalog.provider.providerId,
+      externalIds,
+    });
+    const parsed = projectCatalogSchema.safeParse(result.structuredContent);
+    if (!parsed.success) throw new Error("invalid project catalog");
+    setProjectCatalog(parsed.data);
+    await loadBoard();
+    setSelectedFilter("all");
+    setManagingProjects(false);
+    setNotice(`已启用 ${externalIds.length} 个项目`);
   }
 
   async function loadBoard() {
@@ -131,6 +166,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       if (!parsed.success || !parsed.data.ok) throw new Error("disconnect failed");
       setConnection((current) => ({ ...current, ...parsed.data.connection }));
       setProjects([]);
+      setProjectCatalog((current) => ({ ...current, projects: [], stale: false }));
       setItems([]);
       setMenuOpen(false);
       setNotice("TAPD 已断开，本机凭据已删除");
@@ -181,9 +217,23 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           error={authError}
           onSubmit={login}
         />
+      ) : managingProjects || needsProjectSelection ? (
+        <ProjectSelector
+          catalog={projectCatalog}
+          canCancel={!needsProjectSelection}
+          onDiscover={() => callProjectTool("discover_projects", {})}
+          onAdd={(input) => callProjectTool("add_project", { input })}
+          onSave={saveProjectSelection}
+          onCancel={() => setManagingProjects(false)}
+        />
       ) : (
         <div className="workspace-layout">
-          <ProjectSidebar projects={projects} selected={selectedFilter} onSelect={setSelectedFilter} />
+          <ProjectSidebar
+            projects={projects}
+            selected={selectedFilter}
+            onSelect={setSelectedFilter}
+            onManageProjects={() => setManagingProjects(true)}
+          />
           <main className="board-main">
             <div className="board-heading">
               <div><h1>我的待办</h1><p>{filteredItems.length} 个工作项 · {projects.length} 个项目</p></div>
