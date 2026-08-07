@@ -27,10 +27,10 @@ export function ProjectSidebar({ projects, selected, onSelect }: ProjectSidebarP
         <p className="nav-label nav-label--projects">项目</p>
         {projects.map((project) => (
           <button
-            key={project.id}
-            className={selected === project.id ? "nav-item is-active" : "nav-item"}
+            key={`${project.providerId}:${project.externalId}`}
+            className={selected === project.externalId ? "nav-item is-active" : "nav-item"}
             type="button"
-            onClick={() => onSelect(project.id)}
+            onClick={() => onSelect(project.externalId)}
             aria-label={`筛选项目：${project.name}`}
           >
             <span className="project-swatch" aria-hidden="true" />

@@ -67,7 +67,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     if (selectedFilter === "overdue") {
       return Boolean(item.dueAt && new Date(item.dueAt).getTime() < Date.now());
     }
-    return item.workspaceId === selectedFilter;
+    return item.projectExternalId === selectedFilter;
   });
 
   function moveItem(key: string, stage: CanonicalStage) {

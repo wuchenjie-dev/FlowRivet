@@ -1,12 +1,13 @@
 import { useDraggable } from "@dnd-kit/core";
-import { Bug, CheckSquare2, GripVertical, Lightbulb } from "lucide-react";
+import { Bug, CheckSquare2, CircleDot, GripVertical, Lightbulb } from "lucide-react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 
 const kindPresentation = {
-  story: { label: "需求", Icon: Lightbulb },
+  requirement: { label: "需求", Icon: Lightbulb },
   task: { label: "任务", Icon: CheckSquare2 },
-  bug: { label: "缺陷", Icon: Bug },
+  defect: { label: "缺陷", Icon: Bug },
+  other: { label: "其他", Icon: CircleDot },
 } as const;
 
 interface WorkItemCardProps {
@@ -37,12 +38,12 @@ export function WorkItemCard({ item, disabled }: WorkItemCardProps) {
     >
       <div className="card-topline">
         <span className={`kind-badge kind-badge--${item.kind}`}><Icon size={13} />{label}</span>
-        <span className="tapd-id">{item.tapdId}</span>
+        <span className="tapd-id">{item.externalId}</span>
         <GripVertical className="drag-handle" size={15} aria-hidden="true" />
       </div>
       <h3>{item.title}</h3>
       <div className="card-meta">
-        <span className="project-name">{item.workspaceName}</span>
+        <span className="project-name">{item.projectName}</span>
         {item.priority ? <span className={`priority priority--${item.priority}`}>{item.priority}</span> : null}
         {dueAt ? <time dateTime={item.dueAt}>截止 {dueAt}</time> : null}
       </div>

@@ -88,6 +88,21 @@ export function createTaskboardMcpServer(
       const connected = auth.connection.tapd === "connected";
       const snapshot = taskboardSnapshotSchema.parse({
         ...(connected ? demoTaskboardSnapshot : {
+          projectCatalog: {
+            provider: {
+              providerId: "tapd",
+              displayName: "TAPD",
+              state: auth.connection.tapd,
+              ...(auth.connection.userName
+                ? { accountDisplayName: auth.connection.userName }
+                : {}),
+              ...(auth.connection.companyName
+                ? { tenantDisplayName: auth.connection.companyName }
+                : {}),
+            },
+            projects: [],
+            stale: false,
+          },
           projects: [],
           items: [],
           stages: demoTaskboardSnapshot.stages,

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { projectCatalogSchema, projectRefSchema } from "./projects.js";
+
 export const canonicalStages = [
   "todo",
   "in_progress",
@@ -7,7 +9,7 @@ export const canonicalStages = [
   "done",
 ] as const;
 
-export const workItemKinds = ["story", "task", "bug"] as const;
+export const workItemKinds = ["requirement", "task", "defect", "other"] as const;
 
 export const connectionStates = [
   "disconnected",
@@ -18,14 +20,18 @@ export const connectionStates = [
 
 export const workItemSchema = z.object({
   key: z.string(),
-  tapdId: z.string(),
-  workspaceId: z.string(),
-  workspaceName: z.string(),
+  providerId: z.string(),
+  externalId: z.string(),
+  projectExternalId: z.string(),
+  projectName: z.string(),
   kind: z.enum(workItemKinds),
+  providerItemType: z.string(),
   title: z.string(),
   stage: z.enum(canonicalStages),
+  providerStatus: z.string(),
   priority: z.string().optional(),
   dueAt: z.string().optional(),
+  externalUrl: z.string(),
 });
 
 export const taskboardSnapshotSchema = z.object({
@@ -35,13 +41,10 @@ export const taskboardSnapshotSchema = z.object({
     userName: z.string().optional(),
     companyName: z.string().optional(),
   }),
-  projects: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      count: z.number().int().nonnegative(),
-    }),
-  ),
+  projectCatalog: projectCatalogSchema,
+  projects: z.array(projectRefSchema.extend({
+    count: z.number().int().nonnegative(),
+  })),
   stages: z.tuple([
     z.literal("todo"),
     z.literal("in_progress"),
