@@ -10,6 +10,7 @@ import {
 
 const PROTECT_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
 $plain = [Console]::In.ReadToEnd()
 $bytes = [Text.Encoding]::UTF8.GetBytes($plain)
 $protected = [Security.Cryptography.ProtectedData]::Protect(
@@ -22,6 +23,7 @@ $protected = [Security.Cryptography.ProtectedData]::Protect(
 
 const UNPROTECT_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
 $ciphertext = [Console]::In.ReadToEnd()
 $protected = [Convert]::FromBase64String($ciphertext)
 $bytes = [Security.Cryptography.ProtectedData]::Unprotect(

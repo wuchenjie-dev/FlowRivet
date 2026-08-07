@@ -39,6 +39,7 @@ describe("PowerShell DPAPI protector", () => {
     expect(execute).toHaveBeenCalledOnce();
     const [command, args, stdin] = execute.mock.calls[0] as [string, string[], string];
     expect(command.toLowerCase()).toContain("powershell");
+    expect(args.join(" ")).toContain("Add-Type -AssemblyName System.Security");
     expect(args.join(" ")).not.toContain(token);
     expect(stdin).toBe(token);
   });
