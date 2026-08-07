@@ -49,6 +49,8 @@ $marketplaceRoot = Join-Path $env:LOCALAPPDATA "FlowRivetMarketplace"
 $pluginCreator = Join-Path $env:USERPROFILE ".codex\skills\.system\plugin-creator"
 $marketplaceFile = Join-Path $marketplaceRoot ".agents\plugins\marketplace.json"
 $pluginParent = Join-Path $marketplaceRoot "plugins"
+$desktopCodex = Join-Path $env:USERPROFILE ".codex\plugins\.plugin-appserver\codex.exe"
+$codexCli = if (Test-Path $desktopCodex) { $desktopCodex } else { (Get-Command codex).Source }
 
 python "$pluginCreator\scripts\create_basic_plugin.py" flowrivet `
   --path $pluginParent `
@@ -59,7 +61,8 @@ python "$pluginCreator\scripts\create_basic_plugin.py" flowrivet `
 $generatedPlugin = Join-Path $pluginParent "flowrivet"
 Remove-Item -LiteralPath $generatedPlugin -Recurse
 New-Item -ItemType Junction -Path $generatedPlugin -Target $repo
-codex plugin marketplace add $marketplaceRoot
+& $codexCli plugin marketplace add $marketplaceRoot
+& $codexCli plugin add flowrivet@flowrivet-local
 ```
 
 这里删除的只是刚生成的空插件骨架，随后用目录联接替换；不会删除 FlowRivet 仓库。首次创建后不再重复执行该段。
@@ -70,7 +73,7 @@ codex plugin marketplace add $marketplaceRoot
 python "$pluginCreator\scripts\update_plugin_cachebuster.py" $repo
 ```
 
-若当前 `codex plugin --help` 提供 `add` 子命令，可执行 `codex plugin add flowrivet@flowrivet-local`。若没有该子命令，在 Codex 插件页找到 `FlowRivet`，完成安装或重新安装并启用。更新后新建一个 Codex 任务，旧任务不会自动重新加载 Skill 和 MCP 工具。
+Windows 的 PATH 可能仍指向不含 `plugin add` 的旧 Codex CLI，因此脚本优先调用桌面 Codex 自带的 `.plugin-appserver\codex.exe`。安装完成后执行 `& $codexCli plugin list`，FlowRivet 必须显示为 `installed, enabled`；只有 marketplace 而显示 `not installed` 时，插件连接不会加载。更新后重新执行 `plugin add flowrivet@flowrivet-local` 并新建 Codex 任务，旧任务不会自动重新加载 Skill 和 MCP 工具。
 
 ## Codex 验收
 
@@ -101,6 +104,7 @@ npm run test:e2e --workspace @flowrivet/codex-plugin
 - UI bundle 缺失：重新执行 workspace 构建并确认 `dist/ui/taskboard.html` 存在。
 - 仍看到旧页面：刷新 cachebuster，重新安装插件，并新建 Codex 任务。
 - 插件列表没有 FlowRivet：重新执行 `codex plugin marketplace add`，然后重启 Codex。
+- 显示“未能加载插件连接”：使用桌面内置 `$desktopCodex` 执行 `plugin list`；若为 `not installed`，执行 `plugin add flowrivet@flowrivet-local`，不要只注册 marketplace。
 
 ## 后续阶段
 

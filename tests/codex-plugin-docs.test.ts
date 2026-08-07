@@ -17,6 +17,8 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("npm start --workspace @flowrivet/codex-plugin");
     expect(guide).toContain("http://127.0.0.1:43120/health");
     expect(guide).toContain("codex plugin marketplace add");
+    expect(guide).toContain(".plugin-appserver\\codex.exe");
+    expect(guide).toContain("plugin add flowrivet@flowrivet-local");
     expect(guide).toContain("打开我的 TAPD 待办看板");
     expect(guide).toContain("Demo 数据");
     expect(guide).not.toMatch(/TAPD_TOKEN|TAPD_SECRET|client_secret/i);
