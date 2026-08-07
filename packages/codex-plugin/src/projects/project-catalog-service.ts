@@ -27,11 +27,14 @@ export class ProjectCatalogService implements ProjectCatalog {
   ) {}
 
   async getCatalog(): Promise<ProjectCatalogResult> {
-    return this.result(await this.store.load(this.provider.id), false);
+    return this.result(
+      enableAvailable(await this.store.load(this.provider.id)),
+      false,
+    );
   }
 
   async discover(): Promise<ProjectCatalogResult> {
-    const saved = await this.store.load(this.provider.id);
+    const saved = enableAvailable(await this.store.load(this.provider.id));
     let discovered: ExternalProject[];
 
     try {
@@ -50,7 +53,7 @@ export class ProjectCatalogService implements ProjectCatalog {
         externalId: project.externalId,
         name: project.name,
         ...(project.prettyName ? { prettyName: project.prettyName } : {}),
-        selected: previous?.selected ?? false,
+        selected: true,
         available: true,
         source: previous?.source ?? "discovered",
         lastVerifiedAt: verifiedAt,
@@ -151,4 +154,10 @@ function sortProjects(projects: ProjectRef[]): ProjectRef[] {
     if (left.available !== right.available) return left.available ? -1 : 1;
     return left.name.localeCompare(right.name) || left.externalId.localeCompare(right.externalId);
   });
+}
+
+function enableAvailable(projects: ProjectRef[]): ProjectRef[] {
+  return projects.map((project) => project.available
+    ? { ...project, selected: true }
+    : project);
 }

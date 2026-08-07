@@ -84,7 +84,7 @@ function setup(projects: ProjectRef[] = []) {
 }
 
 describe("project catalog service", () => {
-  it("merges discovery with saved selection and keeps new projects unselected", async () => {
+  it("merges discovery and automatically enables every available project", async () => {
     const { provider, service, store } = setup([saved("A")]);
     provider.discovered = [
       { externalId: "B", name: "Beta" },
@@ -96,7 +96,7 @@ describe("project catalog service", () => {
     expect(result.stale).toBe(false);
     expect(result.projects).toEqual([
       expect.objectContaining({ externalId: "A", name: "Alpha renamed", selected: true }),
-      expect.objectContaining({ externalId: "B", selected: false }),
+      expect.objectContaining({ externalId: "B", selected: true }),
     ]);
     expect(store.projects).toEqual(result.projects);
   });
@@ -107,21 +107,21 @@ describe("project catalog service", () => {
 
     await expect(service.discover()).resolves.toMatchObject({
       projects: [
-        { externalId: "A", available: true, selected: false },
+        { externalId: "A", available: true, selected: true },
         { externalId: "C", available: false, selected: true },
       ],
     });
   });
 
   it("returns a stale saved catalog and does not overwrite storage when discovery fails", async () => {
-    const { provider, service, store } = setup([saved("A")]);
+    const { provider, service, store } = setup([saved("A", { selected: false })]);
     provider.discoveryError = new ProjectProviderError("provider_unavailable");
     const save = vi.spyOn(store, "save");
 
     await expect(service.discover()).resolves.toMatchObject({
       stale: true,
       errorCode: "provider_unavailable",
-      projects: [{ externalId: "A" }],
+      projects: [{ externalId: "A", selected: true }],
     });
     expect(save).not.toHaveBeenCalled();
   });
@@ -141,13 +141,13 @@ describe("project catalog service", () => {
     });
   });
 
-  it("reads the current catalog without starting discovery", async () => {
-    const { provider, service } = setup([saved("A")]);
+  it("reads old cached projects as enabled without starting discovery", async () => {
+    const { provider, service } = setup([saved("A", { selected: false })]);
     const discover = vi.spyOn(provider, "discoverProjects");
 
     await expect(service.getCatalog()).resolves.toMatchObject({
       stale: false,
-      projects: [{ externalId: "A" }],
+      projects: [{ externalId: "A", selected: true }],
     });
     expect(discover).not.toHaveBeenCalled();
   });
