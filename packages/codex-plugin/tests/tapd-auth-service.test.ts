@@ -49,6 +49,19 @@ describe("TAPD identity client", () => {
     );
   });
 
+  it("accepts the flat nick-only response returned for personal tokens", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 1,
+      data: { nick: "wuchenjie" },
+      info: "success",
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new TapdIdentityClient({ fetcher });
+
+    await expect(client.validate("personal-token")).resolves.toEqual({
+      userName: "wuchenjie",
+    });
+  });
+
   it.each([
     [401, "invalid_token"],
     [403, "permission_denied"],

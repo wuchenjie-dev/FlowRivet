@@ -69,7 +69,7 @@ function success(identity: TapdIdentity): AuthResult {
     connection: {
       tapd: "connected",
       userName: identity.userName,
-      companyName: identity.companyName,
+      ...(identity.companyName ? { companyName: identity.companyName } : {}),
     },
   };
 }
