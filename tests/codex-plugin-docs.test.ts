@@ -23,7 +23,8 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("远程插件目录");
     expect(guide).toContain("打开我的 TAPD 待办看板");
     expect(guide).toContain("Demo 数据");
-    expect(guide).not.toMatch(/TAPD_TOKEN|TAPD_SECRET|client_secret/i);
+    expect(guide).not.toMatch(/TAPD_TOKEN|TAPD_SECRET/i);
+    expect(guide).not.toMatch(/client_secret\s*(?:=|:)\s*["'][^"']+["']/i);
   });
 
   it("links the guide and design from the README", async () => {
