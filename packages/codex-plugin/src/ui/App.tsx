@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
-import { projectCatalogSchema, type ProjectCatalogResult } from "../contracts/projects.js";
 import {
   taskboardSnapshotSchema,
-  type CanonicalStage,
   type TaskboardSnapshot,
 } from "../contracts/taskboard.js";
 import type { McpAppsBridge } from "./bridge.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
-import { ProjectSelector } from "./components/ProjectSelector.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin } from "./components/TapdLogin.js";
 
@@ -25,6 +22,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [projects, setProjects] = useState(initialSnapshot.projects);
   const [projectCatalog, setProjectCatalog] = useState(initialSnapshot.projectCatalog);
   const [connection, setConnection] = useState(initialSnapshot.connection);
+  const [syncSummary, setSyncSummary] = useState(initialSnapshot.syncSummary);
+  const [syncErrorCode, setSyncErrorCode] = useState(initialSnapshot.syncErrorCode);
   const [lastSyncedAt, setLastSyncedAt] = useState(initialSnapshot.lastSyncedAt);
   const [selectedFilter, setSelectedFilter] = useState<BoardFilter>("all");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -33,13 +32,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [authError, setAuthError] = useState<string>();
   const [authPending, setAuthPending] = useState(false);
   const [disconnectPending, setDisconnectPending] = useState(false);
+  const [refreshPending, setRefreshPending] = useState(false);
   const [displayState, setDisplayState] = useState(() => bridge.getDisplayState());
   const [fullscreenPending, setFullscreenPending] = useState(false);
-  const needsProjectSelection = connection.tapd === "connected"
-    && projectCatalog.projects.every((project) => !project.selected || !project.available);
-  const [managingProjects, setManagingProjects] = useState(needsProjectSelection);
   const tapdState = connection.tapd;
-  const canDrag = tapdState === "connected";
 
   async function enterFullscreen(automatic = false) {
     setFullscreenPending(true);
@@ -76,11 +72,6 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     return item.projectExternalId === selectedFilter;
   });
 
-  function moveItem(key: string, stage: CanonicalStage) {
-    setItems((current) => current.map((item) => item.key === key ? { ...item, stage } : item));
-    setNotice("Demo：看板位置已更新，未写入 TAPD");
-  }
-
   async function pingCompanion() {
     setPingState("pending");
     try {
@@ -96,42 +87,17 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     setProjects(snapshot.projects);
     setProjectCatalog(snapshot.projectCatalog);
     setItems(snapshot.items);
+    setSyncSummary(snapshot.syncSummary);
+    setSyncErrorCode(snapshot.syncErrorCode);
     setLastSyncedAt(snapshot.lastSyncedAt);
   }
 
-  async function callProjectTool(
-    name: "discover_projects" | "add_project",
-    arguments_: Record<string, unknown>,
-  ): Promise<ProjectCatalogResult> {
-    const result = await bridge.callTool(name, {
-      providerId: projectCatalog.provider.providerId,
-      ...arguments_,
-    });
-    const parsed = projectCatalogSchema.safeParse(result.structuredContent);
-    if (!parsed.success) throw new Error("invalid project catalog");
-    setProjectCatalog(parsed.data);
-    return parsed.data;
-  }
-
-  async function saveProjectSelection(externalIds: string[]) {
-    const result = await bridge.callTool("save_project_selection", {
-      providerId: projectCatalog.provider.providerId,
-      externalIds,
-    });
-    const parsed = projectCatalogSchema.safeParse(result.structuredContent);
-    if (!parsed.success) throw new Error("invalid project catalog");
-    setProjectCatalog(parsed.data);
-    await loadBoard();
-    setSelectedFilter("all");
-    setManagingProjects(false);
-    setNotice(`已启用 ${externalIds.length} 个项目`);
-  }
-
-  async function loadBoard() {
-    const result = await bridge.callTool("open_my_taskboard", {});
+  async function loadBoard(tool: "open_my_taskboard" | "refresh_my_work_items") {
+    const result = await bridge.callTool(tool, {});
     const parsed = taskboardSnapshotSchema.safeParse(result.structuredContent);
     if (!parsed.success) throw new Error("invalid taskboard snapshot");
     applySnapshot(parsed.data);
+    return parsed.data;
   }
 
   async function login(token: string) {
@@ -141,16 +107,13 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       const result = await bridge.callTool("login_with_tapd_token", { token });
       const parsed = authResultSchema.safeParse(result.structuredContent);
       if (!parsed.success) throw new Error("invalid auth result");
-      setConnection((current) => ({
-        ...current,
-        ...parsed.data.connection,
-      }));
+      setConnection((current) => ({ ...current, ...parsed.data.connection }));
       if (!parsed.data.ok) {
         setAuthError(authErrorCopy(parsed.data.errorCode));
         return;
       }
-      await loadBoard();
-      setNotice("TAPD 已连接，当前工作项仍为 Demo 数据");
+      const snapshot = await loadBoard("open_my_taskboard");
+      setNotice(`TAPD 已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
     } catch {
       setAuthError("无法连接本地 Companion，请稍后重试");
     } finally {
@@ -168,6 +131,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       setProjects([]);
       setProjectCatalog((current) => ({ ...current, projects: [], stale: false }));
       setItems([]);
+      setSyncSummary({ successfulProjects: 0, failedProjects: 0, itemCount: 0 });
+      setSyncErrorCode(undefined);
       setMenuOpen(false);
       setNotice("TAPD 已断开，本机凭据已删除");
     } catch {
@@ -177,12 +142,16 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
   }
 
-  async function refreshDemo() {
+  async function refreshBoard() {
+    if (refreshPending) return;
+    setRefreshPending(true);
     try {
-      await loadBoard();
-      setNotice("Demo 数据已刷新");
+      const snapshot = await loadBoard("refresh_my_work_items");
+      setNotice(`已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
     } catch {
-      setNotice("看板刷新失败");
+      setNotice("看板同步失败，请重试");
+    } finally {
+      setRefreshPending(false);
     }
   }
 
@@ -196,8 +165,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         menuOpen={menuOpen}
         showFullscreen={displayState.canFullscreen && !displayState.isFullscreen}
         fullscreenPending={fullscreenPending}
+        refreshPending={refreshPending}
         onFullscreen={() => void enterFullscreen()}
-        onRefresh={() => void refreshDemo()}
+        onRefresh={() => void refreshBoard()}
         onToggleMenu={() => setMenuOpen((open) => !open)}
       />
       {menuOpen ? (
@@ -217,29 +187,26 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           error={authError}
           onSubmit={login}
         />
-      ) : managingProjects || needsProjectSelection ? (
-        <ProjectSelector
-          catalog={projectCatalog}
-          canCancel={!needsProjectSelection}
-          onDiscover={() => callProjectTool("discover_projects", {})}
-          onAdd={(input) => callProjectTool("add_project", { input })}
-          onSave={saveProjectSelection}
-          onCancel={() => setManagingProjects(false)}
-        />
       ) : (
         <div className="workspace-layout">
           <ProjectSidebar
             projects={projects}
             selected={selectedFilter}
             onSelect={setSelectedFilter}
-            onManageProjects={() => setManagingProjects(true)}
           />
           <main className="board-main">
             <div className="board-heading">
               <div><h1>我的待办</h1><p>{filteredItems.length} 个工作项 · {projects.length} 个项目</p></div>
-              <span className="demo-chip">Demo 数据</span>
+              <span className="demo-chip">只读</span>
             </div>
-            <TaskBoard stages={initialSnapshot.stages} items={filteredItems} disabled={!canDrag} onMove={moveItem} />
+            {syncErrorCode ? (
+              <p className="sync-error" role="alert">工作项同步失败，请重试</p>
+            ) : syncSummary.failedProjects > 0 ? (
+              <p className="sync-warning" role="status">
+                {syncSummary.failedProjects} 个项目同步失败，已保留其他结果
+              </p>
+            ) : null}
+            <TaskBoard stages={initialSnapshot.stages} items={filteredItems} />
           </main>
         </div>
       )}

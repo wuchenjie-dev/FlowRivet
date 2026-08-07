@@ -8,6 +8,7 @@ interface AppHeaderProps {
   menuOpen: boolean;
   showFullscreen: boolean;
   fullscreenPending: boolean;
+  refreshPending: boolean;
   onFullscreen: () => void;
   onRefresh: () => void;
   onToggleMenu: () => void;
@@ -26,6 +27,7 @@ export function AppHeader({
   menuOpen,
   showFullscreen,
   fullscreenPending,
+  refreshPending,
   onFullscreen,
   onRefresh,
   onToggleMenu,
@@ -65,6 +67,7 @@ export function AppHeader({
           className="icon-button"
           type="button"
           onClick={onRefresh}
+          disabled={refreshPending}
           aria-label="刷新看板"
           title="刷新看板"
         >

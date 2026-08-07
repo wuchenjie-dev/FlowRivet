@@ -1,5 +1,4 @@
-import { useDraggable } from "@dnd-kit/core";
-import { Bug, CheckSquare2, CircleDot, GripVertical, Lightbulb } from "lucide-react";
+import { Bug, CheckSquare2, CircleDot, Lightbulb } from "lucide-react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 
@@ -12,15 +11,9 @@ const kindPresentation = {
 
 interface WorkItemCardProps {
   item: WorkItem;
-  disabled: boolean;
 }
 
-export function WorkItemCard({ item, disabled }: WorkItemCardProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: item.key,
-    data: { item },
-    disabled,
-  });
+export function WorkItemCard({ item }: WorkItemCardProps) {
   const { label, Icon } = kindPresentation[item.kind];
   const dueAt = item.dueAt
     ? new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(item.dueAt))
@@ -28,18 +21,14 @@ export function WorkItemCard({ item, disabled }: WorkItemCardProps) {
 
   return (
     <article
-      ref={setNodeRef}
-      className={isDragging ? "work-card is-dragging" : "work-card"}
-      style={transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined}
-      {...attributes}
-      {...listeners}
+      className="work-card"
       role="article"
-      aria-disabled={disabled}
+      aria-readonly="true"
     >
       <div className="card-topline">
         <span className={`kind-badge kind-badge--${item.kind}`}><Icon size={13} />{label}</span>
         <span className="tapd-id">{item.externalId}</span>
-        <GripVertical className="drag-handle" size={15} aria-hidden="true" />
+        <span className="provider-status">{item.providerStatus}</span>
       </div>
       <h3>{item.title}</h3>
       <div className="card-meta">

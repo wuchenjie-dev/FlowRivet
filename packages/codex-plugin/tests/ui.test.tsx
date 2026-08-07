@@ -38,31 +38,6 @@ function snapshotWithTapdState(
   };
 }
 
-function projectSelectionSnapshot(): TaskboardSnapshot {
-  return {
-    ...demoTaskboardSnapshot,
-    projectCatalog: {
-      ...demoTaskboardSnapshot.projectCatalog,
-      projects: [
-        { ...demoTaskboardSnapshot.projectCatalog.projects[0], selected: false },
-        { ...demoTaskboardSnapshot.projectCatalog.projects[1], selected: false },
-        {
-          providerId: "tapd",
-          externalId: "missing",
-          name: "历史项目",
-          selected: true,
-          available: false,
-          source: "manual",
-          lastVerifiedAt: "2026-08-01T00:00:00.000Z",
-        },
-      ],
-      stale: false,
-    },
-    projects: [],
-    items: [],
-  };
-}
-
 describe("FlowRivet taskboard", () => {
   it("renders four stages and work from every demo project", () => {
     render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge()} />);
@@ -150,90 +125,78 @@ describe("FlowRivet taskboard", () => {
     expect(within(board).getAllByText("学科工具").length).toBeGreaterThan(0);
   });
 
-  it("searches, selects and saves a discovered project", async () => {
-    const user = userEvent.setup();
-    const selectedCatalog = {
-      ...projectSelectionSnapshot().projectCatalog,
-      projects: projectSelectionSnapshot().projectCatalog.projects.map((project) => ({
-        ...project,
-        selected: project.externalId === "50396062",
-      })),
-    };
-    const board = {
+  it("enters the board directly without project management or demo affordances", () => {
+    const snapshot = {
       ...demoTaskboardSnapshot,
-      projectCatalog: selectedCatalog,
-      projects: [{ ...selectedCatalog.projects[0], count: 0 }],
+      projectCatalog: {
+        ...demoTaskboardSnapshot.projectCatalog,
+        projects: demoTaskboardSnapshot.projectCatalog.projects.map((entry) => ({
+          ...entry,
+          selected: false,
+        })),
+      },
+    };
+    render(<App initialSnapshot={snapshot} bridge={createBridge()} />);
+
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "选择项目" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "管理项目" })).toBeNull();
+    expect(document.body.textContent).not.toContain("Demo 数据");
+    expect(document.body.textContent).toContain("只读");
+    for (const card of screen.getAllByRole("article")) {
+      expect(card.getAttribute("aria-readonly")).toBe("true");
+    }
+  });
+
+  it("refreshes real work items and replaces the board snapshot", async () => {
+    const user = userEvent.setup();
+    const refreshed = {
+      ...demoTaskboardSnapshot,
       items: [],
+      projects: demoTaskboardSnapshot.projects.map((entry) => ({ ...entry, count: 0 })),
+      syncSummary: { successfulProjects: 2, failedProjects: 0, itemCount: 0 },
     };
-    const callTool = vi.fn(async (name: string) => ({
-      content: [],
-      structuredContent: name === "save_project_selection" ? selectedCatalog : board,
-    }));
-    render(<App initialSnapshot={projectSelectionSnapshot()} bridge={createBridge({ callTool })} />);
+    const callTool = vi.fn().mockResolvedValue({ content: [], structuredContent: refreshed });
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
 
-    expect(screen.getByRole("heading", { name: "选择项目" })).toBeTruthy();
-    await user.type(screen.getByRole("searchbox", { name: "搜索项目" }), "ABF");
-    await user.click(screen.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }));
-    await user.click(screen.getByRole("button", { name: "使用 1 个项目" }));
+    await user.click(screen.getByRole("button", { name: "刷新看板" }));
 
-    expect(callTool).toHaveBeenCalledWith("save_project_selection", {
-      providerId: "tapd",
-      externalIds: ["50396062"],
-    });
-    expect(await screen.findByRole("region", { name: "工作项看板" })).toBeTruthy();
+    expect(callTool).toHaveBeenCalledWith("refresh_my_work_items", {});
+    expect(await screen.findByText("已同步 0 个工作项")).toBeTruthy();
+    expect(screen.getByText("0 个工作项 · 2 个项目")).toBeTruthy();
   });
 
-  it("keeps checks on rediscovery and selects only filtered available projects", async () => {
-    const user = userEvent.setup();
-    const discovered = projectSelectionSnapshot().projectCatalog;
-    const callTool = vi.fn().mockResolvedValue({ content: [], structuredContent: discovered });
-    render(<App initialSnapshot={projectSelectionSnapshot()} bridge={createBridge({ callTool })} />);
+  it("keeps partial data and shows the failed project count", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      syncSummary: { successfulProjects: 1, failedProjects: 1, itemCount: 7 },
+    }} bridge={createBridge()} />);
 
-    await user.click(screen.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }));
-    await user.click(screen.getByRole("button", { name: "重新发现项目" }));
-    expect((screen.getByRole("checkbox", { name: "选择项目：ABF 产品研发" }) as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByRole("checkbox", { name: "选择项目：历史项目" }) as HTMLInputElement).disabled).toBe(true);
-
-    await user.type(screen.getByRole("searchbox", { name: "搜索项目" }), "学科");
-    await user.click(screen.getByRole("checkbox", { name: "选择当前筛选结果" }));
-    expect((screen.getByRole("checkbox", { name: "选择项目：学科工具" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("1 个项目同步失败，已保留其他结果")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
   });
 
-  it("adds a project manually and stays in selection when save fails", async () => {
+  it("shows a retryable error when refresh fails", async () => {
     const user = userEvent.setup();
-    const added = {
-      ...projectSelectionSnapshot().projectCatalog,
-      projects: [
-        ...projectSelectionSnapshot().projectCatalog.projects,
-        {
-          providerId: "tapd", externalId: "9001", name: "手工项目",
-          selected: false, available: true, source: "manual" as const,
-          lastVerifiedAt: "2026-08-07T00:00:00.000Z",
-        },
-      ],
-    };
-    const callTool = vi.fn(async (name: string) => {
-      if (name === "add_project") return { content: [], structuredContent: added };
-      if (name === "save_project_selection") throw new Error("save failed");
-      return { content: [], structuredContent: projectSelectionSnapshot().projectCatalog };
-    });
-    render(<App initialSnapshot={projectSelectionSnapshot()} bridge={createBridge({ callTool })} />);
+    const callTool = vi.fn().mockRejectedValue(new Error("sync failed"));
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
 
-    await user.type(screen.getByLabelText("项目 ID 或 URL"), "https://www.tapd.cn/9001");
-    await user.click(screen.getByRole("button", { name: "添加项目" }));
-    expect(await screen.findByText("手工项目")).toBeTruthy();
-    await user.click(screen.getByRole("checkbox", { name: "选择项目：手工项目" }));
-    await user.click(screen.getByRole("button", { name: "使用 1 个项目" }));
-    expect(await screen.findByText("项目选择保存失败，请重试")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "选择项目" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "刷新看板" }));
+
+    expect(await screen.findByText("看板同步失败，请重试")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
   });
 
-  it("returns from the board to project management", async () => {
-    const user = userEvent.setup();
-    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge()} />);
+  it("does not present an initial synchronization failure as an empty success", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      items: [],
+      syncErrorCode: "work_item_sync_failed",
+      syncSummary: { successfulProjects: 0, failedProjects: 2, itemCount: 0 },
+    }} bridge={createBridge()} />);
 
-    await user.click(screen.getByRole("button", { name: "管理项目" }));
-    expect(screen.getByRole("heading", { name: "选择项目" })).toBeTruthy();
+    expect(screen.getByText("工作项同步失败，请重试")).toBeTruthy();
+    expect(screen.queryByText("当前没有待办工作项")).toBeNull();
   });
 
   it("shows a login action instead of an empty board when disconnected", () => {

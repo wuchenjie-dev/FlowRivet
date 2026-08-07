@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarClock, Layers3, Settings2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, Layers3 } from "lucide-react";
 
 import type { TaskboardSnapshot } from "../../contracts/taskboard.js";
 
@@ -8,10 +8,9 @@ interface ProjectSidebarProps {
   projects: TaskboardSnapshot["projects"];
   selected: BoardFilter;
   onSelect: (filter: BoardFilter) => void;
-  onManageProjects: () => void;
 }
 
-export function ProjectSidebar({ projects, selected, onSelect, onManageProjects }: ProjectSidebarProps) {
+export function ProjectSidebar({ projects, selected, onSelect }: ProjectSidebarProps) {
   return (
     <aside className="project-sidebar" aria-label="项目导航">
       <nav>
@@ -41,10 +40,7 @@ export function ProjectSidebar({ projects, selected, onSelect, onManageProjects 
         ))}
       </nav>
       <div className="sidebar-footer">
-        <button type="button" className="manage-projects" onClick={onManageProjects}>
-          <Settings2 size={15} />管理项目
-        </button>
-        <div className="sidebar-footnote"><span>Demo</span>模拟数据，未写入 TAPD</div>
+        <div className="sidebar-footnote"><span>只读</span>数据来自 TAPD</div>
       </div>
     </aside>
   );
