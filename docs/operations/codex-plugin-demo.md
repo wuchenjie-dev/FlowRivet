@@ -79,10 +79,15 @@ Windows 的 PATH 可能仍指向不含 `plugin add` 的旧 Codex CLI，因此脚
 
 1. 确认 Companion 仍在运行。
 2. 在 Codex 插件页确认 FlowRivet 已启用。
-3. 新建任务并输入：`打开我的 TAPD 待办看板`。
-4. 确认任务中出现 FlowRivet 页面，左侧有项目导航，主区有四列看板。
-5. 打开连接菜单并检查 Companion，应显示成功状态。
-6. 将一张卡片从“待处理”拖到“进行中”，应提示未写入 TAPD。
+3. 新建任务，命名为“FlowRivet 待办看板”，工作目录选择 FlowRivet 仓库。
+4. 将该任务固定到 Codex 左侧栏，后续将它作为看板的稳定入口。
+5. 在任务中输入：`打开我的 TAPD 待办看板`。
+6. 确认任务中出现 FlowRivet 页面，随后自动进入全屏，左侧有项目导航，主区有四列看板。
+7. 如果宿主拒绝自动全屏，确认页面仍可操作，并点击右上角“全屏打开看板”按钮重试。
+8. 打开连接菜单并检查 Companion，应显示成功状态。
+9. 将一张卡片从“待处理”拖到“进行中”，应提示未写入 TAPD。
+
+固定任务是 Codex 原生任务，不是插件注册的自定义侧边栏菜单。重新安装插件或更新 MCP 工具后需要新建任务；日常重新进入已固定任务时，可以再次输入启动提示打开新的看板实例。
 
 准出标准：插件可发现、MCP 健康检查通过、页面非空、四列可见、项目筛选有效、拖动只改变本地 Demo 状态，且日志和页面中没有任何凭据。
 
@@ -103,6 +108,7 @@ npm run test:e2e --workspace @flowrivet/codex-plugin
 - 页面提示无法连接宿主：确认从 Codex 插件打开，而不是直接双击生产 HTML。
 - UI bundle 缺失：重新执行 workspace 构建并确认 `dist/ui/taskboard.html` 存在。
 - 仍看到旧页面：刷新 cachebuster，重新安装插件，并新建 Codex 任务。
+- 自动全屏失败：使用右上角全屏按钮重试；即使宿主拒绝，全屏失败也不会阻断内嵌看板。
 - 插件列表没有 FlowRivet：重新执行 `codex plugin marketplace add`，然后重启 Codex。
 - 显示“未能加载插件连接”：使用桌面内置 `$desktopCodex` 执行 `plugin list`；若为 `not installed`，执行 `plugin add flowrivet@flowrivet-local`，不要只注册 marketplace。
 - 插件页整体显示“无法加载插件”：API Key 登录模式下，Codex 远程插件目录可能返回 401，因为远程目录要求 ChatGPT 登录。该提示不代表本地 FlowRivet 失败；以 `$desktopCodex plugin list` 的 `installed, enabled` 状态和新任务中 `demo_ping` 的实际结果为准，直接在新任务输入“打开我的 TAPD 待办看板”。
