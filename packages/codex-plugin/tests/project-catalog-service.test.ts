@@ -126,6 +126,21 @@ describe("project catalog service", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it("still returns the stale catalog when connection status also cannot be refreshed", async () => {
+    const { provider, service } = setup([saved("A")]);
+    provider.discoveryError = new ProjectProviderError("provider_unavailable");
+    provider.getConnection = vi.fn().mockRejectedValue(
+      new ProjectProviderError("provider_unavailable"),
+    );
+
+    await expect(service.discover()).resolves.toMatchObject({
+      provider: { providerId: "tapd", displayName: "TAPD", state: "disconnected" },
+      stale: true,
+      errorCode: "provider_unavailable",
+      projects: [{ externalId: "A" }],
+    });
+  });
+
   it("reads the current catalog without starting discovery", async () => {
     const { provider, service } = setup([saved("A")]);
     const discover = vi.spyOn(provider, "discoverProjects");

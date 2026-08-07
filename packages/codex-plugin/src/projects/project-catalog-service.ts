@@ -2,6 +2,7 @@ import type {
   ProjectCatalogResult,
   ProjectErrorCode,
   ProjectRef,
+  ProviderConnection,
 } from "../contracts/projects.js";
 import type {
   ExternalProject,
@@ -115,11 +116,27 @@ export class ProjectCatalogService implements ProjectCatalog {
     errorCode?: ProjectErrorCode,
   ): Promise<ProjectCatalogResult> {
     return {
-      provider: await this.provider.getConnection(),
+      provider: await this.getConnection(stale),
       projects: sortProjects(projects),
       stale,
       ...(errorCode ? { errorCode } : {}),
     };
+  }
+
+  private async getConnection(allowFallback: boolean): Promise<ProviderConnection> {
+    try {
+      return await this.provider.getConnection();
+    } catch (error) {
+      if (!allowFallback) throw error;
+      return {
+        providerId: this.provider.id,
+        displayName: this.provider.displayName,
+        state: error instanceof ProjectProviderError
+          && error.code === "provider_unauthorized"
+          ? "expired"
+          : "disconnected",
+      };
+    }
   }
 }
 
