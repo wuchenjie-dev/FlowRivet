@@ -1,0 +1,126 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { TapdWorkItemProvider } from "../src/work-items/tapd-work-item-provider.js";
+
+const credentials = {
+  resolve: vi.fn(async () => ({ token: "personal-token", accountDisplayName: "alice" })),
+};
+
+function story(id: string, owner = "alice") {
+  return { Story: {
+    id,
+    workspace_id: "100",
+    name: `Story ${id}`,
+    owner,
+    status: "planning",
+    priority: "high",
+    due: "2026-08-20",
+  } };
+}
+
+function payload(data: unknown[], status = 1) {
+  return Response.json({ status, info: status === 1 ? "success" : "failed", data });
+}
+
+describe("TAPD work item provider", () => {
+  it("paginates three item types and maps only the exact assignee", async () => {
+    const firstStoryPage = Array.from({ length: 200 }, (_, index) => story(String(index + 1)));
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(payload(firstStoryPage))
+      .mockResolvedValueOnce(payload([story("201", "malice; bob")]))
+      .mockResolvedValueOnce(payload([{
+        Task: {
+          id: "301", workspace_id: "100", name: "Task 301", owner: "bob; alice",
+          status: "progressing", priority: "middle", due: "2026-08-18",
+        },
+      }]))
+      .mockResolvedValueOnce(payload([{
+        id: "401", workspace_id: "100", title: "Bug 401", current_owner: "alice;carol",
+        status: "resolved", priority: "urgent", resolved: "2026-08-07T01:00:00Z",
+      }, {
+        Bug: {
+          id: "402", workspace_id: "100", title: "Other owner",
+          current_owner: "malice", status: "new",
+        },
+      }]));
+    const provider = new TapdWorkItemProvider({ credentialResolver: credentials, fetcher });
+
+    const result = await provider.listProjectWorkItems({
+      projectExternalId: "100",
+      projectName: "Project A",
+      accountDisplayName: "alice",
+    });
+
+    expect(result.failedKinds).toEqual([]);
+    expect(result.items).toHaveLength(202);
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ externalId: "301", kind: "task", stage: "in_progress" }),
+      expect.objectContaining({
+        externalId: "401", kind: "defect", stage: "in_review",
+        completedAt: "2026-08-07T01:00:00.000Z",
+      }),
+    ]));
+    expect(result.items.some((item) => item.externalId === "201")).toBe(false);
+    expect(result.items.some((item) => item.externalId === "402")).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+
+    const urls = fetcher.mock.calls.map(([input]) => new URL(String(input)));
+    expect(urls.map((url) => url.pathname)).toEqual([
+      "/stories", "/stories", "/tasks", "/bugs",
+    ]);
+    expect(urls[0]?.searchParams.get("workspace_id")).toBe("100");
+    expect(urls[0]?.searchParams.get("owner")).toBe("alice");
+    expect(urls[0]?.searchParams.get("limit")).toBe("200");
+    expect(urls[0]?.searchParams.get("page")).toBe("1");
+    expect(urls[1]?.searchParams.get("page")).toBe("2");
+    expect(urls[3]?.searchParams.get("current_owner")).toBe("alice");
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("authorization"))
+      .toBe("Bearer personal-token");
+  });
+
+  it("keeps successful types when one endpoint fails", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(payload([story("1")]))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(payload([]));
+    const provider = new TapdWorkItemProvider({ credentialResolver: credentials, fetcher });
+
+    await expect(provider.listProjectWorkItems({
+      projectExternalId: "100",
+      projectName: "Project A",
+      accountDisplayName: "alice",
+    })).resolves.toMatchObject({
+      items: [expect.objectContaining({ externalId: "1" })],
+      failedKinds: ["task"],
+    });
+  });
+
+  it.each([401, 403])("maps HTTP %s to provider_unauthorized", async (status) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("denied", { status }),
+    );
+    const provider = new TapdWorkItemProvider({ credentialResolver: credentials, fetcher });
+
+    await expect(provider.listProjectWorkItems({
+      projectExternalId: "100",
+      projectName: "Project A",
+      accountDisplayName: "alice",
+    })).rejects.toMatchObject({ code: "provider_unauthorized" });
+  });
+
+  it("retains unknown statuses as todo without dropping the item", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(payload([{ ...story("1").Story, status: "custom_unknown" }]))
+      .mockResolvedValueOnce(payload([]))
+      .mockResolvedValueOnce(payload([]));
+    const provider = new TapdWorkItemProvider({ credentialResolver: credentials, fetcher });
+
+    const result = await provider.listProjectWorkItems({
+      projectExternalId: "100",
+      projectName: "Project A",
+      accountDisplayName: "alice",
+    });
+
+    expect(result.items[0]).toMatchObject({ providerStatus: "custom_unknown", stage: "todo" });
+  });
+});

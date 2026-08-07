@@ -150,6 +150,12 @@ export function createTaskboardMcpServer(
         projectCatalog: catalog,
         projects: selectedProjects.map((project) => ({ ...project, count: 0 })),
         items: demoItems,
+        readOnly: true,
+        syncSummary: {
+          successfulProjects: selectedProjects.length,
+          failedProjects: 0,
+          itemCount: demoItems.length,
+        },
         stages: demoTaskboardSnapshot.stages,
         lastSyncedAt: now().toISOString(),
         connection: {
