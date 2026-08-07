@@ -3,9 +3,16 @@ import type { CallToolResult, Implementation } from "@modelcontextprotocol/sdk/t
 
 export type ToolResultListener = (result: CallToolResult) => void;
 
+export interface DisplayState {
+  canFullscreen: boolean;
+  isFullscreen: boolean;
+}
+
 export interface McpAppsBridge {
   initialize(appInfo: Implementation): Promise<void>;
   callTool(name: string, arguments_: Record<string, unknown>): Promise<CallToolResult>;
+  getDisplayState(): DisplayState;
+  requestFullscreen(): Promise<DisplayState>;
   onToolResult(listener: ToolResultListener): () => void;
   dispose(): Promise<void>;
 }
@@ -16,6 +23,14 @@ export function createMcpAppsBridge(hostWindow: Window = window.parent): McpApps
   let transport: PostMessageTransport | undefined;
   let initialization: Promise<void> | undefined;
   let disposed = false;
+
+  function getDisplayState(): DisplayState {
+    const context = app?.getHostContext();
+    return {
+      canFullscreen: context?.availableDisplayModes?.includes("fullscreen") ?? false,
+      isFullscreen: context?.displayMode === "fullscreen",
+    };
+  }
 
   return {
     initialize(appInfo) {
@@ -48,6 +63,25 @@ export function createMcpAppsBridge(hostWindow: Window = window.parent): McpApps
       }
       await initialization;
       return app.callServerTool({ name, arguments: arguments_ });
+    },
+
+    getDisplayState,
+
+    async requestFullscreen() {
+      if (!app || !initialization) {
+        throw new Error("MCP Apps bridge is not initialized");
+      }
+      await initialization;
+      const current = getDisplayState();
+      if (!current.canFullscreen || current.isFullscreen) {
+        return current;
+      }
+
+      const result = await app.requestDisplayMode({ mode: "fullscreen" });
+      return {
+        canFullscreen: true,
+        isFullscreen: result.mode === "fullscreen",
+      };
     },
 
     onToolResult(listener) {

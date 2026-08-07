@@ -46,7 +46,14 @@ function createHost() {
   return { host, posted, dispatch, request };
 }
 
-function initializationResult(id: RpcMessage["id"]): RpcMessage {
+function initializationResult(
+  id: RpcMessage["id"],
+  hostContext: Record<string, unknown> = {
+    theme: "light",
+    displayMode: "inline",
+    availableDisplayModes: ["inline", "fullscreen"],
+  },
+): RpcMessage {
   return {
     jsonrpc: "2.0",
     id,
@@ -54,16 +61,12 @@ function initializationResult(id: RpcMessage["id"]): RpcMessage {
       protocolVersion: "2026-01-26",
       hostInfo: { name: "flowrivet-test-host", version: "0.1.0" },
       hostCapabilities: { serverTools: {} },
-      hostContext: {
-        theme: "light",
-        displayMode: "fullscreen",
-        availableDisplayModes: ["fullscreen"],
-      },
+      hostContext,
     },
   };
 }
 
-async function initializeBridge() {
+async function initializeBridge(hostContext?: Record<string, unknown>) {
   const host = createHost();
   const bridge = createMcpAppsBridge(host.host);
   bridges.push(bridge);
@@ -72,7 +75,7 @@ async function initializeBridge() {
     version: "0.1.0",
   });
   const request = await host.request("ui/initialize");
-  host.dispatch(initializationResult(request.id));
+  host.dispatch(initializationResult(request.id, hostContext));
   await initializing;
   return { bridge, ...host };
 }
@@ -107,6 +110,56 @@ describe("MCP Apps bridge", () => {
     await expect(calling).resolves.toMatchObject({
       structuredContent: { ok: true, message: "hello" },
     });
+  });
+
+  it("requests fullscreen when the host supports it", async () => {
+    const { bridge, dispatch, request } = await initializeBridge();
+
+    expect(bridge.getDisplayState()).toEqual({
+      canFullscreen: true,
+      isFullscreen: false,
+    });
+
+    const requesting = bridge.requestFullscreen();
+    const displayRequest = await request("ui/request-display-mode");
+    expect(displayRequest.params).toEqual({ mode: "fullscreen" });
+    dispatch({
+      jsonrpc: "2.0",
+      id: displayRequest.id,
+      result: { mode: "fullscreen" },
+    });
+
+    await expect(requesting).resolves.toEqual({
+      canFullscreen: true,
+      isFullscreen: true,
+    });
+  });
+
+  it("does not request fullscreen when the host does not support it", async () => {
+    const { bridge, posted } = await initializeBridge({
+      theme: "light",
+      displayMode: "inline",
+      availableDisplayModes: ["inline"],
+    });
+
+    await expect(bridge.requestFullscreen()).resolves.toEqual({
+      canFullscreen: false,
+      isFullscreen: false,
+    });
+    expect(posted.some((message) => message.method === "ui/request-display-mode")).toBe(false);
+  });
+
+  it("propagates a rejected fullscreen request", async () => {
+    const { bridge, dispatch, request } = await initializeBridge();
+    const requesting = bridge.requestFullscreen();
+    const displayRequest = await request("ui/request-display-mode");
+    dispatch({
+      jsonrpc: "2.0",
+      id: displayRequest.id,
+      error: { code: -32_000, message: "Fullscreen denied" },
+    });
+
+    await expect(requesting).rejects.toThrow("Fullscreen denied");
   });
 
   it("rejects host tool errors", async () => {
