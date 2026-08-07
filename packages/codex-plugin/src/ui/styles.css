@@ -25,6 +25,7 @@ button { font: inherit; letter-spacing: 0; }
 button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .app-shell { min-height: 100dvh; background: #f4f5f7; position: relative; }
+.app-shell.is-fullscreen { width: 100vw; height: 100dvh; min-height: 0; overflow: hidden; }
 .app-header { height: var(--header-height); padding: 0 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--surface); border-bottom: 1px solid var(--border); position: relative; z-index: 20; }
 .brand-lockup, .header-actions, .account-button, .card-topline, .card-meta, .column-header, .board-heading, .stale-banner { display: flex; align-items: center; }
 .brand-lockup { gap: 10px; min-width: 170px; }

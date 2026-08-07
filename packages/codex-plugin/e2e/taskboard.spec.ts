@@ -12,6 +12,9 @@ test("desktop renders four columns without page overflow", async ({ page }) => {
   await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
   await expect(board.getByRole("complementary", { name: "项目导航" })).toBeVisible();
   await expect(board.locator(".task-column")).toHaveCount(4);
+  const shell = await board.locator(".app-shell").boundingBox();
+  expect(shell?.width).toBe(1440);
+  expect(shell?.height).toBe(900);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   const screenshot = await page.screenshot();

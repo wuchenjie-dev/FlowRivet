@@ -82,7 +82,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const isDisconnected = tapdState === "disconnected" || tapdState === "connecting";
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${displayState.isFullscreen ? " is-fullscreen" : ""}`}>
       <AppHeader
         connection={initialSnapshot.connection}
         lastSyncedAt={initialSnapshot.lastSyncedAt}

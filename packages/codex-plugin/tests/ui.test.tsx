@@ -69,6 +69,7 @@ describe("FlowRivet taskboard", () => {
     await vi.waitFor(() => {
       expect(screen.queryByRole("button", { name: "全屏打开看板" })).toBeNull();
     });
+    expect(document.querySelector(".app-shell")?.classList.contains("is-fullscreen")).toBe(true);
   });
 
   it("keeps the board usable and allows retry when fullscreen is denied", async () => {
@@ -108,6 +109,7 @@ describe("FlowRivet taskboard", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(requestFullscreen).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "全屏打开看板" })).toBeNull();
+    expect(document.querySelector(".app-shell")?.classList.contains("is-fullscreen")).toBe(false);
   });
 
   it("filters cards by project and restores the aggregate board", async () => {
