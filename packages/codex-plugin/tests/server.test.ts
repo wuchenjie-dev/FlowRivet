@@ -8,14 +8,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TapdAuthenticator } from "../src/auth/tapd-auth-service.js";
 import type { ProjectCatalogResult } from "../src/contracts/projects.js";
-import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import type { ProjectOperationLogger } from "../src/observability/project-operation-logger.js";
+import type { WorkItemOperationLogger } from "../src/observability/work-item-operation-logger.js";
 import type { ProjectCatalog } from "../src/projects/project-catalog-service.js";
 import {
   createTaskboardMcpServer,
   TASKBOARD_RESOURCE_URI,
 } from "../src/server/app.js";
 import { createTaskboardHttpServer } from "../src/server/http.js";
+import type { WorkItemSynchronizer } from "../src/work-items/work-item-service.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -57,12 +58,16 @@ async function connectClient(
   authService: TapdAuthenticator = authenticator(),
   projectCatalog: ProjectCatalog = catalog().service,
   projectLogger?: ProjectOperationLogger,
+  workItemService: WorkItemSynchronizer = synchronizer().service,
+  workItemLogger?: WorkItemOperationLogger,
 ) {
   const server = createTaskboardMcpServer({
     uiBundlePath,
     authService,
     projectCatalog,
     ...(projectLogger ? { projectLogger } : {}),
+    workItemService,
+    ...(workItemLogger ? { workItemLogger } : {}),
   });
   const client = new Client({ name: "flowrivet-test", version: "0.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -112,6 +117,33 @@ function project(externalId: string, selected = true) {
   };
 }
 
+function synchronizer(projects: ProjectCatalogResult["projects"] = []) {
+  const items = projects.map((entry, index) => ({
+    key: `tapd:${entry.externalId}:task:${index + 1}`,
+    providerId: "tapd",
+    externalId: String(index + 1),
+    projectExternalId: entry.externalId,
+    projectName: entry.name,
+    kind: "task" as const,
+    providerItemType: "task",
+    title: `Work ${index + 1}`,
+    stage: "todo" as const,
+    providerStatus: "open",
+    externalUrl: `https://example.test/work/${index + 1}`,
+  }));
+  const result = {
+    items,
+    projects: projects.map((entry) => ({ ...entry, count: 1 })),
+    summary: {
+      successfulProjects: projects.length,
+      failedProjects: 0,
+      itemCount: items.length,
+    },
+  };
+  const service: WorkItemSynchronizer = { sync: vi.fn().mockResolvedValue(result) };
+  return { result, service };
+}
+
 describe("taskboard MCP app", () => {
   it("lists the render and demo tools with UI metadata only on render", async () => {
     const connection = await connectClient(await createBundle());
@@ -121,6 +153,8 @@ describe("taskboard MCP app", () => {
       expect(tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
           "open_my_taskboard",
+          "list_my_work_items",
+          "refresh_my_work_items",
           "demo_ping",
           "get_connection_status",
           "login_with_tapd_token",
@@ -176,9 +210,12 @@ describe("taskboard MCP app", () => {
     }
   });
 
-  it("loads selected projects without forcing discovery and keeps demo items unattributed", async () => {
+  it("discovers all projects and returns real provider work items", async () => {
     const fixture = catalog([project("50396062"), project("56536239", false)]);
-    const connection = await connectClient(await createBundle(), authenticator(), fixture.service);
+    const workItems = synchronizer(fixture.result.projects);
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined, workItems.service,
+    );
 
     try {
       const result = await connection.client.callTool({
@@ -186,13 +223,72 @@ describe("taskboard MCP app", () => {
         arguments: {},
       });
       expect(result.structuredContent).toMatchObject({
-        projects: [{ externalId: "50396062", count: 0 }],
+        readOnly: true,
+        projects: [
+          { externalId: "50396062", count: 1 },
+          { externalId: "56536239", count: 1 },
+        ],
+        items: [
+          { providerId: "tapd", projectExternalId: "50396062" },
+          { providerId: "tapd", projectExternalId: "56536239" },
+        ],
       });
-      expect((result.structuredContent as typeof demoTaskboardSnapshot).items.every(
-        (item) => item.providerId === "demo" && item.projectExternalId === "demo",
-      )).toBe(true);
-      expect(fixture.service.getCatalog).toHaveBeenCalledOnce();
-      expect(fixture.service.discover).not.toHaveBeenCalled();
+      expect(fixture.service.discover).toHaveBeenCalledOnce();
+      expect(fixture.service.getCatalog).not.toHaveBeenCalled();
+      expect(workItems.service.sync).toHaveBeenCalledWith({
+        accountDisplayName: "吴晨杰",
+        projects: fixture.result.projects,
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("returns the same provider-neutral snapshot from list and refresh tools", async () => {
+    const fixture = catalog([project("50396062")]);
+    const workItems = synchronizer(fixture.result.projects);
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined, workItems.service,
+    );
+
+    try {
+      for (const name of ["list_my_work_items", "refresh_my_work_items"]) {
+        const result = await connection.client.callTool({ name, arguments: {} });
+        expect(result.structuredContent).toMatchObject({
+          readOnly: true,
+          items: [{ providerId: "tapd", externalId: "1" }],
+          syncSummary: { successfulProjects: 1, failedProjects: 0, itemCount: 1 },
+        });
+      }
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("logs only aggregate work item operation data", async () => {
+    const fixture = catalog([project("sensitive-project-id")]);
+    const workItems = synchronizer(fixture.result.projects);
+    const events: Parameters<WorkItemOperationLogger["completed"]>[0][] = [];
+    const logger: WorkItemOperationLogger = { completed: (event) => events.push(event) };
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined,
+      workItems.service, logger,
+    );
+
+    try {
+      await connection.client.callTool({ name: "open_my_taskboard", arguments: {} });
+      expect(events).toEqual([expect.objectContaining({
+        requestId: expect.any(String),
+        tool: "open_my_taskboard",
+        providerId: "tapd",
+        outcome: "success",
+        successfulProjects: 1,
+        failedProjects: 0,
+        itemCount: 1,
+      })]);
+      expect(JSON.stringify(events)).not.toMatch(
+        /sensitive-project-id|Project sensitive-project-id|Work 1|吴晨杰|example\.test/,
+      );
     } finally {
       await connection.close();
     }

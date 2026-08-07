@@ -18,13 +18,17 @@ import {
 import { TapdIdentityClient } from "../auth/tapd-identity-client.js";
 import { authResultSchema } from "../contracts/auth.js";
 import { projectCatalogSchema } from "../contracts/projects.js";
-import { taskboardSnapshotSchema } from "../contracts/taskboard.js";
-import { demoTaskboardSnapshot } from "../demo/fixtures.js";
+import { canonicalStages, taskboardSnapshotSchema } from "../contracts/taskboard.js";
 import {
   JsonStderrProjectOperationLogger,
   type ProjectOperationLogger,
   type ProjectToolName,
 } from "../observability/project-operation-logger.js";
+import {
+  JsonStderrWorkItemOperationLogger,
+  type WorkItemOperationLogger,
+  type WorkItemToolName,
+} from "../observability/work-item-operation-logger.js";
 import {
   JsonProjectSelectionStore,
   resolveFlowRivetConfigDirectory,
@@ -38,6 +42,11 @@ import {
   StoredTapdProjectCredentialResolver,
   TapdProjectProvider,
 } from "../projects/tapd-project-provider.js";
+import {
+  WorkItemService,
+  type WorkItemSynchronizer,
+} from "../work-items/work-item-service.js";
+import { TapdWorkItemProvider } from "../work-items/tapd-work-item-provider.js";
 
 export const TASKBOARD_RESOURCE_URI = "ui://flowrivet/taskboard.html";
 
@@ -51,6 +60,8 @@ export interface TaskboardMcpServerOptions {
   authService?: TapdAuthenticator;
   projectCatalog?: ProjectCatalog;
   projectLogger?: ProjectOperationLogger;
+  workItemService?: WorkItemSynchronizer;
+  workItemLogger?: WorkItemOperationLogger;
 }
 
 export function createTaskboardMcpServer(
@@ -64,17 +75,23 @@ export function createTaskboardMcpServer(
     store: credentialStore,
     identityClient,
   });
+  const credentialResolver = new StoredTapdProjectCredentialResolver({
+    store: credentialStore,
+    identityClient,
+  });
   const projectCatalog = options.projectCatalog ?? new ProjectCatalogService(
     new TapdProjectProvider({
-      credentialResolver: new StoredTapdProjectCredentialResolver({
-        store: credentialStore,
-        identityClient,
-      }),
+      credentialResolver,
     }),
     new JsonProjectSelectionStore({ directory: resolveFlowRivetConfigDirectory() }),
     now,
   );
   const projectLogger = options.projectLogger ?? new JsonStderrProjectOperationLogger();
+  const workItemService = options.workItemService ?? new WorkItemService(
+    new TapdWorkItemProvider({ credentialResolver }),
+    now,
+  );
+  const workItemLogger = options.workItemLogger ?? new JsonStderrWorkItemOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: "0.1.0" });
 
   registerAppResource(
@@ -107,73 +124,62 @@ export function createTaskboardMcpServer(
     },
   );
 
-  registerAppTool(
-    server,
-    "open_my_taskboard",
-    {
-      title: "打开我的 TAPD 待办看板",
-      description: "打开 FlowRivet Demo 看板。当前返回模拟数据，不读取 TAPD。",
-      inputSchema: {},
-      outputSchema: taskboardSnapshotSchema.shape,
-      annotations: { readOnlyHint: true, openWorldHint: false },
-      _meta: { ui: { resourceUri: TASKBOARD_RESOURCE_URI } },
-    },
-    async () => {
-      const auth = await authService.getConnectionStatus();
-      const connected = auth.connection.tapd === "connected";
-      const catalog = connected ? await projectCatalog.getCatalog() : {
-        provider: {
-          providerId: "tapd",
-          displayName: "TAPD",
-          state: auth.connection.tapd,
-          ...(auth.connection.userName
-            ? { accountDisplayName: auth.connection.userName }
-            : {}),
-          ...(auth.connection.companyName
-            ? { tenantDisplayName: auth.connection.companyName }
-            : {}),
-        },
-        projects: [],
-        stale: false,
-      };
-      const selectedProjects = catalog.projects.filter((project) => project.selected);
-      const demoItems = selectedProjects.length > 0
-        ? demoTaskboardSnapshot.items.map((item) => ({
-            ...item,
-            key: `demo:${item.key}`,
-            providerId: "demo",
-            projectExternalId: "demo",
-            projectName: "Demo 数据",
-          }))
-        : [];
-      const snapshot = taskboardSnapshotSchema.parse({
-        projectCatalog: catalog,
-        projects: selectedProjects.map((project) => ({ ...project, count: 0 })),
-        items: demoItems,
-        readOnly: true,
-        syncSummary: {
-          successfulProjects: selectedProjects.length,
-          failedProjects: 0,
-          itemCount: demoItems.length,
-        },
-        stages: demoTaskboardSnapshot.stages,
-        lastSyncedAt: now().toISOString(),
-        connection: {
-          ...auth.connection,
-          gitlab: "not_configured",
-        },
-      });
-      return {
-        structuredContent: snapshot,
-        content: [{
-          type: "text" as const,
-          text: connected
-            ? `已打开 FlowRivet 看板，已选择 ${snapshot.projects.length} 个项目。`
-            : "FlowRivet 看板已打开，请先连接 TAPD。",
-        }],
-      };
-    },
-  );
+  registerWorkItemTool(server, workItemLogger, "open_my_taskboard", {
+    title: "打开我的 TAPD 待办看板",
+    description: "发现全部可访问项目并打开真实只读待办看板。",
+    resourceUri: TASKBOARD_RESOURCE_URI,
+    run: buildTaskboardSnapshot,
+  });
+  registerWorkItemTool(server, workItemLogger, "list_my_work_items", {
+    title: "列出我的工作项",
+    description: "读取当前用户在全部可访问项目中的真实工作项。",
+    run: buildTaskboardSnapshot,
+  });
+  registerWorkItemTool(server, workItemLogger, "refresh_my_work_items", {
+    title: "刷新我的工作项",
+    description: "重新发现项目并刷新真实只读工作项。",
+    run: buildTaskboardSnapshot,
+  });
+
+  async function buildTaskboardSnapshot() {
+    const auth = await authService.getConnectionStatus();
+    const connected = auth.connection.tapd === "connected";
+    const catalog = connected ? await projectCatalog.discover() : {
+      provider: {
+        providerId: "tapd",
+        displayName: "TAPD",
+        state: auth.connection.tapd,
+        ...(auth.connection.userName
+          ? { accountDisplayName: auth.connection.userName }
+          : {}),
+        ...(auth.connection.companyName
+          ? { tenantDisplayName: auth.connection.companyName }
+          : {}),
+      },
+      projects: [],
+      stale: false,
+    };
+    const synchronized = connected ? await workItemService.sync({
+      accountDisplayName: catalog.provider.accountDisplayName
+        ?? auth.connection.userName
+        ?? "",
+      projects: catalog.projects.filter((project) => project.available),
+    }) : {
+      items: [],
+      projects: [],
+      summary: { successfulProjects: 0, failedProjects: 0, itemCount: 0 },
+    };
+    return taskboardSnapshotSchema.parse({
+      projectCatalog: catalog,
+      projects: synchronized.projects,
+      items: synchronized.items,
+      readOnly: true,
+      syncSummary: synchronized.summary,
+      stages: canonicalStages,
+      lastSyncedAt: now().toISOString(),
+      connection: { ...auth.connection, gitlab: "not_configured" },
+    });
+  }
 
   registerAppTool(
     server,
@@ -323,6 +329,63 @@ function registerProjectTool(
       logger.completed({
         requestId, tool, providerId, outcome: "error",
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        ...projectErrorCode(error),
+      });
+      throw error;
+    }
+  });
+}
+
+function registerWorkItemTool(
+  server: McpServer,
+  logger: WorkItemOperationLogger,
+  tool: WorkItemToolName,
+  options: {
+    title: string;
+    description: string;
+    resourceUri?: string;
+    run: () => Promise<unknown>;
+  },
+) {
+  registerAppTool(server, tool, {
+    title: options.title,
+    description: options.description,
+    inputSchema: {},
+    outputSchema: taskboardSnapshotSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    _meta: options.resourceUri ? { ui: { resourceUri: options.resourceUri } } : {},
+  }, async () => {
+    const requestId = randomUUID();
+    const startedAt = performance.now();
+    try {
+      const snapshot = taskboardSnapshotSchema.parse(await options.run());
+      logger.completed({
+        requestId,
+        tool,
+        providerId: "tapd",
+        outcome: snapshot.syncSummary.failedProjects > 0 ? "partial" : "success",
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        ...snapshot.syncSummary,
+      });
+      return {
+        structuredContent: snapshot,
+        content: [{
+          type: "text" as const,
+          text: snapshot.connection.tapd === "connected"
+            ? `FlowRivet 看板已同步 ${snapshot.syncSummary.itemCount} 个工作项。`
+            : "FlowRivet 看板已打开，请先连接 TAPD。",
+        }],
+      };
+    } catch (error) {
+      logger.completed({
+        requestId,
+        tool,
+        providerId: "tapd",
+        outcome: "error",
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        successfulProjects: 0,
+        failedProjects: 0,
+        itemCount: 0,
         ...projectErrorCode(error),
       });
       throw error;
