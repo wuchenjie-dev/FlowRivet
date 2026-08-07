@@ -29,6 +29,7 @@ FlowRivet 的第一个产品需求是在 Codex 中提供“我的 TAPD 待办”
 - TAPD 登录、连接状态、Token 失效与重新登录流程。
 - GitLab 连接状态占位，不实现 GitLab 登录或数据读取。
 - React + shadcn 风格的 Codex 全屏插件 UI。
+- 使用固定在 Codex 左侧栏的专用任务作为看板稳定入口。
 - 与 UI 等价的无界面 MCP 工具。
 
 ### 3.2 第一版不包含
@@ -53,6 +54,7 @@ Phase 0 先证明插件注册、MCP Apps UI 渲染和 bridge 调用链路，不�
 - 本地 MCP Server 可由插件启动或连接。
 - `open_my_taskboard` 工具返回看板 UI Resource。
 - Codex 中可打开全屏 React 看板。
+- 打开看板时自动请求全屏；宿主拒绝或不支持时保留手动全屏按钮。
 - 使用固定模拟数据展示左侧项目导航、四列卡片、连接菜单和未登录状态。
 - 使用成熟拖拽库完成前端模拟拖动，但不调用 TAPD。
 - UI 通过 MCP Apps bridge 调用一个演示工具，并显示返回结果。
@@ -109,7 +111,14 @@ Codex Plugin UI (React + shadcn)
 - Skill 告诉 Codex 何时查询待办、打开看板和推进状态。
 - 插件不包含 TAPD Token 或 TAPD 应用 Secret。
 
-### 6.2 本地 Companion
+### 6.2 Codex 固定任务入口
+
+- 创建名为“FlowRivet 待办看板”的专用 Codex 任务，并由用户固定到左侧栏。
+- 任务以“打开我的 TAPD 待办看板”为稳定启动提示，通过 Skill 调用 `open_my_taskboard`。
+- 固定任务只是 Codex 原生任务入口，不冒充插件自定义侧边栏菜单；插件不依赖 Codex 私有导航接口。
+- 重新进入任务时允许再次调用渲染工具，不假设 iframe 或前端内存状态跨会话永久保留。
+
+### 6.3 本地 Companion
 
 - 提供 streamable HTTP MCP 服务。
 - 注册数据工具、写工具和 `open_my_taskboard` 渲染工具。
@@ -117,7 +126,7 @@ Codex Plugin UI (React + shadcn)
 - 管理 TAPD 同步、缓存、状态映射和登录状态。
 - 读取系统凭据库，不向 UI 返回 Token。
 
-### 6.3 远程 OAuth Broker
+### 6.4 远程 OAuth Broker
 
 - 创建五分钟授权事务。
 - 使用服务端 TAPD 应用 Secret 交换授权码。
@@ -125,7 +134,7 @@ Codex Plugin UI (React + shadcn)
 - 通过 PKCE 证明向本地 Companion 一次性交付 Token。
 - 不代理日常 TAPD 工作项 API。
 
-### 6.4 TAPD 适配器
+### 6.5 TAPD 适配器
 
 - 获取当前用户。
 - 自动发现参与项目。
@@ -257,6 +266,8 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 ## 13. UI 设计
 
 - 全屏 MCP Apps UI，shadcn 风格，紧凑、低装饰、适合反复扫描。
+- UI 初始化完成后请求 `fullscreen` 展示模式；失败时保持内嵌可用并显示全屏按钮。
+- 全屏按钮只在宿主声明支持全屏时启用；请求失败要给出非阻塞提示，不影响看板读取和操作。
 - 顶部：FlowRivet、TAPD 连接状态、最后同步、刷新、账号菜单。
 - 左侧：全部待办、即将到期、已逾期、自动发现项目及数量。
 - 主区：待处理、进行中、待验收、已完成四列。
@@ -289,6 +300,7 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 - MCP initialize、tools/list、resources/read 和 `open_my_taskboard` 合约测试。
 - React 生产构建和 CSP/iframe 资源加载测试。
 - MCP Apps bridge 演示调用测试。
+- 自动全屏请求、手动全屏兜底和宿主不支持全屏的降级测试。
 - 看板四列、项目导航、登录菜单、未登录状态和模拟拖动组件测试。
 - Playwright 在 Codex 支持的桌面/窄窗口尺寸执行截图、溢出和交互验证。
 - Windows Codex 真实安装、启用、打开和非空像素截图验收。
@@ -329,6 +341,8 @@ Companion 使用明确的状态 ID/名称候选匹配四阶段。匹配必须保
 
 - 私有插件在 Windows Codex 中成功注册和启用。
 - `open_my_taskboard` 在 Codex 中渲染非空全屏页面。
+- “FlowRivet 待办看板”专用任务可固定到左侧栏，并能重复打开看板。
+- 自动全屏成功，或在宿主拒绝时可通过按钮重试且内嵌看板保持可用。
 - 模拟看板、登录状态和拖动可交互。
 - UI 到 MCP 的演示调用成功。
 - 测试、类型检查、生产构建和 Playwright 视觉验证通过。
