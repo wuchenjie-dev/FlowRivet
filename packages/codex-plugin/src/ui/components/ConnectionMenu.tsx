@@ -6,12 +6,16 @@ interface ConnectionMenuProps {
   connection: TaskboardSnapshot["connection"];
   pingState: "idle" | "pending" | "success" | "error";
   onPing: () => void;
+  disconnectPending: boolean;
+  onDisconnect: () => void;
 }
 
 export function ConnectionMenu({
   connection,
   pingState,
   onPing,
+  disconnectPending,
+  onDisconnect,
 }: ConnectionMenuProps) {
   return (
     <div className="connection-menu" role="menu" aria-label="连接状态">
@@ -37,6 +41,18 @@ export function ConnectionMenu({
       </button>
       {pingState === "success" ? <p className="inline-status inline-status--success">本地 Companion 已响应</p> : null}
       {pingState === "error" ? <p className="inline-status inline-status--error">本地 Companion 无法访问</p> : null}
+      {connection.tapd === "connected" ? (
+        <button
+          className="menu-command menu-command--danger"
+          type="button"
+          onClick={onDisconnect}
+          disabled={disconnectPending}
+          aria-label="断开 TAPD"
+        >
+          <CircleOff size={15} aria-hidden="true" />
+          {disconnectPending ? "正在断开..." : "断开 TAPD"}
+        </button>
+      ) : null}
     </div>
   );
 }

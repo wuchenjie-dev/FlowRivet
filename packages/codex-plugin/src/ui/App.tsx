@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import { LogIn, ShieldAlert } from "lucide-react";
 
-import type { CanonicalStage, TaskboardSnapshot } from "../contracts/taskboard.js";
+import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
+import {
+  taskboardSnapshotSchema,
+  type CanonicalStage,
+  type TaskboardSnapshot,
+} from "../contracts/taskboard.js";
 import type { McpAppsBridge } from "./bridge.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
 import { TaskBoard } from "./components/TaskBoard.js";
+import { TapdLogin } from "./components/TapdLogin.js";
 
 interface AppProps {
   initialSnapshot: TaskboardSnapshot;
@@ -15,13 +20,19 @@ interface AppProps {
 
 export function App({ initialSnapshot, bridge }: AppProps) {
   const [items, setItems] = useState(initialSnapshot.items);
+  const [projects, setProjects] = useState(initialSnapshot.projects);
+  const [connection, setConnection] = useState(initialSnapshot.connection);
+  const [lastSyncedAt, setLastSyncedAt] = useState(initialSnapshot.lastSyncedAt);
   const [selectedFilter, setSelectedFilter] = useState<BoardFilter>("all");
   const [menuOpen, setMenuOpen] = useState(false);
   const [pingState, setPingState] = useState<"idle" | "pending" | "success" | "error">("idle");
   const [notice, setNotice] = useState<string>();
+  const [authError, setAuthError] = useState<string>();
+  const [authPending, setAuthPending] = useState(false);
+  const [disconnectPending, setDisconnectPending] = useState(false);
   const [displayState, setDisplayState] = useState(() => bridge.getDisplayState());
   const [fullscreenPending, setFullscreenPending] = useState(false);
-  const tapdState = initialSnapshot.connection.tapd;
+  const tapdState = connection.tapd;
   const canDrag = tapdState === "connected";
 
   async function enterFullscreen(automatic = false) {
@@ -74,50 +85,108 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
   }
 
-  function refreshDemo() {
-    setItems(initialSnapshot.items);
-    setNotice("Demo 数据已恢复");
+  function applySnapshot(snapshot: TaskboardSnapshot) {
+    setConnection(snapshot.connection);
+    setProjects(snapshot.projects);
+    setItems(snapshot.items);
+    setLastSyncedAt(snapshot.lastSyncedAt);
   }
 
-  const isDisconnected = tapdState === "disconnected" || tapdState === "connecting";
+  async function loadBoard() {
+    const result = await bridge.callTool("open_my_taskboard", {});
+    const parsed = taskboardSnapshotSchema.safeParse(result.structuredContent);
+    if (!parsed.success) throw new Error("invalid taskboard snapshot");
+    applySnapshot(parsed.data);
+  }
+
+  async function login(token: string) {
+    setAuthPending(true);
+    setAuthError(undefined);
+    try {
+      const result = await bridge.callTool("login_with_tapd_token", { token });
+      const parsed = authResultSchema.safeParse(result.structuredContent);
+      if (!parsed.success) throw new Error("invalid auth result");
+      setConnection((current) => ({
+        ...current,
+        ...parsed.data.connection,
+      }));
+      if (!parsed.data.ok) {
+        setAuthError(authErrorCopy(parsed.data.errorCode));
+        return;
+      }
+      await loadBoard();
+      setNotice("TAPD 已连接，当前工作项仍为 Demo 数据");
+    } catch {
+      setAuthError("无法连接本地 Companion，请稍后重试");
+    } finally {
+      setAuthPending(false);
+    }
+  }
+
+  async function disconnect() {
+    setDisconnectPending(true);
+    try {
+      const result = await bridge.callTool("disconnect_tapd", {});
+      const parsed = authResultSchema.safeParse(result.structuredContent);
+      if (!parsed.success || !parsed.data.ok) throw new Error("disconnect failed");
+      setConnection((current) => ({ ...current, ...parsed.data.connection }));
+      setProjects([]);
+      setItems([]);
+      setMenuOpen(false);
+      setNotice("TAPD 已断开，本机凭据已删除");
+    } catch {
+      setNotice("无法断开 TAPD，请稍后重试");
+    } finally {
+      setDisconnectPending(false);
+    }
+  }
+
+  async function refreshDemo() {
+    try {
+      await loadBoard();
+      setNotice("Demo 数据已刷新");
+    } catch {
+      setNotice("看板刷新失败");
+    }
+  }
+
+  const isDisconnected = tapdState !== "connected";
 
   return (
     <div className={`app-shell${displayState.isFullscreen ? " is-fullscreen" : ""}`}>
       <AppHeader
-        connection={initialSnapshot.connection}
-        lastSyncedAt={initialSnapshot.lastSyncedAt}
+        connection={connection}
+        lastSyncedAt={lastSyncedAt}
         menuOpen={menuOpen}
         showFullscreen={displayState.canFullscreen && !displayState.isFullscreen}
         fullscreenPending={fullscreenPending}
         onFullscreen={() => void enterFullscreen()}
-        onRefresh={refreshDemo}
+        onRefresh={() => void refreshDemo()}
         onToggleMenu={() => setMenuOpen((open) => !open)}
       />
       {menuOpen ? (
         <ConnectionMenu
-          connection={initialSnapshot.connection}
+          connection={connection}
           pingState={pingState}
           onPing={pingCompanion}
+          disconnectPending={disconnectPending}
+          onDisconnect={() => void disconnect()}
         />
       ) : null}
 
       {isDisconnected ? (
-        <main className="connection-empty">
-          <span className="empty-icon"><LogIn size={22} /></span>
-          <h1>连接 TAPD 后查看我的待办</h1>
-          <p>登录后将自动发现你有权访问的项目；当前 Demo 不会发起真实授权。</p>
-          <button type="button" aria-label="登录 TAPD">登录 TAPD</button>
-          <small>Phase 0 演示入口</small>
-        </main>
+        <TapdLogin
+          expired={tapdState === "expired"}
+          pending={authPending}
+          error={authError}
+          onSubmit={login}
+        />
       ) : (
         <div className="workspace-layout">
-          <ProjectSidebar projects={initialSnapshot.projects} selected={selectedFilter} onSelect={setSelectedFilter} />
+          <ProjectSidebar projects={projects} selected={selectedFilter} onSelect={setSelectedFilter} />
           <main className="board-main">
-            {tapdState === "expired" ? (
-              <div className="stale-banner" role="status"><ShieldAlert size={16} />TAPD 登录已失效，正在展示缓存，数据可能已过期；重新登录前不可拖动。</div>
-            ) : null}
             <div className="board-heading">
-              <div><h1>我的待办</h1><p>{filteredItems.length} 个工作项 · {initialSnapshot.projects.length} 个项目</p></div>
+              <div><h1>我的待办</h1><p>{filteredItems.length} 个工作项 · {projects.length} 个项目</p></div>
               <span className="demo-chip">Demo 数据</span>
             </div>
             <TaskBoard stages={initialSnapshot.stages} items={filteredItems} disabled={!canDrag} onMove={moveItem} />
@@ -127,4 +196,15 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       {notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );
+}
+
+function authErrorCopy(code: AuthErrorCode | undefined) {
+  switch (code) {
+    case "invalid_token": return "Token 无效或已撤销";
+    case "permission_denied": return "当前 Token 缺少所需权限";
+    case "tapd_unavailable": return "TAPD 暂时不可用，请稍后重试";
+    case "credential_store_failed": return "本机安全存储不可用";
+    case "unsupported_platform": return "当前系统尚未支持安全存储";
+    default: return "连接失败，请稍后重试";
+  }
 }

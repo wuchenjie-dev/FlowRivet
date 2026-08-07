@@ -133,11 +133,12 @@ describe("FlowRivet taskboard", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "登录 TAPD" })).toBeTruthy();
+    expect(screen.getByLabelText("TAPD Token").getAttribute("type")).toBe("password");
+    expect((screen.getByRole("button", { name: "连接 TAPD" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("region", { name: "工作项看板" })).toBeNull();
   });
 
-  it("marks cached data stale and disables dragging when the token expired", () => {
+  it("offers token replacement when the credential expired", () => {
     render(
       <App
         initialSnapshot={snapshotWithTapdState("expired")}
@@ -145,10 +146,98 @@ describe("FlowRivet taskboard", () => {
       />,
     );
 
-    expect(screen.getByText(/数据可能已过期/)).toBeTruthy();
-    for (const card of screen.getAllByRole("article")) {
-      expect(card.getAttribute("aria-disabled")).toBe("true");
-    }
+    expect(screen.getByText(/TAPD Token 已失效/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "重新连接 TAPD" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("region", { name: "工作项看板" })).toBeNull();
+  });
+
+  it("logs in with a token, clears it, and loads the connected board", async () => {
+    const user = userEvent.setup();
+    const token = "personal-secret-token";
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "login_with_tapd_token") {
+        return {
+          content: [],
+          structuredContent: {
+            ok: true,
+            connection: {
+              tapd: "connected",
+              userName: "吴晨杰",
+              companyName: "FlowRivet 测试企业",
+            },
+          },
+        };
+      }
+      if (name === "open_my_taskboard") {
+        return { content: [], structuredContent: demoTaskboardSnapshot };
+      }
+      return { content: [] };
+    });
+    render(
+      <App
+        initialSnapshot={snapshotWithTapdState("disconnected")}
+        bridge={createBridge({ callTool })}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("TAPD Token"), token);
+    await user.click(screen.getByRole("button", { name: "连接 TAPD" }));
+
+    await vi.waitFor(() => {
+      expect(callTool).toHaveBeenCalledWith("login_with_tapd_token", { token });
+    });
+    expect(await screen.findByRole("region", { name: "工作项看板" })).toBeTruthy();
+    expect(document.body.textContent).not.toContain(token);
+  });
+
+  it("clears a rejected token and shows a stable error", async () => {
+    const user = userEvent.setup();
+    const token = "invalid-secret-token";
+    const callTool = vi.fn().mockResolvedValue({
+      content: [],
+      structuredContent: {
+        ok: false,
+        errorCode: "invalid_token",
+        connection: { tapd: "disconnected" },
+      },
+    });
+    render(
+      <App
+        initialSnapshot={snapshotWithTapdState("disconnected")}
+        bridge={createBridge({ callTool })}
+      />,
+    );
+
+    const input = screen.getByLabelText("TAPD Token") as HTMLInputElement;
+    await user.type(input, token);
+    await user.click(screen.getByRole("button", { name: "连接 TAPD" }));
+
+    expect(await screen.findByText("Token 无效或已撤销")).toBeTruthy();
+    expect(input.value).toBe("");
+    expect(document.body.textContent).not.toContain(token);
+  });
+
+  it("disconnects TAPD and clears the board", async () => {
+    const user = userEvent.setup();
+    const callTool = vi.fn().mockResolvedValue({
+      content: [],
+      structuredContent: {
+        ok: true,
+        connection: { tapd: "disconnected" },
+      },
+    });
+    render(
+      <App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开连接菜单" }));
+    await user.click(screen.getByRole("button", { name: "断开 TAPD" }));
+
+    await vi.waitFor(() => {
+      expect(callTool).toHaveBeenCalledWith("disconnect_tapd", {});
+    });
+    expect(await screen.findByLabelText("TAPD Token")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "工作项看板" })).toBeNull();
   });
 
   it("shows GitLab as a non-interactive future connection", async () => {
