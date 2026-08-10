@@ -105,4 +105,21 @@ describe("work item detail service", () => {
       projects: [project()],
     })).rejects.toMatchObject({ code: "provider_unavailable" });
   });
+
+  it.each([
+    ["provider", { providerId: "other" }],
+    ["project", { projectExternalId: "other-project" }],
+    ["item type", { providerItemType: "task" }],
+    ["external ID", { externalId: "other-item" }],
+  ])("rejects detail whose %s does not match the request", async (_label, mismatch) => {
+    const provider = new FakeProvider();
+    provider.getWorkItemDetail.mockResolvedValue({ ...detail, ...mismatch });
+    const service = new WorkItemDetailService(provider);
+
+    await expect(service.get({
+      reference,
+      accountDisplayName: "wuchenjie",
+      projects: [project()],
+    })).rejects.toMatchObject({ code: "work_item_detail_invalid_response" });
+  });
 });

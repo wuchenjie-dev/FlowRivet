@@ -41,9 +41,16 @@ export class WorkItemDetailService implements WorkItemDetailReader {
       accountDisplayName: input.accountDisplayName,
     });
     const parsed = workItemDetailSchema.safeParse(detail);
-    if (!parsed.success) {
+    if (!parsed.success || !matchesReference(parsed.data, input.reference)) {
       throw new WorkItemDetailProviderError("work_item_detail_invalid_response");
     }
     return parsed.data;
   }
+}
+
+function matchesReference(detail: WorkItemDetail, reference: WorkItemDetailRef) {
+  return detail.providerId === reference.providerId
+    && detail.projectExternalId === reference.projectExternalId
+    && detail.providerItemType === reference.providerItemType
+    && detail.externalId === reference.externalId;
 }

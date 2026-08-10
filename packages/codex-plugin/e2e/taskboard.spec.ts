@@ -125,6 +125,12 @@ test("keyboard reaches controls and opens a work item detail", async ({ page }) 
   await page.keyboard.press("Enter");
   await expect(board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" })).toBeVisible();
   await expect(board.getByRole("button", { name: "关闭详情" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => board.getByRole("dialog").evaluate(
+    (dialog) => dialog.contains(dialog.ownerDocument.activeElement),
+  )).toBe(true);
+  await page.keyboard.press("Tab");
+  await expect(board.getByRole("button", { name: "关闭详情" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(board.getByRole("dialog")).toHaveCount(0);
   await expect(workItemButton).toBeFocused();

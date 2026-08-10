@@ -1,5 +1,5 @@
 import { ExternalLink, RefreshCw, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 import type { WorkItemDetail } from "../../contracts/work-item-detail.js";
@@ -49,6 +49,8 @@ export function WorkItemDetailDrawer({
         if (event.key === "Escape") {
           event.preventDefault();
           onClose();
+        } else if (event.key === "Tab") {
+          keepFocusInDialog(event);
         }
       }}
       onClick={(event) => {
@@ -83,6 +85,23 @@ export function WorkItemDetailDrawer({
       </section>
     </dialog>
   );
+}
+
+function keepFocusInDialog(event: KeyboardEvent<HTMLDialogElement>) {
+  const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+    "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+  ));
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = event.currentTarget.ownerDocument.activeElement;
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last?.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first?.focus();
+  }
 }
 
 function DetailLoading() {
