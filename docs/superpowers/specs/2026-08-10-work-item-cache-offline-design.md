@@ -143,7 +143,7 @@ interface WorkItemCacheStore {
 - `item_json`：经过缓存工作项 Schema 验证的 JSON，不包含详情描述，也不持久化 `freshness`；读取时补为 `cached` 后再通过 `WorkItem` Schema。
 - 组合主键为同步范围加 `item_key`。
 
-外键使用级联删除。成功同步一个空范围时仍更新 `cache_scopes`，并删除该范围旧工作项，避免已完成、转派或删除的工作项残留。过期清理以 `cache_scopes.last_success_at` 为准：单个范围持续成功不得延长其他失败范围的寿命；清理范围后同步删除孤立项目，账号没有任何有效范围时删除账号和活动指针。
+外键使用级联删除。成功同步一个空范围时仍更新 `cache_scopes`，并删除该范围旧工作项，避免已完成、转派或删除的工作项残留。过期清理以 `cache_scopes.last_success_at` 为准，且仅删除 `last_success_at < now - 7 天` 的范围，恰好 7 天仍有效：单个范围持续成功不得延长其他失败范围的寿命；清理范围后同步删除孤立项目，账号没有任何有效范围时删除账号和活动指针。
 
 数据库初始化、版本检查、范围替换和过期清理都使用事务。未知高版本、迁移失败或损坏数据库不自动删除文件。默认使用 SQLite `DELETE` journal mode，避免产生权限未落实的持久 WAL sidecar；若实现改用其他 journal mode，必须对数据库及 sidecar 文件同时落实 Unix `0600` 权限。
 
