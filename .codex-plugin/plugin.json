@@ -1,6 +1,6 @@
 {
   "name": "flowrivet",
-  "version": "0.1.0+codex.20260810022904",
+  "version": "0.1.0+codex.20260810043342",
   "description": "Connect Codex with TAPD, Feishu, and GitLab for governed delivery workflows.",
   "author": {
     "name": "wuchenjie-dev",

@@ -15,9 +15,9 @@ FlowRivet 自身可以托管在 GitHub，但受管业务项目的代码事实源
 - 三类脱敏 ABF 需求的批量 PoC 评估。
 - 飞书自建应用鉴权检查，结果不暴露 access token。
 
-## Codex 看板 Demo
+## Codex 待办看板
 
-Phase 0 已提供可注册到 Codex 的“我的 TAPD 待办”交互看板，当前使用 Demo 数据，不读取或写入 TAPD。安装、启动和验收步骤见 [Codex 看板 Demo 运行手册](./docs/operations/codex-plugin-demo.md)，交互与后续真实接入边界见 [看板设计规格](./docs/superpowers/specs/2026-08-06-tapd-my-work-taskboard-design.md)。
+Phase 1C 已提供可注册到 Codex 的“我的 TAPD 待办”只读看板。Companion 使用本机安全保存的个人 Token 自动发现可访问项目，聚合精确分配给当前用户的需求、任务和缺陷；点击任意工作项会打开详情抽屉，展示状态、处理人、时间及经过安全清洗的描述，并可跳转到 TAPD 原记录。安装、启动和验收步骤见 [Codex 看板本地运行手册](./docs/operations/codex-plugin-demo.md)，交互边界见 [看板设计规格](./docs/superpowers/specs/2026-08-06-tapd-my-work-taskboard-design.md)和[工作项详情抽屉规格](./docs/superpowers/specs/2026-08-10-work-item-detail-drawer-design.md)。
 
 ## 环境要求
 
