@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { authResultSchema } from "../src/contracts/auth.js";
 import { projectCatalogSchema } from "../src/contracts/projects.js";
+import { taskboardPreferencesSchema } from "../src/contracts/taskboard-preferences.js";
 import {
   workItemDetailRefSchema,
   workItemDetailSchema,
@@ -14,6 +15,24 @@ import {
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 
 describe("taskboard demo contract", () => {
+  it("accepts off and bounded integer refresh intervals only", () => {
+    expect(taskboardPreferencesSchema.parse({ refreshIntervalSeconds: 0 }))
+      .toEqual({ refreshIntervalSeconds: 0 });
+    expect(taskboardPreferencesSchema.parse({ refreshIntervalSeconds: 5 }))
+      .toEqual({ refreshIntervalSeconds: 5 });
+    expect(taskboardPreferencesSchema.parse({ refreshIntervalSeconds: 3600 }))
+      .toEqual({ refreshIntervalSeconds: 3600 });
+
+    for (const refreshIntervalSeconds of [-1, 1, 4, 5.5, 3601, "60"]) {
+      expect(taskboardPreferencesSchema.safeParse({ refreshIntervalSeconds }).success)
+        .toBe(false);
+    }
+    expect(taskboardPreferencesSchema.safeParse({
+      refreshIntervalSeconds: 60,
+      providerId: "tapd",
+    }).success).toBe(false);
+  });
+
   it("provides a valid connected board snapshot", () => {
     const snapshot = {
       ...demoTaskboardSnapshot,
