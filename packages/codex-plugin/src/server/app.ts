@@ -355,6 +355,10 @@ export function createTaskboardMcpServer(
         ? { cacheWarningCode: synchronized.cacheWarningCode }
         : {}),
       ...(freshnessReasonCode ? { freshnessReasonCode } : {}),
+      ...(freshnessReasonCode === "provider_rate_limited"
+        && synchronized.retryAfterSeconds !== undefined
+        ? { retryAfterSeconds: synchronized.retryAfterSeconds }
+        : {}),
       lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
       connection: { ...auth.connection, gitlab: "not_configured" },
     });

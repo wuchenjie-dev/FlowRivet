@@ -30,15 +30,18 @@ export class TapdWorkItemProvider implements WorkItemProvider {
   private readonly endpoint: string;
   private readonly credentialResolver: TapdProjectCredentialResolver;
   private readonly fetcher: typeof fetch;
+  private readonly clock: () => Date;
 
   constructor(options: {
     credentialResolver: TapdProjectCredentialResolver;
     endpoint?: string;
     fetcher?: typeof fetch;
+    clock?: () => Date;
   }) {
     this.credentialResolver = options.credentialResolver;
     this.endpoint = (options.endpoint ?? "https://api.tapd.cn").replace(/\/$/, "");
     this.fetcher = options.fetcher ?? fetch;
+    this.clock = options.clock ?? (() => new Date());
   }
 
   async listProjectWorkItems(input: {
@@ -58,11 +61,15 @@ export class TapdWorkItemProvider implements WorkItemProvider {
     }
 
     const scopes: WorkItemQueryResult["scopes"] = [];
-    let authorizationFailed = false;
+    let terminalError: WorkItemProviderError | undefined;
 
     for (const query of itemQueries) {
-      if (authorizationFailed) {
-        scopes.push(failedScope(query, "provider_unauthorized"));
+      if (terminalError) {
+        scopes.push(failedScope(
+          query,
+          terminalError.code,
+          terminalError.retryAfterSeconds,
+        ));
         continue;
       }
       try {
@@ -85,8 +92,15 @@ export class TapdWorkItemProvider implements WorkItemProvider {
         });
       } catch (error) {
         const errorCode = providerErrorCode(error);
-        scopes.push(failedScope(query, errorCode));
-        authorizationFailed = errorCode === "provider_unauthorized";
+        const retryAfterSeconds = error instanceof WorkItemProviderError
+          ? error.retryAfterSeconds
+          : undefined;
+        scopes.push(failedScope(query, errorCode, retryAfterSeconds));
+        if (error instanceof WorkItemProviderError
+          && (errorCode === "provider_unauthorized"
+            || errorCode === "provider_rate_limited")) {
+          terminalError = error;
+        }
       }
     }
 
@@ -127,6 +141,14 @@ export class TapdWorkItemProvider implements WorkItemProvider {
     if (response.status === 401 || response.status === 403) {
       throw new WorkItemProviderError("provider_unauthorized");
     }
+    if (response.status === 429) {
+      throw new WorkItemProviderError("provider_rate_limited", {
+        retryAfterSeconds: parseRetryAfter(
+          response.headers.get("retry-after"),
+          this.clock(),
+        ),
+      });
+    }
     if (!response.ok) throw new WorkItemProviderError("work_item_sync_failed");
 
     let payload: Record<string, unknown>;
@@ -145,6 +167,7 @@ export class TapdWorkItemProvider implements WorkItemProvider {
 function failedScope(
   query: (typeof itemQueries)[number],
   errorCode: WorkItemErrorCode,
+  retryAfterSeconds?: number,
 ): WorkItemQueryResult["scopes"][number] {
   return {
     providerItemType: query.providerItemType,
@@ -152,7 +175,25 @@ function failedScope(
     outcome: "error",
     items: [],
     errorCode,
+    ...(errorCode === "provider_rate_limited" && retryAfterSeconds !== undefined
+      ? { retryAfterSeconds }
+      : {}),
   };
+}
+
+function parseRetryAfter(value: string | null, now: Date) {
+  const trimmed = value?.trim();
+  let seconds: number;
+  if (trimmed && /^\d+$/.test(trimmed)) {
+    seconds = Number(trimmed);
+  } else if (trimmed) {
+    seconds = Math.ceil((Date.parse(trimmed) - now.getTime()) / 1000);
+  } else {
+    seconds = Number.NaN;
+  }
+  return Number.isInteger(seconds) && seconds >= 1 && seconds <= 86400
+    ? seconds
+    : 60;
 }
 
 function providerErrorCode(error: unknown): WorkItemErrorCode {

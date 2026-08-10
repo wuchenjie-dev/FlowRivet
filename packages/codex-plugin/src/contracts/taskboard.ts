@@ -74,10 +74,21 @@ export const taskboardSnapshotSchema = z.object({
   ]).optional(),
   freshnessReasonCode: z.enum([
     "provider_unauthorized",
+    "provider_rate_limited",
     "provider_unavailable",
     "work_item_sync_failed",
   ]).optional(),
+  retryAfterSeconds: z.number().int().min(1).max(86400).optional(),
   lastSyncedAt: z.string(),
+}).superRefine((snapshot, context) => {
+  if (snapshot.retryAfterSeconds !== undefined
+    && snapshot.freshnessReasonCode !== "provider_rate_limited") {
+    context.addIssue({
+      code: "custom",
+      path: ["retryAfterSeconds"],
+      message: "retryAfterSeconds requires provider_rate_limited",
+    });
+  }
 });
 
 export type CanonicalStage = (typeof canonicalStages)[number];

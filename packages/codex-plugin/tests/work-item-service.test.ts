@@ -425,7 +425,7 @@ describe("work item service", () => {
       projectExternalId: "A",
       scopes: [
         { providerItemType: "story", kind: "requirement", outcome: "error", items: [], errorCode: "work_item_sync_failed" },
-        { providerItemType: "task", kind: "task", outcome: "error", items: [], errorCode: "provider_unavailable" },
+        { providerItemType: "task", kind: "task", outcome: "error", items: [], errorCode: "provider_rate_limited", retryAfterSeconds: 120 },
         { providerItemType: "bug", kind: "defect", outcome: "error", items: [], errorCode: "provider_unauthorized" },
       ],
     });
@@ -435,5 +435,52 @@ describe("work item service", () => {
       accountDisplayName: "alice",
       projects: [project("A")],
     })).rejects.toMatchObject({ code: "provider_unauthorized" });
+  });
+
+  it("aggregates the maximum rate-limit cooldown into a partial snapshot", async () => {
+    const provider = new FakeProvider();
+    provider.listProjectWorkItems
+      .mockResolvedValueOnce({
+        projectExternalId: "A",
+        scopes: [
+          { providerItemType: "story", kind: "requirement", outcome: "success", items: [item("live", "todo")] },
+          { providerItemType: "task", kind: "task", outcome: "error", items: [], errorCode: "provider_rate_limited", retryAfterSeconds: 30 },
+          { providerItemType: "bug", kind: "defect", outcome: "error", items: [], errorCode: "provider_rate_limited", retryAfterSeconds: 90 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        projectExternalId: "B",
+        scopes: [
+          { providerItemType: "story", kind: "requirement", outcome: "error", items: [], errorCode: "provider_unavailable" },
+          { providerItemType: "task", kind: "task", outcome: "error", items: [], errorCode: "provider_rate_limited", retryAfterSeconds: 60 },
+          { providerItemType: "bug", kind: "defect", outcome: "success", items: [] },
+        ],
+      });
+    const service = new WorkItemService(provider, () => now);
+
+    await expect(service.sync({
+      accountDisplayName: "alice",
+      projects: [project("A"), project("B")],
+    })).resolves.toMatchObject({
+      freshnessReasonCode: "provider_rate_limited",
+      retryAfterSeconds: 90,
+      summary: { successfulProjects: 0, failedProjects: 2, itemCount: 1 },
+    });
+  });
+
+  it("throws rate-limit cooldown metadata when no usable scope remains", async () => {
+    const provider = new FakeProvider();
+    provider.listProjectWorkItems.mockRejectedValue(
+      new WorkItemProviderError("provider_rate_limited", { retryAfterSeconds: 75 }),
+    );
+    const service = new WorkItemService(provider, () => now);
+
+    await expect(service.sync({
+      accountDisplayName: "alice",
+      projects: [project("A")],
+    })).rejects.toMatchObject({
+      code: "provider_rate_limited",
+      retryAfterSeconds: 75,
+    });
   });
 });

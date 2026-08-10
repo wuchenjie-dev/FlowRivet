@@ -129,6 +129,24 @@ describe("taskboard demo contract", () => {
     expect(auth.connection).not.toHaveProperty("accountKey");
   });
 
+  it("allows cooldown metadata only for provider rate limits", () => {
+    const rateLimited = taskboardSnapshotSchema.parse({
+      ...demoTaskboardSnapshot,
+      freshnessReasonCode: "provider_rate_limited",
+      retryAfterSeconds: 120,
+    });
+
+    expect(rateLimited).toMatchObject({
+      freshnessReasonCode: "provider_rate_limited",
+      retryAfterSeconds: 120,
+    });
+    expect(taskboardSnapshotSchema.safeParse({
+      ...demoTaskboardSnapshot,
+      freshnessReasonCode: "provider_unavailable",
+      retryAfterSeconds: 120,
+    }).success).toBe(false);
+  });
+
   it("covers every canonical stage", () => {
     expect(new Set(demoTaskboardSnapshot.items.map((item) => item.stage))).toEqual(
       new Set(canonicalStages),

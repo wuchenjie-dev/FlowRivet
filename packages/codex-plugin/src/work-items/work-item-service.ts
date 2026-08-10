@@ -37,6 +37,7 @@ export interface WorkItemSyncSnapshot {
   cacheWarningCode?: Exclude<WorkItemCacheErrorCode, "cache_clear_failed">
     | "cache_identity_unavailable";
   freshnessReasonCode?: WorkItemErrorCode;
+  retryAfterSeconds?: number;
 }
 
 export interface WorkItemSynchronizer {
@@ -85,6 +86,7 @@ export class WorkItemService implements WorkItemSynchronizer {
     const projects = input.projects.filter((project) => project.available);
     const scopes: Array<WorkItemScopeResult & { projectExternalId: string }> = [];
     const failureCodes: WorkItemErrorCode[] = [];
+    const retryAfterValues: number[] = [];
     let successfulProjects = 0;
     let failedProjects = 0;
     let nextIndex = 0;
@@ -109,6 +111,10 @@ export class WorkItemService implements WorkItemSynchronizer {
           failureCodes.push(...result.scopes
             .filter((scope) => scope.outcome === "error")
             .map((scope) => scope.errorCode ?? "work_item_sync_failed"));
+          retryAfterValues.push(...result.scopes
+            .filter((scope) => scope.errorCode === "provider_rate_limited"
+              && scope.retryAfterSeconds !== undefined)
+            .map((scope) => scope.retryAfterSeconds as number));
           if (failedScopes === 0) {
             successfulProjects += 1;
           } else {
@@ -117,6 +123,11 @@ export class WorkItemService implements WorkItemSynchronizer {
         } catch (error) {
           failedProjects += 1;
           failureCodes.push(providerErrorCode(error));
+          if (error instanceof WorkItemProviderError
+            && error.code === "provider_rate_limited"
+            && error.retryAfterSeconds !== undefined) {
+            retryAfterValues.push(error.retryAfterSeconds);
+          }
         }
       }
     };
@@ -125,6 +136,9 @@ export class WorkItemService implements WorkItemSynchronizer {
     await Promise.all(Array.from({ length: workerCount }, consumeNextProject));
     const successfulScopes = scopes.filter((scope) => scope.outcome === "success");
     const reason = preferredFailureCode(failureCodes);
+    const retryAfterSeconds = reason === "provider_rate_limited"
+      ? maximumRetryAfter(retryAfterValues)
+      : undefined;
     let cacheWarningCode: WorkItemSyncSnapshot["cacheWarningCode"];
     let source: CachedSnapshot;
 
@@ -156,7 +170,9 @@ export class WorkItemService implements WorkItemSynchronizer {
 
     const hasUsableScopes = source.scopes.length > 0;
     if (projects.length > 0 && !hasUsableScopes) {
-      throw new WorkItemProviderError(reason ?? "work_item_sync_failed");
+      throw new WorkItemProviderError(reason ?? "work_item_sync_failed", {
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      });
     }
 
     return createSnapshot({
@@ -167,6 +183,7 @@ export class WorkItemService implements WorkItemSynchronizer {
       lastSyncAttemptAt: attemptedAt.toISOString(),
       cacheWarningCode,
       freshnessReasonCode: reason,
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     }, attemptedAt);
   }
 }
@@ -209,6 +226,7 @@ function createSnapshot(
     lastSyncAttemptAt: string;
     cacheWarningCode?: WorkItemSyncSnapshot["cacheWarningCode"];
     freshnessReasonCode?: WorkItemErrorCode;
+    retryAfterSeconds?: number;
   },
   now: Date,
 ): WorkItemSyncSnapshot {
@@ -251,6 +269,10 @@ function createSnapshot(
     ...(input.freshnessReasonCode
       ? { freshnessReasonCode: input.freshnessReasonCode }
       : {}),
+    ...(input.freshnessReasonCode === "provider_rate_limited"
+      && input.retryAfterSeconds !== undefined
+      ? { retryAfterSeconds: input.retryAfterSeconds }
+      : {}),
   };
 }
 
@@ -260,8 +282,15 @@ function providerErrorCode(error: unknown): WorkItemErrorCode {
 
 function preferredFailureCode(codes: WorkItemErrorCode[]): WorkItemErrorCode | undefined {
   if (codes.includes("provider_unauthorized")) return "provider_unauthorized";
+  if (codes.includes("provider_rate_limited")) return "provider_rate_limited";
   if (codes.includes("provider_unavailable")) return "provider_unavailable";
   return codes.length > 0 ? "work_item_sync_failed" : undefined;
+}
+
+function maximumRetryAfter(values: number[]) {
+  const valid = values.filter((value) => Number.isInteger(value)
+    && value >= 1 && value <= 86400);
+  return valid.length > 0 ? Math.max(...valid) : undefined;
 }
 
 function cacheWarning(error: unknown): WorkItemSyncSnapshot["cacheWarningCode"] {

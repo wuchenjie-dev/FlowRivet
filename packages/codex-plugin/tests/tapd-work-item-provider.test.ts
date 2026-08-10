@@ -23,6 +23,59 @@ function payload(data: unknown[], status = 1) {
 }
 
 describe("TAPD work item provider", () => {
+  it.each([
+    ["delta seconds", "120", 120],
+    ["HTTP date", "Fri, 07 Aug 2026 12:00:30 GMT", 30],
+    ["lower bound", "1", 1],
+    ["upper bound", "86400", 86400],
+    ["zero", "0", 60],
+    ["too large", "86401", 60],
+    ["invalid", "later", 60],
+    ["missing", undefined, 60],
+  ])("maps a 429 Retry-After %s value and stops remaining item types", async (
+    _case,
+    retryAfter,
+    expectedSeconds,
+  ) => {
+    const headers = retryAfter ? { "retry-after": retryAfter } : undefined;
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("limited", { status: 429, headers }),
+    );
+    const provider = new TapdWorkItemProvider({
+      credentialResolver: credentials,
+      fetcher,
+      clock: () => new Date("2026-08-07T12:00:00.000Z"),
+    });
+
+    await expect(provider.listProjectWorkItems({
+      projectExternalId: "100",
+      projectName: "Project A",
+      accountDisplayName: "alice",
+    })).resolves.toMatchObject({
+      scopes: [
+        {
+          providerItemType: "story",
+          outcome: "error",
+          errorCode: "provider_rate_limited",
+          retryAfterSeconds: expectedSeconds,
+        },
+        {
+          providerItemType: "task",
+          outcome: "error",
+          errorCode: "provider_rate_limited",
+          retryAfterSeconds: expectedSeconds,
+        },
+        {
+          providerItemType: "bug",
+          outcome: "error",
+          errorCode: "provider_rate_limited",
+          retryAfterSeconds: expectedSeconds,
+        },
+      ],
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("paginates three item types and maps only the exact assignee", async () => {
     const firstStoryPage = Array.from({ length: 200 }, (_, index) => story(String(index + 1)));
     const fetcher = vi.fn<typeof fetch>()

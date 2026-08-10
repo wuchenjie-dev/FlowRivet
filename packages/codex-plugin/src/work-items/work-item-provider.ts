@@ -11,6 +11,7 @@ export interface WorkItemScopeResult {
   outcome: "success" | "error";
   items: WorkItem[];
   errorCode?: WorkItemErrorCode;
+  retryAfterSeconds?: number;
 }
 
 export interface WorkItemProvider {
@@ -25,11 +26,18 @@ export interface WorkItemProvider {
 export type WorkItemErrorCode =
   | "work_item_sync_failed"
   | "provider_unauthorized"
+  | "provider_rate_limited"
   | "provider_unavailable";
 
 export class WorkItemProviderError extends Error {
-  constructor(readonly code: WorkItemErrorCode) {
+  readonly retryAfterSeconds?: number;
+
+  constructor(
+    readonly code: WorkItemErrorCode,
+    metadata: { retryAfterSeconds?: number } = {},
+  ) {
     super(code);
     this.name = "WorkItemProviderError";
+    this.retryAfterSeconds = metadata.retryAfterSeconds;
   }
 }

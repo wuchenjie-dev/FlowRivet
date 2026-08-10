@@ -866,7 +866,7 @@ describe("taskboard MCP app", () => {
     }
   });
 
-  it("preserves mixed synchronization metadata from the service", async () => {
+  it("preserves mixed rate-limit metadata from the service", async () => {
     const fixture = catalog([project("50396062")]);
     const workItems = synchronizer(fixture.result.projects);
     workItems.service.sync = vi.fn().mockResolvedValue({
@@ -874,7 +874,8 @@ describe("taskboard MCP app", () => {
       dataFreshness: "mixed",
       freshScopeCount: 2,
       staleScopeCount: 1,
-      freshnessReasonCode: "provider_unavailable",
+      freshnessReasonCode: "provider_rate_limited",
+      retryAfterSeconds: 90,
     });
     const connection = await connectClient(
       await createBundle(), authenticator(), fixture.service, undefined, workItems.service,
@@ -889,7 +890,8 @@ describe("taskboard MCP app", () => {
         dataFreshness: "mixed",
         freshScopeCount: 2,
         staleScopeCount: 1,
-        freshnessReasonCode: "provider_unavailable",
+        freshnessReasonCode: "provider_rate_limited",
+        retryAfterSeconds: 90,
       });
     } finally {
       await connection.close();
