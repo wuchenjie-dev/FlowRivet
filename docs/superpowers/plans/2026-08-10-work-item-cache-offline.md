@@ -194,7 +194,7 @@ git commit -m "refactor(taskboard): expose provider sync scopes"
 - Create: `packages/codex-plugin/src/cache/create-work-item-cache-store.ts`
 - Create: `packages/codex-plugin/tests/sqlite-work-item-cache-store.test.ts`
 
-- [ ] **Step 1: Write failing store contract tests against temporary databases**
+- [x] **Step 1: Write failing store contract tests against temporary databases**
 
 Cover initial/repeated schema creation, scope replacement, successful empty scope, failed-scope retention, removal of projects absent from an authoritative online catalog, account/provider isolation, partial unique active account constraint, seven-day per-scope expiry, orphan cleanup, transaction rollback, malformed JSON, unknown schema versions, and `clearActive`. Inject `now` and database path; never open the user's real config database.
 
@@ -206,13 +206,13 @@ expect((await store.loadActive("tapd", later))?.items).toEqual([
 ]);
 ```
 
-- [ ] **Step 2: Run the store tests and verify failure**
+- [x] **Step 2: Run the store tests and verify failure**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/sqlite-work-item-cache-store.test.ts`
 
 Expected: FAIL because cache modules do not exist.
 
-- [ ] **Step 3: Define the provider-neutral cache port**
+- [x] **Step 3: Define the provider-neutral cache port**
 
 ```ts
 export interface CacheAccount {
@@ -234,7 +234,7 @@ export interface WorkItemCacheStore {
 
 Define stable `WorkItemCacheError` codes and a persisted-item schema derived from `workItemSchema.omit({ freshness: true })`.
 
-- [ ] **Step 4: Implement schema v1 and transactional operations**
+- [x] **Step 4: Implement schema v1 and transactional operations**
 
 Use bound parameters, `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = DELETE`, a `schema_version` table, four cache tables from the spec, and:
 
@@ -246,11 +246,11 @@ WHERE is_active = 1;
 
 Compute `namespace_key` with SHA-256 over length-delimited `providerId`, tenant key, and account key. During online merge, delete cached projects absent from the input's authoritative project collection. Expire `cache_scopes` individually only when `last_success_at < now - 7 days`; the exact seven-day boundary remains valid. Cascade items, remove orphan projects, then remove empty accounts. Strip `freshness` before writing and add `cached` after reading.
 
-- [ ] **Step 5: Add lazy capability detection and secure paths**
+- [x] **Step 5: Add lazy capability detection and secure paths**
 
 `createWorkItemCacheStore` dynamically imports `node:sqlite` on first operation. Import/initialization failure returns stable unavailable errors rather than crashing the server. Reuse `resolveFlowRivetConfigDirectory`; create Unix directory/file with `0700`/`0600`. Keep the adapter constructor injectable with a `DatabaseSync`-compatible constructor for failure tests.
 
-- [ ] **Step 6: Run store tests and typecheck**
+- [x] **Step 6: Run store tests and typecheck**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/sqlite-work-item-cache-store.test.ts`
 
@@ -260,7 +260,7 @@ Run: `npm run typecheck --workspace @flowrivet/codex-plugin`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/codex-plugin/src/cache/work-item-cache-store.ts packages/codex-plugin/src/cache/sqlite-work-item-cache-store.ts packages/codex-plugin/src/cache/create-work-item-cache-store.ts packages/codex-plugin/tests/sqlite-work-item-cache-store.test.ts
