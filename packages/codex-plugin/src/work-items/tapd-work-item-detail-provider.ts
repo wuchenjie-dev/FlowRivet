@@ -11,11 +11,11 @@ import {
   type WorkItemDetailProvider,
 } from "./work-item-detail-provider.js";
 
-const queryByType: Record<ProviderWorkItemType, {
+const queryByType: Partial<Record<ProviderWorkItemType, {
   path: string;
   wrapper: "Story" | "Task" | "Bug";
   kind: Exclude<WorkItemKind, "other">;
-}> = {
+}>> = {
   story: { path: "/stories", wrapper: "Story", kind: "requirement" },
   task: { path: "/tasks", wrapper: "Task", kind: "task" },
   bug: { path: "/bugs", wrapper: "Bug", kind: "defect" },

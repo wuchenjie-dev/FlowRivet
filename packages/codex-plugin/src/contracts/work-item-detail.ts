@@ -2,12 +2,10 @@ import { z } from "zod";
 
 import { workItemKinds } from "./taskboard.js";
 
-export const providerWorkItemTypes = ["story", "task", "bug"] as const;
-
 export const workItemDetailRefSchema = z.object({
   providerId: z.string().min(1),
   projectExternalId: z.string().min(1),
-  providerItemType: z.enum(providerWorkItemTypes),
+  providerItemType: z.string().min(1),
   externalId: z.string().min(1),
 }).strict();
 
@@ -31,6 +29,6 @@ export const workItemDetailSchema = workItemDetailRefSchema.extend({
   }),
 }).strict();
 
-export type ProviderWorkItemType = (typeof providerWorkItemTypes)[number];
+export type ProviderWorkItemType = string;
 export type WorkItemDetailRef = z.infer<typeof workItemDetailRefSchema>;
 export type WorkItemDetail = z.infer<typeof workItemDetailSchema>;

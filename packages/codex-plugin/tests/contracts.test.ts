@@ -95,10 +95,16 @@ describe("taskboard demo contract", () => {
       providerItemType: "story",
       externalId: "10001",
     });
-    expect(workItemDetailRefSchema.safeParse({
+    expect(workItemDetailRefSchema.parse({
       providerId: "tapd",
       projectExternalId: "50396062",
       providerItemType: "epic",
+      externalId: "10001",
+    }).providerItemType).toBe("epic");
+    expect(workItemDetailRefSchema.safeParse({
+      providerId: "tapd",
+      projectExternalId: "50396062",
+      providerItemType: "",
       externalId: "10001",
     }).success).toBe(false);
   });
