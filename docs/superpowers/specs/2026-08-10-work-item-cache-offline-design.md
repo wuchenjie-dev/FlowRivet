@@ -13,7 +13,7 @@ FlowRivet Phase 1C 已能在 Codex 中实时聚合当前 TAPD 用户的需求、
 - 部分“项目 + 工作项类型”同步失败时，用该范围的旧缓存补齐结果。
 - Token 失效时保留只读缓存看板，并允许用户主动重新登录。
 - 断开账号或切换账号时删除旧账号缓存。
-- 缓存超过最后成功同步时间 7 天后自动删除。
+- 每个同步范围超过自身最后成功同步时间 7 天后自动删除。
 - 保持 Provider 中立、只读、日志脱敏和本机凭据边界。
 
 ## 3. 本阶段不包含
@@ -32,7 +32,7 @@ FlowRivet Phase 1C 已能在 Codex 中实时聚合当前 TAPD 用户的需求、
 - 离线或 Token 失效时保留看板，顶部展示离线横幅和重新连接入口。
 - 缓存只保存看板摘要和同步元数据，不保存详情描述。
 - 断开账号先清理缓存，再删除 Token；清理失败时不得虚假报告断开成功。
-- 缓存最后成功同步超过 7 天后自动删除。
+- 缓存按同步范围独立计算有效期；范围最后成功同步超过 7 天后自动删除。
 
 ## 5. 架构
 
@@ -50,7 +50,7 @@ TapdWorkItemProvider              flowrivet.db
 
 `WorkItemCacheStore` 是 Provider 中立端口。业务服务只处理账号命名空间、同步范围和归一化工作项，不读取 TAPD 响应结构，也不直接执行 SQL。
 
-SQLite 适配器使用 Node 22 内置 `node:sqlite`。这避免在 Codex 插件中分发按操作系统编译的第三方二进制依赖。运行时若缺少 `node:sqlite`，在线同步仍可使用，但缓存返回稳定的不可用错误。
+SQLite 适配器使用 Node 22.5 起提供的内置 `node:sqlite`。这避免在 Codex 插件中分发按操作系统编译的第三方二进制依赖。项目 `engines.node` 同步收紧为 `>=22.5`；运行时仍做能力检测，若缺少 `node:sqlite`，在线同步可以使用，但缓存返回稳定的不可用错误。
 
 数据库路径沿用 FlowRivet 配置目录：
 
@@ -96,8 +96,10 @@ interface WorkItemCacheStore {
 - `activateAccount` 以账号和企业身份的稳定哈希作为命名空间键。哈希输入不写入日志。
 - 活动账号发生变化时，先删除旧命名空间，再激活新命名空间。
 - `mergeScopes` 在单个事务内替换所有成功范围，失败范围保持不变。
-- `loadActive` 只返回当前 Provider 的活动命名空间；超过 7 天时先删除再返回空。
+- `loadActive` 只返回当前 Provider 的活动命名空间；读取前按每个范围的 `last_success_at` 删除超过 7 天的范围，再删除没有范围的孤立项目和账号。
 - `clearActive` 在一个事务内删除活动指针、账号、项目、范围和工作项。
+- `mergeScopes` 写事务失败时不得吞掉本次已获得的在线结果：服务返回本次成功范围，缺失的失败范围不补缓存，并附加 `cache_write_failed`。
+- 缓存内部保存不含 `freshness` 的 Provider 中立工作项摘要；写入前剥离派生来源字段，读取后再标记为 `cached`，本次同步结果标记为 `fresh`。
 - 所有输出重新通过 Zod Provider 中立 Schema；无效行不得进入 UI。
 
 ## 8. SQLite 数据结构
@@ -109,8 +111,10 @@ interface WorkItemCacheStore {
 - `namespace_key`：SHA-256 稳定哈希，主键。
 - `provider_id`。
 - `account_display_name`、`tenant_display_name`：仅用于离线连接状态展示。
-- `last_success_at`。
+- `last_success_at`：该账号任一范围最近一次成功同步时间，仅用于离线状态展示，不作为范围保留期依据。
 - `is_active`：同一 Provider 最多一条活动记录。
+
+数据库必须用部分唯一索引落实“同一 Provider 最多一个活动账号”，不能只依赖应用层检查。
 
 ### 8.2 `cache_projects`
 
@@ -134,12 +138,12 @@ interface WorkItemCacheStore {
 - `project_external_id`。
 - `provider_item_type`。
 - `item_key`。
-- `item_json`：经过 `WorkItem` Schema 验证的 JSON，不包含详情描述。
+- `item_json`：经过缓存工作项 Schema 验证的 JSON，不包含详情描述，也不持久化 `freshness`；读取时补为 `cached` 后再通过 `WorkItem` Schema。
 - 组合主键为同步范围加 `item_key`。
 
-外键使用级联删除。成功同步一个空范围时仍更新 `cache_scopes`，并删除该范围旧工作项，避免已完成、转派或删除的工作项残留。
+外键使用级联删除。成功同步一个空范围时仍更新 `cache_scopes`，并删除该范围旧工作项，避免已完成、转派或删除的工作项残留。过期清理以 `cache_scopes.last_success_at` 为准：单个范围持续成功不得延长其他失败范围的寿命；清理范围后同步删除孤立项目，账号没有任何有效范围时删除账号和活动指针。
 
-数据库初始化、版本检查和范围替换都使用事务。未知高版本、迁移失败或损坏数据库不自动删除文件。
+数据库初始化、版本检查、范围替换和过期清理都使用事务。未知高版本、迁移失败或损坏数据库不自动删除文件。默认使用 SQLite `DELETE` journal mode，避免产生权限未落实的持久 WAL sidecar；若实现改用其他 journal mode，必须对数据库及 sidecar 文件同时落实 Unix `0600` 权限。
 
 ## 9. 快照合同
 
@@ -191,8 +195,12 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 
 ### 10.3 重新登录
 
-- 同一账号登录后继续使用当前缓存，并立即执行在线同步。
-- 登录到不同账号时删除旧活动命名空间，再创建新命名空间。
+- 登录采用两阶段提交：先用候选 Token 验证身份，但不写凭据存储；身份验证成功后再决定缓存切换，最后以原子替换持久化候选 Token。
+- 同一账号登录时保留当前缓存，持久化新 Token 后立即执行在线同步。
+- 登录到不同账号时，先成功删除旧活动缓存和项目选择，再持久化新 Token 并激活新命名空间。
+- 旧 Token 在所有清理步骤完成前保持不变；任一清理步骤失败时不写入候选 Token，并返回对应清理错误。此前已经成功删除的本地数据不做跨存储回滚，但旧身份仍然有效且可重新同步。
+- 候选 Token 原子替换失败时保留旧 Token，且不得激活新命名空间；已经删除的旧缓存或项目选择不做不安全恢复，返回现有凭据错误。
+- 缓存、项目选择和凭据不宣称具备跨存储原子事务；安全不变量是“新身份永远不能读取旧身份缓存”，恢复本地数据依赖旧身份下一次在线同步。
 - 成功范围更新后，其卡片从 `cached` 变为 `fresh`。
 
 ### 10.4 主动断开
@@ -232,6 +240,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 | `node:sqlite` 不可用 | 在线同步继续，返回 `cache_unavailable` 警告 |
 | 建库、迁移或读取失败 | 不删除数据库；在线同步继续，离线缓存不可用 |
 | 缓存写入失败 | 返回最新在线数据和 `cache_write_failed`，不声称已持久化 |
+| 缓存合并事务失败且有失败范围 | 返回本次成功范围和 `cache_write_failed`，不使用未确认的旧范围 |
 | 部分范围失败且有缓存 | 合并旧范围，返回 `mixed` |
 | 部分范围失败且无缓存 | 返回其他最新数据和现有部分失败警告 |
 | 全部范围失败且有缓存 | 返回 `offline` |
@@ -264,6 +273,8 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 - 失败范围保留、账号和 Provider 隔离。
 - 活动账号切换和级联删除。
 - 7 天边界、过期清理和时钟注入。
+- 不同范围独立过期；一个范围成功不得延长另一个范围寿命。
+- 过期范围、孤立项目及无有效范围账号的级联清理。
 - 事务失败不留下半写状态。
 - 损坏数据库、无效 JSON 和权限失败。
 - Windows、Linux、macOS 路径与 Unix 权限合同。
@@ -282,6 +293,8 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 
 - Token 失效、Provider 不可用时读取活动缓存。
 - 同账号和跨账号重新登录。
+- 候选 Token 验证、缓存切换和凭据持久化的两阶段顺序。
+- 跨账号任一步骤失败时保留原 Token 和原身份，新身份不得读取旧缓存。
 - 断开时先清缓存再删 Token。
 - 缓存清理失败不得报告断开成功。
 - MCP 输出 Schema、只读注解和日志脱敏。
@@ -304,7 +317,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 ## 16. 准入标准
 
 - Phase 1C 真实只读看板和详情抽屉在 `main` 可运行。
-- Node.js 22 或更高版本，并确认目标运行时提供 `node:sqlite`。
+- Node.js 22.5 或更高版本，并确认目标运行时提供 `node:sqlite`。
 - 现有工作项 Provider 可以暴露每个类型的独立成功或失败结果。
 - 测试使用临时数据库，不读取或删除用户真实缓存。
 - 本阶段不注册任何 TAPD 写工具。
@@ -316,7 +329,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 - Token 失效或 Provider 不可用时，有缓存则返回明确的离线看板，无缓存则保持原错误行为。
 - 离线、混合和在线状态在 MCP 合同及 UI 中可区分，缓存卡片可识别。
 - 重新登录可恢复在线同步；主动断开会删除活动账号全部缓存。
-- 超过 7 天的缓存自动删除且不再展示。
+- 每个范围超过自身最后成功同步时间 7 天后自动删除且不再展示，不受其他范围成功同步影响。
 - 缓存故障不阻断有效在线数据，也不伪装成成功持久化。
 - Token 和详情内容不进入 SQLite、日志、MCP 响应或测试产物。
 - 单元、合同、类型检查、生产构建、Playwright 和真实只读缓存恢复探针全部通过。
