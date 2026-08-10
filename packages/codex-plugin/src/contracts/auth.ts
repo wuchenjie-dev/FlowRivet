@@ -6,6 +6,8 @@ export const authErrorCodes = [
   "tapd_unavailable",
   "credential_store_failed",
   "unsupported_platform",
+  "cache_clear_failed",
+  "selection_store_failed",
 ] as const;
 
 export const tapdConnectionSchema = z.object({

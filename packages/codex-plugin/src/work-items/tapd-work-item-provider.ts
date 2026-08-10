@@ -147,6 +147,7 @@ function mapItem(
     title,
     stage: mapStage(kind, providerStatus),
     providerStatus,
+    freshness: "fresh",
     externalUrl: itemUrl(project.projectExternalId, kind, externalId),
   };
   const priority = scalarString(row.priority);

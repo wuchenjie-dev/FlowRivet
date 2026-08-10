@@ -38,6 +38,7 @@ function item(
     title: `Item ${externalId}`,
     stage,
     providerStatus: stage,
+    freshness: "fresh",
     ...(completedAt ? { completedAt } : {}),
     externalUrl: `https://example.test/${externalId}`,
   };

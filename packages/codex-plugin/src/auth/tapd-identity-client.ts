@@ -2,6 +2,7 @@ import type { AuthErrorCode } from "../contracts/auth.js";
 
 export interface TapdIdentity {
   userName: string;
+  accountKey?: string;
   companyName?: string;
   companyId?: string;
 }
@@ -63,12 +64,14 @@ function parseIdentity(value: unknown): TapdIdentity | undefined {
   const wrapper = asRecord(data);
   const user = asRecord(wrapper.User ?? wrapper.user ?? data);
   const userName = firstString(user, ["name", "user_name", "nick"]);
+  const accountKey = firstString(user, ["id", "nick"]);
   const companyId = firstString(user, ["company_id", "companyId"]);
   const companyName = firstString(user, ["company_name", "companyName"])
     ?? companyId;
   if (!userName) return undefined;
   return {
     userName,
+    ...(accountKey ? { accountKey } : {}),
     ...(companyName ? { companyName } : {}),
     ...(companyId ? { companyId } : {}),
   };

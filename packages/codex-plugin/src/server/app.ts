@@ -225,6 +225,7 @@ export function createTaskboardMcpServer(
   );
 
   async function buildTaskboardSnapshot() {
+    const syncAttemptAt = now().toISOString();
     const auth = await authService.getConnectionStatus();
     const connected = auth.connection.tapd === "connected";
     const catalog = connected ? await projectCatalog.discover() : {
@@ -259,7 +260,11 @@ export function createTaskboardMcpServer(
       readOnly: true,
       syncSummary: synchronized.summary,
       stages: canonicalStages,
-      lastSyncedAt: now().toISOString(),
+      dataFreshness: "live",
+      staleScopeCount: 0,
+      lastSuccessfulSyncAt: syncAttemptAt,
+      lastSyncAttemptAt: syncAttemptAt,
+      lastSyncedAt: syncAttemptAt,
       connection: { ...auth.connection, gitlab: "not_configured" },
     });
   }

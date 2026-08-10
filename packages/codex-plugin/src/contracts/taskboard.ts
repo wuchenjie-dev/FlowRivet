@@ -29,6 +29,7 @@ export const workItemSchema = z.object({
   title: z.string(),
   stage: z.enum(canonicalStages),
   providerStatus: z.string(),
+  freshness: z.enum(["fresh", "cached"]),
   priority: z.string().optional(),
   dueAt: z.string().optional(),
   completedAt: z.string().optional(),
@@ -60,6 +61,21 @@ export const taskboardSnapshotSchema = z.object({
     itemCount: z.number().int().nonnegative(),
   }),
   syncErrorCode: z.literal("work_item_sync_failed").optional(),
+  dataFreshness: z.enum(["live", "mixed", "offline"]),
+  staleScopeCount: z.number().int().nonnegative(),
+  lastSuccessfulSyncAt: z.string().optional(),
+  lastSyncAttemptAt: z.string(),
+  cacheWarningCode: z.enum([
+    "cache_unavailable",
+    "cache_identity_unavailable",
+    "cache_read_failed",
+    "cache_write_failed",
+  ]).optional(),
+  freshnessReasonCode: z.enum([
+    "provider_unauthorized",
+    "provider_unavailable",
+    "work_item_sync_failed",
+  ]).optional(),
   lastSyncedAt: z.string(),
 });
 

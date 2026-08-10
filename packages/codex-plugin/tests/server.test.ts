@@ -137,6 +137,7 @@ function synchronizer(projects: ProjectCatalogResult["projects"] = []) {
     title: `Work ${index + 1}`,
     stage: "todo" as const,
     providerStatus: "open",
+    freshness: "fresh" as const,
     externalUrl: `https://example.test/work/${index + 1}`,
   }));
   const result = {

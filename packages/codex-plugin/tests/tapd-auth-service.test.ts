@@ -27,6 +27,8 @@ describe("TAPD identity client", () => {
       status: 1,
       data: {
         User: {
+          id: "6081",
+          nick: "wuchenjie",
           name: "吴晨杰",
           company_name: "FlowRivet 测试企业",
           company_id: "66238498",
@@ -38,6 +40,7 @@ describe("TAPD identity client", () => {
 
     await expect(client.validate("personal-token")).resolves.toEqual({
       userName: "吴晨杰",
+      accountKey: "6081",
       companyName: "FlowRivet 测试企业",
       companyId: "66238498",
     });
@@ -59,6 +62,21 @@ describe("TAPD identity client", () => {
 
     await expect(client.validate("personal-token")).resolves.toEqual({
       userName: "wuchenjie",
+      accountKey: "wuchenjie",
+    });
+  });
+
+  it("does not use a mutable display name as the stable account key", async () => {
+    const client = new TapdIdentityClient({
+      fetcher: vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        status: 1,
+        data: { name: "吴晨杰" },
+        info: "success",
+      }), { status: 200, headers: { "content-type": "application/json" } })),
+    });
+
+    await expect(client.validate("personal-token")).resolves.toEqual({
+      userName: "吴晨杰",
     });
   });
 

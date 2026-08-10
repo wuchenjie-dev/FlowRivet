@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { authResultSchema } from "../src/contracts/auth.js";
 import { projectCatalogSchema } from "../src/contracts/projects.js";
 import {
   workItemDetailRefSchema,
@@ -66,15 +67,45 @@ describe("taskboard demo contract", () => {
       title: "项目发现",
       stage: "todo",
       providerStatus: "planning",
+      freshness: "cached",
       completedAt: "2026-08-07T00:00:00.000Z",
       externalUrl: "https://www.tapd.cn/50396062/prong/stories/view/10001",
     });
 
     expect(item).toMatchObject({
       kind: "requirement",
+      freshness: "cached",
       completedAt: "2026-08-07T00:00:00.000Z",
     });
     expect(JSON.stringify(catalog)).not.toMatch(/token|authorization/i);
+  });
+
+  it("exposes freshness metadata without exposing internal account keys", () => {
+    const snapshot = taskboardSnapshotSchema.parse({
+      ...demoTaskboardSnapshot,
+      dataFreshness: "mixed",
+      staleScopeCount: 2,
+      lastSuccessfulSyncAt: "2026-08-10T01:00:00.000Z",
+      lastSyncAttemptAt: "2026-08-10T02:00:00.000Z",
+      cacheWarningCode: "cache_write_failed",
+      freshnessReasonCode: "provider_unavailable",
+    });
+    const auth = authResultSchema.parse({
+      ok: true,
+      connection: {
+        tapd: "connected",
+        userName: "吴晨杰",
+        accountKey: "6081",
+      },
+    });
+
+    expect(snapshot).toMatchObject({
+      dataFreshness: "mixed",
+      staleScopeCount: 2,
+      cacheWarningCode: "cache_write_failed",
+      freshnessReasonCode: "provider_unavailable",
+    });
+    expect(auth.connection).not.toHaveProperty("accountKey");
   });
 
   it("covers every canonical stage", () => {

@@ -55,7 +55,7 @@
 - Test: `packages/codex-plugin/tests/server.test.ts`
 - Test: `packages/codex-plugin/tests/ui.test.tsx`
 
-- [ ] **Step 1: Write failing contract and identity tests**
+- [x] **Step 1: Write failing contract and identity tests**
 
 Add assertions that `workItemSchema` requires `freshness`, `taskboardSnapshotSchema` accepts `live/mixed/offline` metadata, and parsed public auth output does not expose stable identity fields. Extend identity fixtures to assert `accountKey` uses TAPD `id`, falls back to `nick`, and name-only responses produce no stable key.
 
@@ -72,13 +72,13 @@ const publicResult = authResultSchema.parse({
 expect(publicResult.connection).not.toHaveProperty("accountKey");
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/contracts.test.ts tests/tapd-auth-service.test.ts`
 
 Expected: FAIL because freshness metadata and `TapdIdentity.accountKey` do not exist.
 
-- [ ] **Step 3: Implement the contract changes**
+- [x] **Step 3: Implement the contract changes**
 
 Add these provider-neutral fields:
 
@@ -103,7 +103,7 @@ freshnessReasonCode: z.enum([
 
 Extend only the internal TAPD identity with `accountKey?: string`, parsed from `id` then `nick`. Keep stable identity fields out of public `AuthResult`; add only `cache_clear_failed` and `selection_store_failed` operational error codes. Update every existing production/test work-item creator with `freshness: "fresh"` and every existing snapshot creator with `dataFreshness: "live"`, zero stale scopes, and aligned sync timestamps. Set both root and plugin Node engines to `>=22.5`, then run `npm install --package-lock-only` to refresh lockfile metadata.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/contracts.test.ts tests/tapd-auth-service.test.ts`
 
@@ -117,7 +117,7 @@ Run: `npm test --workspace @flowrivet/codex-plugin`
 
 Expected: PASS so the contract migration does not leave later tasks on a broken baseline.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json packages/codex-plugin/package.json package-lock.json packages/codex-plugin/src/contracts/auth.ts packages/codex-plugin/src/contracts/taskboard.ts packages/codex-plugin/src/auth/tapd-identity-client.ts packages/codex-plugin/src/demo/fixtures.ts packages/codex-plugin/src/work-items/tapd-work-item-provider.ts packages/codex-plugin/src/server/app.ts packages/codex-plugin/tests/contracts.test.ts packages/codex-plugin/tests/tapd-auth-service.test.ts packages/codex-plugin/tests/work-item-service.test.ts packages/codex-plugin/tests/server.test.ts packages/codex-plugin/tests/ui.test.tsx
