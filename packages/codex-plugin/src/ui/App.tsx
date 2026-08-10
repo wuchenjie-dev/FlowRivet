@@ -12,7 +12,7 @@ import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
 import { TaskBoard } from "./components/TaskBoard.js";
-import { TapdLogin } from "./components/TapdLogin.js";
+import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
 import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
 
 interface AppProps {
@@ -28,6 +28,11 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [syncSummary, setSyncSummary] = useState(initialSnapshot.syncSummary);
   const [syncErrorCode, setSyncErrorCode] = useState(initialSnapshot.syncErrorCode);
   const [lastSyncedAt, setLastSyncedAt] = useState(initialSnapshot.lastSyncedAt);
+  const [dataFreshness, setDataFreshness] = useState(initialSnapshot.dataFreshness);
+  const [staleScopeCount, setStaleScopeCount] = useState(initialSnapshot.staleScopeCount);
+  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState(
+    initialSnapshot.lastSuccessfulSyncAt,
+  );
   const [selectedFilter, setSelectedFilter] = useState<BoardFilter>("all");
   const [menuOpen, setMenuOpen] = useState(false);
   const [pingState, setPingState] = useState<"idle" | "pending" | "success" | "error">("idle");
@@ -42,9 +47,11 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [workItemDetail, setWorkItemDetail] = useState<WorkItemDetail>();
   const [detailPending, setDetailPending] = useState(false);
   const [detailErrorCode, setDetailErrorCode] = useState<string>();
+  const [reconnectOpen, setReconnectOpen] = useState(false);
   const detailCache = useRef(new Map<string, WorkItemDetail>());
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
+  const reconnectOpener = useRef<HTMLButtonElement>(null);
   const tapdState = connection.tapd;
 
   async function enterFullscreen(automatic = false) {
@@ -102,6 +109,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     setSyncSummary(snapshot.syncSummary);
     setSyncErrorCode(snapshot.syncErrorCode);
     setLastSyncedAt(snapshot.lastSyncedAt);
+    setDataFreshness(snapshot.dataFreshness);
+    setStaleScopeCount(snapshot.staleScopeCount);
+    setLastSuccessfulSyncAt(snapshot.lastSuccessfulSyncAt);
   }
 
   function closeDetail(restoreFocus = true) {
@@ -176,6 +186,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         return;
       }
       const snapshot = await loadBoard("open_my_taskboard");
+      setReconnectOpen(false);
       setNotice(`TAPD 已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
     } catch {
       setAuthError("无法连接本地 Companion，请稍后重试");
@@ -198,6 +209,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       closeDetail(false);
       setSyncSummary({ successfulProjects: 0, failedProjects: 0, itemCount: 0 });
       setSyncErrorCode(undefined);
+      setDataFreshness("live");
+      setStaleScopeCount(0);
+      setLastSuccessfulSyncAt(undefined);
       setMenuOpen(false);
       setNotice("TAPD 已断开，本机凭据已删除");
     } catch {
@@ -221,6 +235,14 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   }
 
   const isDisconnected = tapdState !== "connected";
+  const showCachedBoard = dataFreshness === "offline"
+    && (items.length > 0 || projects.length > 0);
+  const showBoard = !isDisconnected || showCachedBoard;
+
+  function closeReconnect(restoreFocus = true) {
+    setReconnectOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => reconnectOpener.current?.focus());
+  }
 
   return (
     <div className={`app-shell${displayState.isFullscreen ? " is-fullscreen" : ""}`}>
@@ -245,7 +267,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         />
       ) : null}
 
-      {isDisconnected ? (
+      {!showBoard ? (
         <TapdLogin
           expired={tapdState === "expired"}
           pending={authPending}
@@ -274,6 +296,14 @@ export function App({ initialSnapshot, bridge }: AppProps) {
             <TaskBoard
               stages={initialSnapshot.stages}
               items={filteredItems}
+              dataFreshness={dataFreshness}
+              staleScopeCount={staleScopeCount}
+              lastSuccessfulSyncAt={lastSuccessfulSyncAt}
+              reconnectButtonRef={reconnectOpener}
+              onReconnect={() => {
+                setAuthError(undefined);
+                setReconnectOpen(true);
+              }}
               onOpenItem={openDetail}
             />
           </main>
@@ -286,8 +316,17 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           detail={workItemDetail}
           pending={detailPending}
           errorCode={detailErrorCode}
+          offline={dataFreshness === "offline"}
           onClose={() => closeDetail()}
           onRetry={() => void loadDetail(selectedItem)}
+        />
+      ) : null}
+      {reconnectOpen ? (
+        <TapdReconnectDialog
+          pending={authPending}
+          error={authError}
+          onSubmit={login}
+          onClose={() => closeReconnect()}
         />
       ) : null}
       {notice ? <div className="toast" role="status">{notice}</div> : null}

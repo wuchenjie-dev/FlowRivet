@@ -1,4 +1,4 @@
-import { Bug, CheckSquare2, CircleDot, Lightbulb } from "lucide-react";
+import { Archive, Bug, CheckSquare2, CircleDot, Lightbulb } from "lucide-react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 
@@ -19,6 +19,7 @@ export function WorkItemCard({ item, onOpen }: WorkItemCardProps) {
   const dueAt = item.dueAt
     ? new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(item.dueAt))
     : undefined;
+  const cached = item.freshness === "cached";
 
   return (
     <article
@@ -29,11 +30,14 @@ export function WorkItemCard({ item, onOpen }: WorkItemCardProps) {
       <button
         type="button"
         className="work-card-button"
-        aria-label={`打开工作项：${item.title}`}
+        aria-label={`打开${cached ? "缓存" : ""}工作项：${item.title}`}
         onClick={(event) => onOpen(item, event.currentTarget)}
       >
         <div className="card-topline">
           <span className={`kind-badge kind-badge--${item.kind}`}><Icon size={13} />{label}</span>
+          {cached ? (
+            <span className="cache-badge"><Archive size={11} aria-hidden="true" />缓存</span>
+          ) : null}
           <span className="tapd-id">{item.externalId}</span>
           <span className="provider-status">{item.providerStatus}</span>
         </div>

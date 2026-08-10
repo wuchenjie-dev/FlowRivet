@@ -400,17 +400,17 @@ git commit -m "feat(plugin): serve cached boards while offline"
 - Modify: `packages/codex-plugin/src/ui/styles.css`
 - Test: `packages/codex-plugin/tests/ui.test.tsx`
 
-- [ ] **Step 1: Write failing UI state and interaction tests**
+- [x] **Step 1: Write failing UI state and interaction tests**
 
 Test that `offline` data renders instead of the login page, mixed state names the stale-scope count, cached cards expose a visible label and accessible name, reconnect opens a closable Token dialog, closing retains the board, successful login refreshes, and offline detail failure says “重新连接后加载详情”. Also assert the Phase 1A Demo sentence is gone.
 
-- [ ] **Step 2: Run UI tests and verify failure**
+- [x] **Step 2: Run UI tests and verify failure**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/ui.test.tsx`
 
 Expected: FAIL because disconnected state always replaces the board.
 
-- [ ] **Step 3: Implement board-preserving reconnect flow**
+- [x] **Step 3: Implement board-preserving reconnect flow**
 
 Render a board whenever validated snapshot items/projects exist, regardless of TAPD connection state. Put one full-width status band above columns:
 
@@ -419,11 +419,11 @@ Render a board whenever validated snapshot items/projects exist, regardless of T
 
 Reuse `TapdLogin` inside a native dialog or existing focus-managed dialog pattern. Closing restores focus to the reconnect button and leaves cached data visible. Mark cached cards with a stable-width badge; do not change card/column dimensions.
 
-- [ ] **Step 4: Add responsive and accessibility behavior**
+- [x] **Step 4: Add responsive and accessibility behavior**
 
 Ensure the status band wraps without horizontal overflow, dialogs trap/restore focus, Escape closes reconnect, status changes use an appropriate live region, and cached labels do not rely on color alone. Preserve reduced-motion behavior.
 
-- [ ] **Step 5: Run UI tests and production UI build**
+- [x] **Step 5: Run UI tests and production UI build**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/ui.test.tsx`
 
@@ -433,7 +433,7 @@ Run: `npm run build:ui --workspace @flowrivet/codex-plugin`
 
 Expected: PASS with a single bundled `taskboard.html`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/codex-plugin/src/ui/App.tsx packages/codex-plugin/src/ui/components/TaskBoard.tsx packages/codex-plugin/src/ui/components/WorkItemCard.tsx packages/codex-plugin/src/ui/components/TapdLogin.tsx packages/codex-plugin/src/ui/styles.css packages/codex-plugin/tests/ui.test.tsx

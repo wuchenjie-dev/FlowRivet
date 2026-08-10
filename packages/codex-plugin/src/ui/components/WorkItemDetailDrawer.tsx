@@ -9,6 +9,7 @@ interface WorkItemDetailDrawerProps {
   detail?: WorkItemDetail;
   pending: boolean;
   errorCode?: string;
+  offline?: boolean;
   onClose: () => void;
   onRetry: () => void;
 }
@@ -18,6 +19,7 @@ export function WorkItemDetailDrawer({
   detail,
   pending,
   errorCode,
+  offline = false,
   onClose,
   onRetry,
 }: WorkItemDetailDrawerProps) {
@@ -79,7 +81,7 @@ export function WorkItemDetailDrawer({
 
         <div className="detail-body">
           {pending ? <DetailLoading /> : errorCode ? (
-            <DetailError code={errorCode} onRetry={onRetry} />
+            <DetailError code={errorCode} offline={offline} onRetry={onRetry} />
           ) : detail ? <DetailContent detail={detail} /> : null}
         </div>
       </section>
@@ -115,11 +117,15 @@ function DetailLoading() {
   );
 }
 
-function DetailError({ code, onRetry }: { code: string; onRetry: () => void }) {
+function DetailError({
+  code,
+  offline,
+  onRetry,
+}: { code: string; offline: boolean; onRetry: () => void }) {
   return (
     <div className="detail-error" role="alert">
       <strong>详情加载失败</strong>
-      <p>{detailErrorCopy(code)}</p>
+      <p>{offline ? "重新连接后加载详情" : detailErrorCopy(code)}</p>
       <button type="button" onClick={onRetry}>
         <RefreshCw size={14} />
         重试加载详情

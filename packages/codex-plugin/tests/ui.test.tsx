@@ -39,6 +39,20 @@ function snapshotWithTapdState(
   };
 }
 
+function offlineSnapshot(): TaskboardSnapshot {
+  return {
+    ...snapshotWithTapdState("expired"),
+    dataFreshness: "offline",
+    freshScopeCount: 0,
+    staleScopeCount: 2,
+    lastSuccessfulSyncAt: "2026-08-06T12:00:00.000Z",
+    items: demoTaskboardSnapshot.items.map((item) => ({
+      ...item,
+      freshness: "cached",
+    })),
+  };
+}
+
 function workItemDetail(overrides: Partial<WorkItemDetail> = {}): WorkItemDetail {
   return {
     key: "tapd:50396062:requirement:#10001",
@@ -260,6 +274,74 @@ describe("FlowRivet taskboard", () => {
     expect(screen.queryByRole("region", { name: "工作项看板" })).toBeNull();
   });
 
+  it("keeps cached work visible while disconnected", () => {
+    render(<App initialSnapshot={offlineSnapshot()} bridge={createBridge()} />);
+
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("离线缓存");
+    expect(screen.getByRole("button", { name: "重新连接 TAPD" })).toBeTruthy();
+    expect(screen.queryByLabelText("TAPD Token")).toBeNull();
+  });
+
+  it("names mixed data scope counts and marks cached cards without color alone", () => {
+    render(<App initialSnapshot={{
+      ...offlineSnapshot(),
+      connection: { ...demoTaskboardSnapshot.connection, tapd: "connected" },
+      dataFreshness: "mixed",
+      freshScopeCount: 1,
+      staleScopeCount: 2,
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("status").textContent).toContain("2 个范围使用缓存");
+    expect(screen.getAllByText("缓存").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /打开缓存工作项/ }).length)
+      .toBeGreaterThan(0);
+  });
+
+  it("closes reconnect with Escape, restores focus, and retains the cached board", async () => {
+    const user = userEvent.setup();
+    render(<App initialSnapshot={offlineSnapshot()} bridge={createBridge()} />);
+    const opener = screen.getByRole("button", { name: "重新连接 TAPD" });
+
+    await user.click(opener);
+    expect(screen.getByRole("dialog", { name: "重新连接 TAPD" })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByLabelText("TAPD Token"));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "重新连接 TAPD" })).toBeNull();
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it("refreshes the cached board after reconnecting", async () => {
+    const user = userEvent.setup();
+    const token = "replacement-token";
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "login_with_tapd_token") {
+        return {
+          content: [],
+          structuredContent: {
+            ok: true,
+            connection: { tapd: "connected", userName: "吴晨杰" },
+          },
+        };
+      }
+      return { content: [], structuredContent: demoTaskboardSnapshot };
+    });
+    render(<App initialSnapshot={offlineSnapshot()} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", { name: "重新连接 TAPD" }));
+    await user.type(screen.getByLabelText("TAPD Token"), token);
+    await user.click(screen.getByRole("button", { name: "提交并重新连接" }));
+
+    await vi.waitFor(() => expect(callTool).toHaveBeenCalledWith(
+      "login_with_tapd_token", { token },
+    ));
+    expect(await screen.findByText("TAPD 已连接，已同步 7 个工作项")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "重新连接 TAPD" })).toBeNull();
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+  });
+
   it("logs in with a token, clears it, and loads the connected board", async () => {
     const user = userEvent.setup();
     const token = "personal-secret-token";
@@ -421,6 +503,18 @@ describe("FlowRivet taskboard", () => {
     const dialog = await screen.findByRole("dialog", { name: workItemDetail().title });
     expect(within(dialog).getByText("稳定排序")).toBeTruthy();
     expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("explains that offline detail requires reconnecting", async () => {
+    const user = userEvent.setup();
+    const callTool = vi.fn().mockRejectedValue(new Error("provider_not_connected"));
+    render(<App initialSnapshot={offlineSnapshot()} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", {
+      name: "打开缓存工作项：统一检索结果的排序与筛选体验",
+    }));
+
+    expect(await screen.findByText("重新连接后加载详情")).toBeTruthy();
   });
 
   it("caches detail for the session and clears it after board refresh", async () => {
