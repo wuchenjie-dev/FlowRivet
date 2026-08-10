@@ -47,7 +47,7 @@ export interface WorkItemSynchronizer {
 }
 
 export class WorkItemService implements WorkItemSynchronizer {
-  private inFlight?: Promise<WorkItemSyncSnapshot>;
+  private readonly inFlight = new Map<string, Promise<WorkItemSyncSnapshot>>();
 
   constructor(
     private readonly provider: WorkItemProvider,
@@ -56,12 +56,16 @@ export class WorkItemService implements WorkItemSynchronizer {
   ) {}
 
   sync(input: WorkItemSyncInput): Promise<WorkItemSyncSnapshot> {
-    if (this.inFlight) return this.inFlight;
+    const key = synchronizationKey(this.provider.id, input);
+    if (!key) return this.performSync(input);
+    const current = this.inFlight.get(key);
+    if (current) return current;
     const operation = this.performSync(input);
-    this.inFlight = operation.finally(() => {
-      this.inFlight = undefined;
+    const shared = operation.finally(() => {
+      if (this.inFlight.get(key) === shared) this.inFlight.delete(key);
     });
-    return this.inFlight;
+    this.inFlight.set(key, shared);
+    return shared;
   }
 
   async loadCached(providerId: string): Promise<WorkItemSyncSnapshot | undefined> {
@@ -101,6 +105,12 @@ export class WorkItemService implements WorkItemSynchronizer {
             projectExternalId: project.externalId,
             projectName: project.name,
             accountDisplayName: input.accountDisplayName,
+            ...(input.cacheAccount?.accountKey
+              ? { accountKey: input.cacheAccount.accountKey }
+              : {}),
+            ...(input.cacheAccount?.tenantKey
+              ? { tenantKey: input.cacheAccount.tenantKey }
+              : {}),
           });
           const successfulScopes = result.scopes.filter((scope) => scope.outcome === "success");
           const failedScopes = result.scopes.length - successfulScopes.length;
@@ -285,6 +295,20 @@ function preferredFailureCode(codes: WorkItemErrorCode[]): WorkItemErrorCode | u
   if (codes.includes("provider_rate_limited")) return "provider_rate_limited";
   if (codes.includes("provider_unavailable")) return "provider_unavailable";
   return codes.length > 0 ? "work_item_sync_failed" : undefined;
+}
+
+function synchronizationKey(providerId: string, input: WorkItemSyncInput) {
+  const accountKey = input.cacheAccount?.accountKey;
+  if (!accountKey) return undefined;
+  const projectIds = [...new Set(input.projects
+    .filter((project) => project.available)
+    .map((project) => project.externalId))].sort();
+  return JSON.stringify([
+    providerId,
+    accountKey,
+    input.cacheAccount?.tenantKey ?? "",
+    projectIds,
+  ]);
 }
 
 function maximumRetryAfter(values: number[]) {

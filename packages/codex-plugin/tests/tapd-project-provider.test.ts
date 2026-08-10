@@ -151,6 +151,27 @@ describe("TAPD project provider", () => {
     });
   });
 
+  it("rejects a stored token that no longer matches the expected sync identity", async () => {
+    const store: CredentialStore = {
+      readTapdToken: vi.fn().mockResolvedValue("new-account-token"),
+      writeTapdToken: vi.fn(),
+      deleteTapdToken: vi.fn(),
+    };
+    const identityClient = {
+      validate: vi.fn().mockResolvedValue({
+        userName: "bob",
+        accountKey: "user-2",
+        companyId: "tenant-1",
+      }),
+    };
+    const resolver = new StoredTapdProjectCredentialResolver({ store, identityClient });
+
+    await expect(resolver.resolve({
+      accountKey: "user-1",
+      tenantKey: "tenant-1",
+    })).rejects.toMatchObject({ code: "provider_unauthorized" });
+  });
+
   it("maps a missing stored credential to provider_not_connected", async () => {
     const resolver = new StoredTapdProjectCredentialResolver({
       store: {

@@ -321,6 +321,8 @@ Move only default work-item synchronizer construction behind an exported factory
 
 Replace the single optional `WorkItemService.inFlight` Promise with an in-memory map keyed by `providerId + accountKey + tenantKey + sorted available project IDs`. Remove each entry in `finally`. Never persist or log the key. When `cacheAccount.accountKey` is missing, execute without joining or publishing an in-flight entry. This preserves process-level deduplication without allowing account, tenant, or project results to cross boundaries.
 
+Pass the stable account and tenant identity from `WorkItemSyncInput` through the provider query. Before each TAPD project request, `StoredTapdProjectCredentialResolver` validates that the currently stored Token still belongs to that identity. If an account switch occurred during an older synchronization, reject the remaining old requests as unauthorized instead of using the new Token.
+
 Update `createTaskboardHttpServer()` to construct the runtime once, outside the HTTP request callback:
 
 ```ts
@@ -513,6 +515,7 @@ git commit -m "test(taskboard): verify configurable auto refresh"
 - [ ] Hidden pages do not start requests; visible pages use the exact remaining interval.
 - [ ] Manual, automatic, visibility, and multiple-board triggers with the same sync identity do not multiply Provider calls in one Companion process.
 - [ ] Different accounts, tenants, or project sets never share an in-flight Promise or result.
+- [ ] Switching the stored account during a sync cannot apply the new Token to the old sync's remaining projects.
 - [ ] HTTP `429` stops the remaining project requests and cools down automatic refresh.
 - [ ] Disconnected/expired pauses; successful reconnect refreshes once and resumes.
 - [ ] Existing live/mixed/offline cards remain available after refresh failures.

@@ -11,7 +11,10 @@ import {
 } from "./project-management-provider.js";
 
 export interface TapdProjectCredentialResolver {
-  resolve(): Promise<{ token: string; accountDisplayName: string }>;
+  resolve(expectedIdentity?: {
+    accountKey: string;
+    tenantKey?: string;
+  }): Promise<{ token: string; accountDisplayName: string }>;
 }
 
 export class StoredTapdProjectCredentialResolver
@@ -21,12 +24,19 @@ implements TapdProjectCredentialResolver {
     identityClient: TapdIdentityValidator;
   }) {}
 
-  async resolve() {
+  async resolve(expectedIdentity?: { accountKey: string; tenantKey?: string }) {
     let token: string | undefined;
     try {
       token = await this.options.store.readTapdToken();
       if (!token) throw new ProjectProviderError("provider_not_connected");
       const identity = await this.options.identityClient.validate(token);
+      if (expectedIdentity && (
+        identity.accountKey !== expectedIdentity.accountKey
+        || (expectedIdentity.tenantKey !== undefined
+          && identity.companyId !== expectedIdentity.tenantKey)
+      )) {
+        throw new ProjectProviderError("provider_unauthorized");
+      }
       return { token, accountDisplayName: identity.userName };
     } catch (error) {
       if (error instanceof ProjectProviderError) throw error;

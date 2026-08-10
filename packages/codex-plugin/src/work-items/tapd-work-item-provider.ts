@@ -48,10 +48,15 @@ export class TapdWorkItemProvider implements WorkItemProvider {
     projectExternalId: string;
     projectName: string;
     accountDisplayName: string;
+    accountKey?: string;
+    tenantKey?: string;
   }): Promise<WorkItemQueryResult> {
     let token: string;
     try {
-      ({ token } = await this.credentialResolver.resolve());
+      ({ token } = await this.credentialResolver.resolve(input.accountKey ? {
+        accountKey: input.accountKey,
+        ...(input.tenantKey ? { tenantKey: input.tenantKey } : {}),
+      } : undefined));
     } catch (error) {
       const errorCode = providerErrorCode(error);
       return {

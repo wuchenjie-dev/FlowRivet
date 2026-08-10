@@ -2,10 +2,8 @@ import { createServer } from "node:http";
 
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-import {
-  createTaskboardMcpServer,
-  type TaskboardMcpServerOptions,
-} from "./app.js";
+import type { TaskboardMcpServerOptions } from "./app.js";
+import { createTaskboardRuntime } from "./taskboard-runtime.js";
 
 const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
 
@@ -29,6 +27,7 @@ function applyCors(origin: string | undefined, response: import("node:http").Ser
 export function createTaskboardHttpServer(
   options: TaskboardMcpServerOptions = {},
 ) {
+  const runtime = createTaskboardRuntime(options);
   return createServer(async (request, response) => {
     const url = new URL(
       request.url ?? "/",
@@ -68,7 +67,7 @@ export function createTaskboardHttpServer(
       return;
     }
 
-    const server = createTaskboardMcpServer(options);
+    const server = runtime.createServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

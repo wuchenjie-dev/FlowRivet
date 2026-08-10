@@ -107,6 +107,21 @@ export interface TaskboardPreferencesReaderWriter {
   save(preferences: TaskboardPreferences): Promise<TaskboardPreferences>;
 }
 
+export function createDefaultWorkItemSynchronizer(
+  now: () => Date = () => new Date(),
+): WorkItemSynchronizer {
+  const credentialStore = createCredentialStore();
+  const credentialResolver = new StoredTapdProjectCredentialResolver({
+    store: credentialStore,
+    identityClient: new TapdIdentityClient(),
+  });
+  return new WorkItemService(
+    new TapdWorkItemProvider({ credentialResolver }),
+    now,
+    createWorkItemCacheStore(),
+  );
+}
+
 export function createTaskboardMcpServer(
   options: TaskboardMcpServerOptions = {},
 ) {
@@ -130,11 +145,8 @@ export function createTaskboardMcpServer(
     now,
   );
   const projectLogger = options.projectLogger ?? new JsonStderrProjectOperationLogger();
-  const workItemService = options.workItemService ?? new WorkItemService(
-    new TapdWorkItemProvider({ credentialResolver }),
-    now,
-    createWorkItemCacheStore(),
-  );
+  const workItemService = options.workItemService
+    ?? createDefaultWorkItemSynchronizer(now);
   const workItemLogger = options.workItemLogger ?? new JsonStderrWorkItemOperationLogger();
   const workItemDetailService = options.workItemDetailService ?? new WorkItemDetailService(
     new TapdWorkItemDetailProvider({ credentialResolver }),

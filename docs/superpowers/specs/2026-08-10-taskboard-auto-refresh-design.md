@@ -72,6 +72,8 @@ Companion process-level shared WorkItemSynchronizer
 
 进程级单飞必须按同步身份隔离。同步键由 `providerId`、稳定 `accountKey`、`tenantKey` 和排序后的可用项目 ID 集合组成；只有同步键完全相同的手动或自动刷新才能复用进行中的 Promise。账号、租户或项目集合任一不同，都必须启动独立同步，绝不能返回另一身份的结果。同步键只存在内存中，不写入日志、偏好文件或 UI；缺少稳定 `accountKey` 时不得参与跨请求单飞。
 
+共享同步器读取本地凭据时还必须绑定发起同步的稳定账号和租户标识。每个 Provider 项目请求使用 Token 前都要验证当前 Token 的身份仍与同步输入一致；若同步期间发生账号切换，旧同步对尚未开始的项目返回 `provider_unauthorized`，不得用新账号 Token 请求旧账号项目。显示名不能作为该校验的唯一依据。
+
 ## 6. Provider 中立偏好模型
 
 公开契约：
@@ -260,6 +262,7 @@ interface RefreshCoordinatorState {
 - 保存偏好不调用 TAPD Provider。
 - HTTP 请求级 MCP Server 共享同一个进程级同步器；相同同步键的并发刷新只调用一次 Provider。
 - 不同账号、租户或项目集合的并发刷新互不复用结果；缺少稳定账号标识时不跨请求合并。
+- 同步期间切换账号后，旧同步不会用新账号 Token 请求剩余项目。
 - HTTP `429` 映射为 `provider_rate_limited`，日志不记录上游响应正文。
 
 ### 13.3 React 单元测试

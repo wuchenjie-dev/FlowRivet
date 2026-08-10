@@ -20,6 +20,8 @@ export interface WorkItemProvider {
     projectExternalId: string;
     projectName: string;
     accountDisplayName: string;
+    accountKey?: string;
+    tenantKey?: string;
   }): Promise<WorkItemQueryResult>;
 }
 

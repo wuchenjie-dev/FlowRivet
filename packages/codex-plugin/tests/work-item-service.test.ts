@@ -236,7 +236,11 @@ describe("work item service", () => {
       release = resolve;
     }));
     const service = new WorkItemService(provider, () => now);
-    const input = { accountDisplayName: "alice", projects: [project("A")] };
+    const input = {
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    };
 
     const first = service.sync(input);
     const second = service.sync(input);
@@ -245,6 +249,60 @@ describe("work item service", () => {
     release(result("A"));
     await expect(first).resolves.toMatchObject({ summary: { successfulProjects: 1 } });
     expect(provider.listProjectWorkItems).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["account", { ...cacheAccount, accountKey: "user-2" }, [project("A")]],
+    ["tenant", { ...cacheAccount, tenantKey: "tenant-2" }, [project("A")]],
+    ["project set", cacheAccount, [project("B")]],
+  ])("does not share an in-flight synchronization across a different %s", async (
+    _case,
+    otherAccount,
+    otherProjects,
+  ) => {
+    const provider = new FakeProvider();
+    const releases: Array<(value: WorkItemQueryResult) => void> = [];
+    provider.listProjectWorkItems.mockImplementation(({ projectExternalId }) =>
+      new Promise((resolve) => releases.push((value) => resolve({
+        ...value,
+        projectExternalId,
+      }))),
+    );
+    const service = new WorkItemService(provider, () => now);
+
+    const first = service.sync({
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    });
+    const second = service.sync({
+      accountDisplayName: "alice",
+      cacheAccount: otherAccount,
+      projects: otherProjects,
+    });
+
+    expect(second).not.toBe(first);
+    await vi.waitFor(() => expect(provider.listProjectWorkItems).toHaveBeenCalledTimes(2));
+    releases.forEach((release, index) => release(result(index === 0 ? "A" : otherProjects[0]!.externalId)));
+    await Promise.all([first, second]);
+  });
+
+  it("does not share in-flight work when stable account identity is missing", async () => {
+    const provider = new FakeProvider();
+    const releases: Array<(value: WorkItemQueryResult) => void> = [];
+    provider.listProjectWorkItems.mockImplementation(() =>
+      new Promise((resolve) => releases.push(resolve)),
+    );
+    const service = new WorkItemService(provider, () => now);
+    const input = { accountDisplayName: "alice", projects: [project("A")] };
+
+    const first = service.sync(input);
+    const second = service.sync(input);
+
+    expect(second).not.toBe(first);
+    await vi.waitFor(() => expect(provider.listProjectWorkItems).toHaveBeenCalledTimes(2));
+    releases.forEach((release) => release(result("A")));
+    await Promise.all([first, second]);
   });
 
   it("keeps synchronization in flight until the cache transaction completes", async () => {
@@ -435,6 +493,23 @@ describe("work item service", () => {
       accountDisplayName: "alice",
       projects: [project("A")],
     })).rejects.toMatchObject({ code: "provider_unauthorized" });
+  });
+
+  it("binds provider requests to the stable cache identity", async () => {
+    const provider = new FakeProvider();
+    provider.listProjectWorkItems.mockResolvedValue(result("A"));
+    const service = new WorkItemService(provider, () => now);
+
+    await service.sync({
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    });
+
+    expect(provider.listProjectWorkItems).toHaveBeenCalledWith(expect.objectContaining({
+      accountKey: "user-1",
+      tenantKey: "tenant-1",
+    }));
   });
 
   it("aggregates the maximum rate-limit cooldown into a partial snapshot", async () => {
