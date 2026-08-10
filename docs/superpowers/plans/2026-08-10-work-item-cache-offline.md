@@ -196,7 +196,7 @@ git commit -m "refactor(taskboard): expose provider sync scopes"
 
 - [ ] **Step 1: Write failing store contract tests against temporary databases**
 
-Cover initial/repeated schema creation, scope replacement, successful empty scope, failed-scope retention, account/provider isolation, partial unique active account constraint, seven-day per-scope expiry, orphan cleanup, transaction rollback, malformed JSON, unknown schema versions, and `clearActive`. Inject `now` and database path; never open the user's real config database.
+Cover initial/repeated schema creation, scope replacement, successful empty scope, failed-scope retention, removal of projects absent from an authoritative online catalog, account/provider isolation, partial unique active account constraint, seven-day per-scope expiry, orphan cleanup, transaction rollback, malformed JSON, unknown schema versions, and `clearActive`. Inject `now` and database path; never open the user's real config database.
 
 ```ts
 await store.mergeScopes({ account, projects: [project], scopes: [freshTaskScope], now });
@@ -244,7 +244,7 @@ ON cache_accounts(provider_id)
 WHERE is_active = 1;
 ```
 
-Compute `namespace_key` with SHA-256 over length-delimited `providerId`, tenant key, and account key. Expire `cache_scopes` individually only when `last_success_at < now - 7 days`; the exact seven-day boundary remains valid. Cascade items, remove orphan projects, then remove empty accounts. Strip `freshness` before writing and add `cached` after reading.
+Compute `namespace_key` with SHA-256 over length-delimited `providerId`, tenant key, and account key. During online merge, delete cached projects absent from the input's authoritative project collection. Expire `cache_scopes` individually only when `last_success_at < now - 7 days`; the exact seven-day boundary remains valid. Cascade items, remove orphan projects, then remove empty accounts. Strip `freshness` before writing and add `cached` after reading.
 
 - [ ] **Step 5: Add lazy capability detection and secure paths**
 

@@ -98,6 +98,7 @@ interface WorkItemCacheStore {
 - Provider 无法返回稳定账号键时，在线同步继续但缓存返回 `cache_identity_unavailable`，不得退化为用显示名称隔离账号。
 - 活动账号发生变化时，先删除旧命名空间，再激活新命名空间。
 - `mergeScopes` 在单个事务内替换所有成功范围，失败范围保持不变。
+- 在线项目发现成功后，传入项目集合视为当前账号的权威可访问集合；`mergeScopes` 删除集合外的旧缓存项目及其范围，避免权限已收回的项目继续离线展示。纯离线读取不执行该裁剪。
 - `loadActive` 只返回当前 Provider 的活动命名空间；读取前按每个范围的 `last_success_at` 删除超过 7 天的范围，再删除没有范围的孤立项目和账号。
 - `clearActive` 在一个事务内删除活动指针、账号、项目、范围和工作项。
 - `mergeScopes` 写事务失败时不得吞掉本次已获得的在线结果：服务返回本次成功范围，缺失的失败范围不补缓存，并附加 `cache_write_failed`。
