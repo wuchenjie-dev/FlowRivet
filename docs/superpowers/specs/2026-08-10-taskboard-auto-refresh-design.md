@@ -68,7 +68,9 @@ Companion process-level shared WorkItemSynchronizer
 
 计时器属于当前 React 看板页面。Companion 只负责校验和持久化偏好，不在后台调度 TAPD 请求。这样看板关闭后不会继续占用 TAPD 配额，也不需要增加服务端推送协议。
 
-当前 HTTP 入口会为每次 MCP 请求创建新的 Server，因此不能依赖请求内新建的 `WorkItemService` 实现跨看板单飞。Companion 启动时必须创建一个进程级共享 `WorkItemSynchronizer`，再注入每个请求级 MCP Server。所有看板、手动刷新和自动刷新复用该实例的进行中同步 Promise；请求级 Server 和 Transport 仍按现有方式创建和关闭。
+当前 HTTP 入口会为每次 MCP 请求创建新的 Server，因此不能依赖请求内新建的 `WorkItemService` 实现跨看板单飞。Companion 启动时必须创建一个进程级共享 `WorkItemSynchronizer`，再注入每个请求级 MCP Server。请求级 Server 和 Transport 仍按现有方式创建和关闭。
+
+进程级单飞必须按同步身份隔离。同步键由 `providerId`、稳定 `accountKey`、`tenantKey` 和排序后的可用项目 ID 集合组成；只有同步键完全相同的手动或自动刷新才能复用进行中的 Promise。账号、租户或项目集合任一不同，都必须启动独立同步，绝不能返回另一身份的结果。同步键只存在内存中，不写入日志、偏好文件或 UI；缺少稳定 `accountKey` 时不得参与跨请求单飞。
 
 ## 6. Provider 中立偏好模型
 
@@ -256,7 +258,8 @@ interface RefreshCoordinatorState {
 - 无效输入和 Store 失败映射到稳定错误码。
 - 日志只有白名单字段，不含凭据或业务数据。
 - 保存偏好不调用 TAPD Provider。
-- HTTP 请求级 MCP Server 共享同一个进程级同步器，并发刷新只调用一次 Provider。
+- HTTP 请求级 MCP Server 共享同一个进程级同步器；相同同步键的并发刷新只调用一次 Provider。
+- 不同账号、租户或项目集合的并发刷新互不复用结果；缺少稳定账号标识时不跨请求合并。
 - HTTP `429` 映射为 `provider_rate_limited`，日志不记录上游响应正文。
 
 ### 13.3 React 单元测试
