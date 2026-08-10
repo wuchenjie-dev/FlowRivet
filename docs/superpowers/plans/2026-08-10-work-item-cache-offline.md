@@ -273,17 +273,17 @@ git commit -m "feat(taskboard): persist work item sync scopes"
 - Modify: `packages/codex-plugin/src/work-items/work-item-service.ts`
 - Test: `packages/codex-plugin/tests/work-item-service.test.ts`
 
-- [ ] **Step 1: Add failing service scenarios**
+- [x] **Step 1: Add failing service scenarios**
 
 Cover live, mixed, offline load, partial failure without cache, all failure without cache, cache write failure, cache identity unavailable, seven-day completed-item filtering across both sources, and existing in-flight deduplication. Assert the successful/failed project counters remain project-oriented while freshness counts are scope-oriented.
 
-- [ ] **Step 2: Run service tests and verify failure**
+- [x] **Step 2: Run service tests and verify failure**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/work-item-service.test.ts`
 
 Expected: FAIL because `WorkItemService` has no cache or freshness support.
 
-- [ ] **Step 3: Implement cache-aware synchronization**
+- [x] **Step 3: Implement cache-aware synchronization**
 
 Extend input with optional `cacheAccount?: CacheAccount`; extend output with `dataFreshness`, scope counts, sync timestamps, reason/warning codes. Missing stable identity runs the same online provider flow without cache and returns `cache_identity_unavailable`. Build all live scope results first. If cache merge succeeds, use its transaction result. If it fails, return only successful live scopes with `cache_write_failed`; never discard valid online data or reuse an unconfirmed cached transaction result.
 
@@ -303,7 +303,7 @@ When failed scopes contain different reasons, select the single snapshot `freshn
 
 `loadCached` must return the persisted `ProjectRef` values as counted projects as well as cached items. This gives the server enough provider-neutral data to reconstruct the offline `projectCatalog` without calling TAPD or inventing project metadata.
 
-- [ ] **Step 4: Run service tests and typecheck**
+- [x] **Step 4: Run service tests and typecheck**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/work-item-service.test.ts`
 
@@ -313,7 +313,7 @@ Run: `npm run typecheck --workspace @flowrivet/codex-plugin`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/codex-plugin/src/work-items/work-item-service.ts packages/codex-plugin/tests/work-item-service.test.ts

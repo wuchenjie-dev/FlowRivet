@@ -2,10 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectRef } from "../src/contracts/projects.js";
 import type { WorkItem, WorkItemKind } from "../src/contracts/taskboard.js";
+import {
+  WorkItemCacheError,
+  type CacheAccount,
+  type CachedSnapshot,
+  type WorkItemCacheStore,
+} from "../src/cache/work-item-cache-store.js";
 import { WorkItemService } from "../src/work-items/work-item-service.js";
-import type {
-  WorkItemProvider,
-  WorkItemQueryResult,
+import {
+  WorkItemProviderError,
+  type WorkItemProvider,
+  type WorkItemQueryResult,
 } from "../src/work-items/work-item-provider.js";
 
 const now = new Date("2026-08-07T12:00:00.000Z");
@@ -80,6 +87,56 @@ function result(
   };
 }
 
+class FakeCache implements WorkItemCacheStore {
+  readonly activateAccount = vi.fn<WorkItemCacheStore["activateAccount"]>();
+  readonly mergeScopes = vi.fn<WorkItemCacheStore["mergeScopes"]>();
+  readonly loadActive = vi.fn<WorkItemCacheStore["loadActive"]>();
+  readonly clearActive = vi.fn<WorkItemCacheStore["clearActive"]>();
+  readonly purgeExpired = vi.fn<WorkItemCacheStore["purgeExpired"]>();
+}
+
+const cacheAccount: CacheAccount = {
+  providerId: "tapd",
+  accountKey: "user-1",
+  tenantKey: "tenant-1",
+  accountDisplayName: "alice",
+};
+
+function cachedSnapshot(
+  scopes: CachedSnapshot["scopes"],
+  projects: ProjectRef[] = [project("A")],
+): CachedSnapshot {
+  return {
+    account: {
+      providerId: "tapd",
+      accountDisplayName: "alice",
+    },
+    projects,
+    scopes,
+    items: scopes.flatMap((entry) => entry.items),
+    lastSuccessfulSyncAt: scopes
+      .map((entry) => entry.lastSuccessfulSyncAt)
+      .sort()
+      .at(-1),
+  };
+}
+
+function cachedScope(
+  providerItemType: string,
+  kind: WorkItemKind,
+  items: WorkItem[],
+  freshness: WorkItem["freshness"] = "cached",
+) {
+  return {
+    projectExternalId: "A",
+    providerItemType,
+    kind,
+    freshness,
+    lastSuccessfulSyncAt: now.toISOString(),
+    items: items.map((entry) => ({ ...entry, freshness })),
+  };
+}
+
 describe("work item service", () => {
   it("keeps unfinished items and only trusted completions from the last seven days", async () => {
     const provider = new FakeProvider();
@@ -106,6 +163,13 @@ describe("work item service", () => {
       successfulProjects: 1,
       failedProjects: 0,
       itemCount: 3,
+    });
+    expect(snapshot).toMatchObject({
+      dataFreshness: "live",
+      freshScopeCount: 3,
+      staleScopeCount: 0,
+      lastSuccessfulSyncAt: now.toISOString(),
+      lastSyncAttemptAt: now.toISOString(),
     });
   });
 
@@ -181,5 +245,195 @@ describe("work item service", () => {
     release(result("A"));
     await expect(first).resolves.toMatchObject({ summary: { successfulProjects: 1 } });
     expect(provider.listProjectWorkItems).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps synchronization in flight until the cache transaction completes", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    let releaseCache!: (value: CachedSnapshot) => void;
+    provider.listProjectWorkItems.mockResolvedValue(result("A", [item("live", "todo")]));
+    cache.mergeScopes.mockReturnValue(new Promise((resolve) => {
+      releaseCache = resolve;
+    }));
+    const service = new WorkItemService(provider, () => now, cache);
+    const input = {
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    };
+
+    const first = service.sync(input);
+    await vi.waitFor(() => expect(cache.mergeScopes).toHaveBeenCalledOnce());
+    const second = service.sync(input);
+
+    expect(second).toBe(first);
+    releaseCache(cachedSnapshot([
+      cachedScope("task", "task", [item("live", "todo")], "fresh"),
+    ]));
+    await first;
+    expect(provider.listProjectWorkItems).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges successful live scopes with retained cached scopes", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    provider.listProjectWorkItems.mockResolvedValue(result(
+      "A",
+      [item("live", "todo")],
+      ["defect"],
+    ));
+    cache.mergeScopes.mockResolvedValue(cachedSnapshot([
+      cachedScope("story", "requirement", [], "fresh"),
+      cachedScope("task", "task", [item("live", "todo")], "fresh"),
+      cachedScope("bug", "defect", [item("cached", "todo")]),
+    ]));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    });
+
+    expect(snapshot.items.map((entry) => [entry.externalId, entry.freshness]))
+      .toEqual([["cached", "cached"], ["live", "fresh"]]);
+    expect(snapshot).toMatchObject({
+      dataFreshness: "mixed",
+      freshScopeCount: 2,
+      staleScopeCount: 1,
+      freshnessReasonCode: "work_item_sync_failed",
+      summary: { successfulProjects: 0, failedProjects: 1, itemCount: 2 },
+    });
+  });
+
+  it("returns cached work when every online scope fails", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    provider.listProjectWorkItems.mockRejectedValue(
+      new WorkItemProviderError("provider_unavailable"),
+    );
+    cache.mergeScopes.mockResolvedValue(cachedSnapshot([
+      cachedScope("task", "task", [item("cached", "todo")]),
+    ]));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    await expect(service.sync({
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    })).resolves.toMatchObject({
+      dataFreshness: "offline",
+      freshScopeCount: 0,
+      staleScopeCount: 1,
+      freshnessReasonCode: "provider_unavailable",
+      items: [expect.objectContaining({ externalId: "cached", freshness: "cached" })],
+    });
+  });
+
+  it("keeps partial online data when stable cache identity is unavailable", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    provider.listProjectWorkItems.mockResolvedValue(result(
+      "A",
+      [item("live", "todo")],
+      ["defect"],
+    ));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "alice",
+      projects: [project("A")],
+    });
+
+    expect(cache.mergeScopes).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      dataFreshness: "live",
+      freshScopeCount: 2,
+      staleScopeCount: 0,
+      cacheWarningCode: "cache_identity_unavailable",
+      freshnessReasonCode: "work_item_sync_failed",
+      items: [expect.objectContaining({ externalId: "live" })],
+    });
+  });
+
+  it("keeps successful online scopes when the cache write fails", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    provider.listProjectWorkItems.mockResolvedValue(result("A", [item("live", "todo")]));
+    cache.mergeScopes.mockRejectedValue(new WorkItemCacheError("cache_write_failed"));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    });
+
+    expect(snapshot).toMatchObject({
+      dataFreshness: "live",
+      freshScopeCount: 3,
+      staleScopeCount: 0,
+      cacheWarningCode: "cache_write_failed",
+      items: [expect.objectContaining({ externalId: "live", freshness: "fresh" })],
+    });
+  });
+
+  it("applies completion retention after live and cached scopes are merged", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    provider.listProjectWorkItems.mockResolvedValue(result("A", [
+      item("live-old", "done", "2026-07-31T11:59:59.999Z"),
+    ]));
+    cache.mergeScopes.mockResolvedValue(cachedSnapshot([
+      cachedScope("task", "task", [
+        item("cached-boundary", "done", "2026-07-31T12:00:00.000Z"),
+        item("cached-old", "done", "2026-07-31T11:59:59.999Z"),
+      ]),
+    ]));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "alice",
+      cacheAccount,
+      projects: [project("A")],
+    });
+
+    expect(snapshot.items.map((entry) => entry.externalId)).toEqual(["cached-boundary"]);
+  });
+
+  it("loads and clears cached snapshots through the provider-neutral port", async () => {
+    const provider = new FakeProvider();
+    const cache = new FakeCache();
+    cache.loadActive.mockResolvedValue(cachedSnapshot([
+      cachedScope("task", "task", [item("cached", "todo")]),
+    ]));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    await expect(service.loadCached("tapd")).resolves.toMatchObject({
+      dataFreshness: "offline",
+      freshScopeCount: 0,
+      staleScopeCount: 1,
+      projects: [expect.objectContaining({ externalId: "A", count: 1 })],
+    });
+    await service.clearCached("tapd");
+    expect(cache.clearActive).toHaveBeenCalledWith("tapd");
+  });
+
+  it("uses deterministic failure precedence across provider scopes", async () => {
+    const provider = new FakeProvider();
+    provider.listProjectWorkItems.mockResolvedValue({
+      projectExternalId: "A",
+      scopes: [
+        { providerItemType: "story", kind: "requirement", outcome: "error", items: [], errorCode: "work_item_sync_failed" },
+        { providerItemType: "task", kind: "task", outcome: "error", items: [], errorCode: "provider_unavailable" },
+        { providerItemType: "bug", kind: "defect", outcome: "error", items: [], errorCode: "provider_unauthorized" },
+      ],
+    });
+    const service = new WorkItemService(provider, () => now);
+
+    await expect(service.sync({
+      accountDisplayName: "alice",
+      projects: [project("A")],
+    })).rejects.toMatchObject({ code: "provider_unauthorized" });
   });
 });
