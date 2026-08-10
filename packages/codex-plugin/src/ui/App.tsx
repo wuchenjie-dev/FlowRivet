@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
 import {
@@ -6,11 +6,14 @@ import {
   type TaskboardSnapshot,
 } from "../contracts/taskboard.js";
 import type { McpAppsBridge } from "./bridge.js";
+import { workItemDetailSchema, type WorkItemDetail } from "../contracts/work-item-detail.js";
+import type { WorkItem } from "../contracts/taskboard.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin } from "./components/TapdLogin.js";
+import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
 
 interface AppProps {
   initialSnapshot: TaskboardSnapshot;
@@ -35,6 +38,13 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [refreshPending, setRefreshPending] = useState(false);
   const [displayState, setDisplayState] = useState(() => bridge.getDisplayState());
   const [fullscreenPending, setFullscreenPending] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<WorkItem>();
+  const [workItemDetail, setWorkItemDetail] = useState<WorkItemDetail>();
+  const [detailPending, setDetailPending] = useState(false);
+  const [detailErrorCode, setDetailErrorCode] = useState<string>();
+  const detailCache = useRef(new Map<string, WorkItemDetail>());
+  const detailRequestSequence = useRef(0);
+  const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const tapdState = connection.tapd;
 
   async function enterFullscreen(automatic = false) {
@@ -83,6 +93,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   }
 
   function applySnapshot(snapshot: TaskboardSnapshot) {
+    detailCache.current.clear();
+    closeDetail(false);
     setConnection(snapshot.connection);
     setProjects(snapshot.projects);
     setProjectCatalog(snapshot.projectCatalog);
@@ -90,6 +102,57 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     setSyncSummary(snapshot.syncSummary);
     setSyncErrorCode(snapshot.syncErrorCode);
     setLastSyncedAt(snapshot.lastSyncedAt);
+  }
+
+  function closeDetail(restoreFocus = true) {
+    detailRequestSequence.current += 1;
+    setSelectedItem(undefined);
+    setWorkItemDetail(undefined);
+    setDetailPending(false);
+    setDetailErrorCode(undefined);
+    if (restoreFocus) {
+      const opener = detailOpener.current;
+      requestAnimationFrame(() => opener?.focus());
+    }
+  }
+
+  function openDetail(item: WorkItem, opener: HTMLButtonElement) {
+    detailOpener.current = opener;
+    setSelectedItem(item);
+    const cached = detailCache.current.get(item.key);
+    if (cached) {
+      detailRequestSequence.current += 1;
+      setWorkItemDetail(cached);
+      setDetailPending(false);
+      setDetailErrorCode(undefined);
+      return;
+    }
+    void loadDetail(item);
+  }
+
+  async function loadDetail(item: WorkItem) {
+    const sequence = ++detailRequestSequence.current;
+    setWorkItemDetail(undefined);
+    setDetailErrorCode(undefined);
+    setDetailPending(true);
+    try {
+      const result = await bridge.callTool("get_work_item_detail", {
+        providerId: item.providerId,
+        projectExternalId: item.projectExternalId,
+        providerItemType: item.providerItemType,
+        externalId: item.externalId,
+      });
+      const parsed = workItemDetailSchema.safeParse(result.structuredContent);
+      if (!parsed.success) throw new Error("work_item_detail_invalid_response");
+      if (sequence !== detailRequestSequence.current) return;
+      detailCache.current.set(item.key, parsed.data);
+      setWorkItemDetail(parsed.data);
+    } catch (error) {
+      if (sequence !== detailRequestSequence.current) return;
+      setDetailErrorCode(error instanceof Error ? error.message : "provider_unavailable");
+    } finally {
+      if (sequence === detailRequestSequence.current) setDetailPending(false);
+    }
   }
 
   async function loadBoard(tool: "open_my_taskboard" | "refresh_my_work_items") {
@@ -131,6 +194,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       setProjects([]);
       setProjectCatalog((current) => ({ ...current, projects: [], stale: false }));
       setItems([]);
+      detailCache.current.clear();
+      closeDetail(false);
       setSyncSummary({ successfulProjects: 0, failedProjects: 0, itemCount: 0 });
       setSyncErrorCode(undefined);
       setMenuOpen(false);
@@ -206,10 +271,25 @@ export function App({ initialSnapshot, bridge }: AppProps) {
                 {syncSummary.failedProjects} 个项目同步失败，已保留其他结果
               </p>
             ) : null}
-            <TaskBoard stages={initialSnapshot.stages} items={filteredItems} />
+            <TaskBoard
+              stages={initialSnapshot.stages}
+              items={filteredItems}
+              onOpenItem={openDetail}
+            />
           </main>
         </div>
       )}
+      {selectedItem ? (
+        <WorkItemDetailDrawer
+          key={selectedItem.key}
+          item={selectedItem}
+          detail={workItemDetail}
+          pending={detailPending}
+          errorCode={detailErrorCode}
+          onClose={() => closeDetail()}
+          onRetry={() => void loadDetail(selectedItem)}
+        />
+      ) : null}
       {notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );

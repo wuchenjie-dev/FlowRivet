@@ -11,9 +11,10 @@ const stageLabels: Record<CanonicalStage, string> = {
 interface TaskColumnProps {
   stage: CanonicalStage;
   items: WorkItem[];
+  onOpenItem: (item: WorkItem, opener: HTMLButtonElement) => void;
 }
 
-export function TaskColumn({ stage, items }: TaskColumnProps) {
+export function TaskColumn({ stage, items, onOpenItem }: TaskColumnProps) {
   return (
     <section className="task-column" aria-label={`${stageLabels[stage]}列`}>
       <header className="column-header">
@@ -21,7 +22,9 @@ export function TaskColumn({ stage, items }: TaskColumnProps) {
         <span>{items.length}</span>
       </header>
       <div className="column-body">
-        {items.map((item) => <WorkItemCard key={item.key} item={item} />)}
+        {items.map((item) => (
+          <WorkItemCard key={item.key} item={item} onOpen={onOpenItem} />
+        ))}
         {items.length === 0 ? <p className="column-empty">暂无工作项</p> : null}
       </div>
     </section>

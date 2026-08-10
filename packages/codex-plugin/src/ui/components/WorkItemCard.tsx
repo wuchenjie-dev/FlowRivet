@@ -11,9 +11,10 @@ const kindPresentation = {
 
 interface WorkItemCardProps {
   item: WorkItem;
+  onOpen: (item: WorkItem, opener: HTMLButtonElement) => void;
 }
 
-export function WorkItemCard({ item }: WorkItemCardProps) {
+export function WorkItemCard({ item, onOpen }: WorkItemCardProps) {
   const { label, Icon } = kindPresentation[item.kind];
   const dueAt = item.dueAt
     ? new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(item.dueAt))
@@ -25,21 +26,24 @@ export function WorkItemCard({ item }: WorkItemCardProps) {
       role="article"
       aria-readonly="true"
     >
-      <div className="card-topline">
-        <span className={`kind-badge kind-badge--${item.kind}`}><Icon size={13} />{label}</span>
-        <span className="tapd-id">{item.externalId}</span>
-        <span className="provider-status">{item.providerStatus}</span>
-      </div>
-      <h3>
-        <a href={item.externalUrl} target="_blank" rel="noreferrer">
-          {item.title}
-        </a>
-      </h3>
-      <div className="card-meta">
-        <span className="project-name">{item.projectName}</span>
-        {item.priority ? <span className={`priority priority--${item.priority}`}>{item.priority}</span> : null}
-        {dueAt ? <time dateTime={item.dueAt}>截止 {dueAt}</time> : null}
-      </div>
+      <button
+        type="button"
+        className="work-card-button"
+        aria-label={`打开工作项：${item.title}`}
+        onClick={(event) => onOpen(item, event.currentTarget)}
+      >
+        <div className="card-topline">
+          <span className={`kind-badge kind-badge--${item.kind}`}><Icon size={13} />{label}</span>
+          <span className="tapd-id">{item.externalId}</span>
+          <span className="provider-status">{item.providerStatus}</span>
+        </div>
+        <h3>{item.title}</h3>
+        <div className="card-meta">
+          <span className="project-name">{item.projectName}</span>
+          {item.priority ? <span className={`priority priority--${item.priority}`}>{item.priority}</span> : null}
+          {dueAt ? <time dateTime={item.dueAt}>截止 {dueAt}</time> : null}
+        </div>
+      </button>
     </article>
   );
 }

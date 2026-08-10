@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TaskboardSnapshot } from "../src/contracts/taskboard.js";
+import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import { App } from "../src/ui/App.js";
 import type { McpAppsBridge } from "../src/ui/bridge.js";
@@ -36,6 +37,40 @@ function snapshotWithTapdState(
       tapd,
     },
   };
+}
+
+function workItemDetail(overrides: Partial<WorkItemDetail> = {}): WorkItemDetail {
+  return {
+    key: "tapd:50396062:requirement:#10001",
+    providerId: "tapd",
+    projectExternalId: "50396062",
+    providerItemType: "story",
+    externalId: "#10001",
+    projectName: "ABF 产品研发",
+    kind: "requirement",
+    title: "统一检索结果的排序与筛选体验",
+    providerStatus: "planning",
+    priority: "高",
+    assignees: ["吴晨杰"],
+    creator: "产品经理",
+    createdAt: "2026-08-01T01:00:00.000Z",
+    updatedAt: "2026-08-02T01:00:00.000Z",
+    dueAt: "2026-08-09T10:00:00.000Z",
+    sanitizedDescriptionHtml: "<p>支持 <strong>稳定排序</strong></p>",
+    descriptionTruncated: false,
+    externalUrl: "https://www.tapd.cn/50396062/prong/stories/view/10001",
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("FlowRivet taskboard", () => {
@@ -339,5 +374,131 @@ describe("FlowRivet taskboard", () => {
 
     expect(callTool).toHaveBeenCalledWith("demo_ping", expect.any(Object));
     expect(await screen.findByText(/本地 Companion 已响应/)).toBeTruthy();
+  });
+
+  it("opens the whole card and loads provider-neutral detail", async () => {
+    const user = userEvent.setup();
+    const detail = workItemDetail();
+    const callTool = vi.fn().mockResolvedValue({ content: [], structuredContent: detail });
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", {
+      name: "打开工作项：统一检索结果的排序与筛选体验",
+    }));
+
+    const dialog = await screen.findByRole("dialog", { name: detail.title });
+    expect(callTool).toHaveBeenCalledWith("get_work_item_detail", {
+      providerId: "tapd",
+      projectExternalId: "50396062",
+      providerItemType: "story",
+      externalId: "#10001",
+    });
+    expect(within(dialog).getByText("产品经理")).toBeTruthy();
+    expect(within(dialog).getByText("吴晨杰")).toBeTruthy();
+    expect(within(dialog).getByText("稳定排序")).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "在 TAPD 中打开" })).toMatchObject({
+      target: "_blank",
+      rel: "noreferrer",
+    });
+  });
+
+  it("shows loading state and a retryable provider error", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{ content: []; structuredContent: WorkItemDetail }>();
+    const callTool = vi.fn()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ content: [], structuredContent: workItemDetail() });
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", {
+      name: "打开工作项：统一检索结果的排序与筛选体验",
+    }));
+    expect(screen.getByText("正在加载工作项详情")).toBeTruthy();
+    pending.reject(new Error("provider_unavailable"));
+
+    expect(await screen.findByText("项目管理系统暂时不可用，请稍后重试")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "重试加载详情" }));
+    const dialog = await screen.findByRole("dialog", { name: workItemDetail().title });
+    expect(within(dialog).getByText("稳定排序")).toBeTruthy();
+    expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("caches detail for the session and clears it after board refresh", async () => {
+    const user = userEvent.setup();
+    const detail = workItemDetail();
+    const callTool = vi.fn(async (name: string) => ({
+      content: [],
+      structuredContent: name === "refresh_my_work_items"
+        ? demoTaskboardSnapshot
+        : detail,
+    }));
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
+    const open = () => screen.getByRole("button", {
+      name: "打开工作项：统一检索结果的排序与筛选体验",
+    });
+
+    await user.click(open());
+    await screen.findByRole("dialog", { name: detail.title });
+    await user.click(screen.getByRole("button", { name: "关闭详情" }));
+    await user.click(open());
+    await screen.findByRole("dialog", { name: detail.title });
+    expect(callTool.mock.calls.filter(([name]) => name === "get_work_item_detail")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "关闭详情" }));
+    await user.click(screen.getByRole("button", { name: "刷新看板" }));
+    await user.click(open());
+    await screen.findByRole("dialog", { name: detail.title });
+    expect(callTool.mock.calls.filter(([name]) => name === "get_work_item_detail")).toHaveLength(2);
+  });
+
+  it("ignores a stale detail response after switching work items", async () => {
+    const first = deferred<{ content: []; structuredContent: WorkItemDetail }>();
+    const second = deferred<{ content: []; structuredContent: WorkItemDetail }>();
+    const callTool = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "打开工作项：统一检索结果的排序与筛选体验",
+    }));
+    fireEvent.click(screen.getByRole("button", {
+      name: "打开工作项：补齐搜索服务的接口契约测试",
+    }));
+    second.resolve({ content: [], structuredContent: workItemDetail({
+      key: "tapd:50396062:task:#10002",
+      providerItemType: "task",
+      externalId: "#10002",
+      kind: "task",
+      title: "补齐搜索服务的接口契约测试",
+    }) });
+    expect(await screen.findByRole("dialog", {
+      name: "补齐搜索服务的接口契约测试",
+    })).toBeTruthy();
+
+    first.resolve({ content: [], structuredContent: workItemDetail() });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("dialog", {
+      name: "补齐搜索服务的接口契约测试",
+    })).toBeTruthy();
+  });
+
+  it("closes with Escape and restores focus to the originating card", async () => {
+    const user = userEvent.setup();
+    const detail = workItemDetail();
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({
+      callTool: vi.fn().mockResolvedValue({ content: [], structuredContent: detail }),
+    })} />);
+    const opener = screen.getByRole("button", {
+      name: "打开工作项：统一检索结果的排序与筛选体验",
+    });
+
+    await user.click(opener);
+    expect(await screen.findByRole("dialog", { name: detail.title })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "关闭详情" }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });
