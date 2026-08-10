@@ -1,6 +1,6 @@
 {
   "name": "flowrivet",
-  "version": "0.1.0+codex.20260807064127",
+  "version": "0.1.0+codex.20260810022904",
   "description": "Connect Codex with TAPD, Feishu, and GitLab for governed delivery workflows.",
   "author": {
     "name": "wuchenjie-dev",
@@ -25,12 +25,12 @@
     "category": "Productivity",
     "capabilities": [
       "Interactive",
-      "Write"
+      "Read"
     ],
     "defaultPrompt": [
       "\u6253\u5f00\u6211\u7684 TAPD \u5f85\u529e\u770b\u677f\u3002",
       "\u68c0\u67e5 FlowRivet \u672c\u5730 Companion \u662f\u5426\u53ef\u7528\u3002",
-      "\u6f14\u793a FlowRivet \u770b\u677f\u7684\u9879\u76ee\u7b5b\u9009\u548c\u62d6\u52a8\u3002"
+      "\u5237\u65b0\u6211\u7684 TAPD \u5f85\u529e\u5e76\u663e\u793a\u53ea\u8bfb\u540c\u6b65\u7ed3\u679c\u3002"
     ]
   }
 }

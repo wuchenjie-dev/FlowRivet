@@ -22,7 +22,11 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("API Key");
     expect(guide).toContain("远程插件目录");
     expect(guide).toContain("打开我的 TAPD 待办看板");
-    expect(guide).toContain("Demo 数据");
+    expect(guide).toContain("Phase 1C");
+    expect(guide).toContain("真实工作项");
+    expect(guide).toContain("自动发现全部可访问项目");
+    expect(guide).toContain("refresh_my_work_items");
+    expect(guide).not.toContain("当前看板中的工作项仍是 Demo 数据");
     expect(guide).not.toMatch(/TAPD_TOKEN|TAPD_SECRET/i);
     expect(guide).not.toMatch(/client_secret\s*(?:=|:)\s*["'][^"']+["']/i);
   });

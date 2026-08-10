@@ -27,11 +27,18 @@ describe("FlowRivet plugin package", () => {
     expect(plugin.name).toBe("flowrivet");
     expect(plugin.mcpServers).toBe("./.mcp.json");
     expect(plugin.skills).toBe("./skills/");
+    expect(JSON.stringify(plugin)).toContain("刷新我的 TAPD 待办");
+    expect(JSON.stringify(plugin)).not.toContain("拖动");
+    expect(JSON.stringify(plugin)).not.toContain('"Write"');
     expect(mcp.mcpServers.flowrivet).toEqual({
       type: "http",
       url: "http://127.0.0.1:43120/mcp",
     });
     expect(skill).toContain("open_my_taskboard");
+    expect(skill).toContain("refresh_my_work_items");
+    expect(skill).toContain("真实 TAPD");
+    expect(skill).not.toContain("Phase 0");
+    expect(skill).not.toContain("演示数据");
   });
 
   it("does not package credentials or placeholders", async () => {
