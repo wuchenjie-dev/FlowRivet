@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { projectCatalogSchema } from "../src/contracts/projects.js";
 import {
+  workItemDetailRefSchema,
+  workItemDetailSchema,
+} from "../src/contracts/work-item-detail.js";
+import {
   canonicalStages,
   taskboardSnapshotSchema,
   workItemSchema,
@@ -77,5 +81,53 @@ describe("taskboard demo contract", () => {
     expect(new Set(demoTaskboardSnapshot.items.map((item) => item.stage))).toEqual(
       new Set(canonicalStages),
     );
+  });
+
+  it("accepts provider-neutral work item detail references", () => {
+    expect(workItemDetailRefSchema.parse({
+      providerId: "tapd",
+      projectExternalId: "50396062",
+      providerItemType: "story",
+      externalId: "10001",
+    })).toEqual({
+      providerId: "tapd",
+      projectExternalId: "50396062",
+      providerItemType: "story",
+      externalId: "10001",
+    });
+    expect(workItemDetailRefSchema.safeParse({
+      providerId: "tapd",
+      projectExternalId: "50396062",
+      providerItemType: "epic",
+      externalId: "10001",
+    }).success).toBe(false);
+  });
+
+  it("validates normalized work item details and HTTPS links", () => {
+    const detail = {
+      key: "tapd:50396062:requirement:10001",
+      providerId: "tapd",
+      projectExternalId: "50396062",
+      providerItemType: "story",
+      externalId: "10001",
+      projectName: "FlowRivet Sandbox",
+      kind: "requirement",
+      title: "查看工作项详情",
+      providerStatus: "planning",
+      priority: "High",
+      assignees: ["wuchenjie"],
+      creator: "alice",
+      createdAt: "2026-08-09T01:00:00.000Z",
+      updatedAt: "2026-08-10T01:00:00.000Z",
+      sanitizedDescriptionHtml: "<p>详情</p>",
+      descriptionTruncated: false,
+      externalUrl: "https://www.tapd.cn/50396062/prong/stories/view/10001",
+    } as const;
+
+    expect(workItemDetailSchema.parse(detail)).toEqual(detail);
+    expect(workItemDetailSchema.safeParse({
+      ...detail,
+      externalUrl: "http://www.tapd.cn/unsafe",
+    }).success).toBe(false);
   });
 });
