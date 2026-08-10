@@ -2,7 +2,11 @@ import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
 import type { TaskboardSnapshot } from "../contracts/taskboard.js";
-import { demoTaskboardSnapshot } from "../demo/fixtures.js";
+import { workItemDetailRefSchema } from "../contracts/work-item-detail.js";
+import {
+  demoTaskboardSnapshot,
+  demoWorkItemDetail,
+} from "../demo/fixtures.js";
 
 type Scenario = "connected" | "disconnected" | "expired" | "partial" | "error";
 
@@ -91,6 +95,7 @@ function DemoHarness() {
 
       if (message.method === "tools/call" && message.id !== undefined) {
         const toolName = message.params?.name;
+        const detailReference = workItemDetailRefSchema.safeParse(message.params?.arguments);
         const connectedSnapshot = scenarioSnapshot("connected");
         const structuredContent = toolName === "login_with_tapd_token"
           ? {
@@ -107,6 +112,8 @@ function DemoHarness() {
               : scenario)
             : toolName === "disconnect_tapd"
               ? { ok: true, connection: { tapd: "disconnected" } }
+              : toolName === "get_work_item_detail" && detailReference.success
+                ? demoWorkItemDetail(detailReference.data)
               : undefined;
         send({
           jsonrpc: "2.0",

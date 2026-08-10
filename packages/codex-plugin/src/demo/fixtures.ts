@@ -2,6 +2,10 @@ import {
   canonicalStages,
   taskboardSnapshotSchema,
 } from "../contracts/taskboard.js";
+import {
+  workItemDetailSchema,
+  type WorkItemDetailRef,
+} from "../contracts/work-item-detail.js";
 
 export const demoTaskboardSnapshot = taskboardSnapshotSchema.parse({
   connection: {
@@ -97,3 +101,37 @@ export const demoTaskboardSnapshot = taskboardSnapshotSchema.parse({
   },
   lastSyncedAt: "2026-08-06T19:30:00+08:00",
 });
+
+export function demoWorkItemDetail(reference: WorkItemDetailRef) {
+  const item = demoTaskboardSnapshot.items.find((candidate) =>
+    candidate.providerId === reference.providerId
+    && candidate.projectExternalId === reference.projectExternalId
+    && candidate.providerItemType === reference.providerItemType
+    && candidate.externalId === reference.externalId);
+  if (!item) return undefined;
+
+  return workItemDetailSchema.parse({
+    key: item.key,
+    providerId: item.providerId,
+    projectExternalId: item.projectExternalId,
+    providerItemType: item.providerItemType,
+    externalId: item.externalId,
+    projectName: item.projectName,
+    kind: item.kind,
+    title: item.title,
+    providerStatus: item.providerStatus,
+    priority: item.priority,
+    assignees: ["吴晨杰"],
+    creator: "产品经理",
+    createdAt: "2026-08-01T01:00:00.000Z",
+    updatedAt: "2026-08-02T01:00:00.000Z",
+    dueAt: item.dueAt ? new Date(item.dueAt).toISOString() : undefined,
+    completedAt: item.completedAt ? new Date(item.completedAt).toISOString() : undefined,
+    sanitizedDescriptionHtml: [
+      "<p>支持 <strong>稳定排序</strong>，并保留用户的筛选上下文。</p>",
+      '<p><a href="https://docs.example.test/sorting" target="_blank" rel="noreferrer">查看验收规范</a></p>',
+    ].join(""),
+    descriptionTruncated: false,
+    externalUrl: item.externalUrl,
+  });
+}

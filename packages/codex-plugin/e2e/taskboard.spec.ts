@@ -107,7 +107,7 @@ test("cards are read-only and pointer movement cannot change counts", async ({ p
   await expect(board.getByText(/看板位置已更新/)).toHaveCount(0);
 });
 
-test("keyboard reaches filters, refresh, connection menu, and work item links", async ({ page }) => {
+test("keyboard reaches controls and opens a work item detail", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
@@ -117,10 +117,60 @@ test("keyboard reaches filters, refresh, connection menu, and work item links", 
   await expect(board.getByRole("button", { name: "打开连接菜单" })).toBeFocused();
   await board.getByRole("button", { name: "筛选项目：ABF 产品研发" }).focus();
   await expect(board.getByRole("button", { name: "筛选项目：ABF 产品研发" })).toBeFocused();
-  const workItemLink = board.getByRole("link", { name: "统一检索结果的排序与筛选体验" });
-  await workItemLink.focus();
-  await expect(workItemLink).toBeFocused();
-  await expect(workItemLink).toHaveAttribute("target", "_blank");
+  const workItemButton = board.getByRole("button", {
+    name: "打开工作项：统一检索结果的排序与筛选体验",
+  });
+  await workItemButton.focus();
+  await expect(workItemButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "关闭详情" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(board.getByRole("dialog")).toHaveCount(0);
+  await expect(workItemButton).toBeFocused();
+});
+
+test("desktop detail drawer renders live fields with bounded overlay geometry", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", {
+    name: "打开工作项：统一检索结果的排序与筛选体验",
+  }).click();
+  const dialog = board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("产品经理")).toBeVisible();
+  await expect(dialog.getByText("稳定排序")).toBeVisible();
+  const externalLink = dialog.getByRole("link", { name: "在 TAPD 中打开" });
+  await expect(externalLink).toHaveAttribute("target", "_blank");
+  await expect(externalLink).toHaveAttribute("rel", "noreferrer");
+  await expect(dialog.locator("script, iframe, img, form")).toHaveCount(0);
+
+  const panelBox = await dialog.locator(".detail-panel").boundingBox();
+  expect(panelBox?.width).toBe(520);
+  expect(panelBox?.height).toBe(900);
+  expect(panelBox?.x).toBe(920);
+
+  await page.mouse.click(120, 450);
+  await expect(dialog).toHaveCount(0);
+});
+
+test("mobile detail layer fills the viewport without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", {
+    name: "打开工作项：统一检索结果的排序与筛选体验",
+  }).click();
+  const dialog = board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" });
+  await expect(dialog).toBeVisible();
+  const panelBox = await dialog.locator(".detail-panel").boundingBox();
+  expect(panelBox?.width).toBe(390);
+  expect(panelBox?.height).toBe(844);
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(dialog.getByRole("button", { name: "关闭详情" })).toBeVisible();
 });
 
 test("opens all accessible projects without a selection step", async ({ page }) => {
