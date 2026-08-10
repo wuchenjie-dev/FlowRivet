@@ -14,7 +14,6 @@ afterEach(async () => {
     rm(path, { recursive: true, force: true }),
   ));
 });
-
 async function temporaryDirectory() {
   const path = await mkdtemp(join(tmpdir(), "flowrivet-preferences-"));
   directories.push(path);
@@ -102,4 +101,3 @@ describe("JSON taskboard preferences store", () => {
     expect((await readdir(directory)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 });
-
