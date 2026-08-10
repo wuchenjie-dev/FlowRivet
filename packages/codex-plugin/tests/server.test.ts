@@ -10,11 +10,14 @@ import type { TapdAuthenticator } from "../src/auth/tapd-auth-service.js";
 import { TapdIdentityError } from "../src/auth/tapd-identity-client.js";
 import { WorkItemCacheError } from "../src/cache/work-item-cache-store.js";
 import type { ProjectCatalogResult } from "../src/contracts/projects.js";
+import type { TaskboardPreferences } from "../src/contracts/taskboard-preferences.js";
 import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import type { ProjectOperationLogger } from "../src/observability/project-operation-logger.js";
+import type { TaskboardPreferencesOperationLogger } from "../src/observability/taskboard-preferences-operation-logger.js";
 import type { WorkItemDetailOperationLogger } from "../src/observability/work-item-detail-operation-logger.js";
 import type { WorkItemOperationLogger } from "../src/observability/work-item-operation-logger.js";
 import type { ProjectCatalog } from "../src/projects/project-catalog-service.js";
+import { TaskboardPreferencesStoreError } from "../src/preferences/taskboard-preferences-store.js";
 import {
   createTaskboardMcpServer,
   TASKBOARD_RESOURCE_URI,
@@ -84,6 +87,11 @@ async function connectClient(
   workItemLogger?: WorkItemOperationLogger,
   workItemDetailService: WorkItemDetailReader = detailReader().service,
   workItemDetailLogger?: WorkItemDetailOperationLogger,
+  taskboardPreferences?: {
+    get(): Promise<TaskboardPreferences>;
+    save(preferences: TaskboardPreferences): Promise<TaskboardPreferences>;
+  },
+  taskboardPreferencesLogger?: TaskboardPreferencesOperationLogger,
 ) {
   const server = createTaskboardMcpServer({
     uiBundlePath,
@@ -94,6 +102,8 @@ async function connectClient(
     ...(workItemLogger ? { workItemLogger } : {}),
     workItemDetailService,
     ...(workItemDetailLogger ? { workItemDetailLogger } : {}),
+    ...(taskboardPreferences ? { taskboardPreferences } : {}),
+    ...(taskboardPreferencesLogger ? { taskboardPreferencesLogger } : {}),
   });
   const client = new Client({ name: "flowrivet-test", version: "0.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -220,12 +230,16 @@ describe("taskboard MCP app", () => {
           "discover_projects",
           "save_project_selection",
           "add_project",
+          "get_taskboard_preferences",
+          "save_taskboard_preferences",
         ]),
       );
 
       const openTool = tools.find((tool) => tool.name === "open_my_taskboard");
       const pingTool = tools.find((tool) => tool.name === "demo_ping");
       const detailTool = tools.find((tool) => tool.name === "get_work_item_detail");
+      const getPreferences = tools.find((tool) => tool.name === "get_taskboard_preferences");
+      const savePreferences = tools.find((tool) => tool.name === "save_taskboard_preferences");
       expect(openTool?._meta?.ui).toEqual({ resourceUri: TASKBOARD_RESOURCE_URI });
       expect(pingTool?._meta?.ui).toBeUndefined();
       expect(detailTool?.annotations).toMatchObject({
@@ -238,9 +252,124 @@ describe("taskboard MCP app", () => {
         "providerId",
         "providerItemType",
       ]);
+      expect(getPreferences?.annotations).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
+      expect(getPreferences?._meta?.ui).toBeUndefined();
+      expect(getPreferences?.inputSchema.properties).toEqual({});
+      expect(savePreferences?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(savePreferences?._meta?.ui).toBeUndefined();
+      expect(Object.keys(savePreferences?.inputSchema.properties ?? {})).toEqual([
+        "refreshIntervalSeconds",
+      ]);
       for (const name of ["discover_projects", "save_project_selection", "add_project"]) {
         expect(tools.find((tool) => tool.name === name)?._meta?.ui).toBeUndefined();
       }
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("reads and saves taskboard preferences without synchronizing work items", async () => {
+    const workItems = synchronizer();
+    const preferences = {
+      get: vi.fn().mockResolvedValue({ refreshIntervalSeconds: 60 }),
+      save: vi.fn().mockResolvedValue({ refreshIntervalSeconds: 10 }),
+    };
+    const connection = await connectClient(
+      await createBundle(), authenticator(), catalog().service, undefined,
+      workItems.service, undefined, detailReader().service, undefined, preferences,
+    );
+
+    try {
+      const loaded = await connection.client.callTool({
+        name: "get_taskboard_preferences",
+        arguments: {},
+      });
+      const saved = await connection.client.callTool({
+        name: "save_taskboard_preferences",
+        arguments: { refreshIntervalSeconds: 10 },
+      });
+
+      expect(loaded.structuredContent).toEqual({ refreshIntervalSeconds: 60 });
+      expect(saved.structuredContent).toEqual({ refreshIntervalSeconds: 10 });
+      expect(preferences.save).toHaveBeenCalledWith({ refreshIntervalSeconds: 10 });
+      expect(workItems.service.sync).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("returns stable preference errors and logs only approved metadata", async () => {
+    const events: Parameters<TaskboardPreferencesOperationLogger["completed"]>[0][] = [];
+    const logger: TaskboardPreferencesOperationLogger = {
+      completed: (event) => events.push(event),
+    };
+    const preferences = {
+      get: vi.fn().mockRejectedValue(
+        new TaskboardPreferencesStoreError("taskboard_preferences_read_failed"),
+      ),
+      save: vi.fn().mockRejectedValue(
+        new TaskboardPreferencesStoreError("taskboard_preferences_write_failed"),
+      ),
+    };
+    const connection = await connectClient(
+      await createBundle(), authenticator(), catalog().service, undefined,
+      synchronizer().service, undefined, detailReader().service, undefined,
+      preferences, logger,
+    );
+
+    try {
+      const invalid = await connection.client.callTool({
+        name: "save_taskboard_preferences",
+        arguments: { refreshIntervalSeconds: 4, unknown: "secret-path" },
+      });
+      const readFailed = await connection.client.callTool({
+        name: "get_taskboard_preferences",
+        arguments: {},
+      });
+      const writeFailed = await connection.client.callTool({
+        name: "save_taskboard_preferences",
+        arguments: { refreshIntervalSeconds: 30 },
+      });
+
+      expect(invalid.isError).toBe(true);
+      expect(JSON.stringify(invalid)).toContain("taskboard_preferences_invalid");
+      expect(readFailed.isError).toBe(true);
+      expect(JSON.stringify(readFailed)).toContain("taskboard_preferences_read_failed");
+      expect(writeFailed.isError).toBe(true);
+      expect(JSON.stringify(writeFailed)).toContain("taskboard_preferences_write_failed");
+      expect(events).toEqual([
+        expect.objectContaining({
+          requestId: expect.any(String),
+          tool: "save_taskboard_preferences",
+          outcome: "error",
+          errorCode: "taskboard_preferences_invalid",
+          durationMs: expect.any(Number),
+        }),
+        expect.objectContaining({
+          requestId: expect.any(String),
+          tool: "get_taskboard_preferences",
+          outcome: "error",
+          errorCode: "taskboard_preferences_read_failed",
+          durationMs: expect.any(Number),
+        }),
+        expect.objectContaining({
+          requestId: expect.any(String),
+          tool: "save_taskboard_preferences",
+          outcome: "error",
+          errorCode: "taskboard_preferences_write_failed",
+          refreshIntervalSeconds: 30,
+          durationMs: expect.any(Number),
+        }),
+      ]);
+      expect(JSON.stringify(events)).not.toMatch(/secret-path|taskboard-preferences\.json|token/i);
     } finally {
       await connection.close();
     }

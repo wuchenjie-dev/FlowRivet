@@ -24,6 +24,10 @@ import { authResultSchema, type AuthResult } from "../contracts/auth.js";
 import { createWorkItemCacheStore } from "../cache/create-work-item-cache-store.js";
 import { WorkItemCacheError } from "../cache/work-item-cache-store.js";
 import { projectCatalogSchema } from "../contracts/projects.js";
+import {
+  taskboardPreferencesSchema,
+  type TaskboardPreferences,
+} from "../contracts/taskboard-preferences.js";
 import { canonicalStages, taskboardSnapshotSchema } from "../contracts/taskboard.js";
 import {
   workItemDetailRefSchema,
@@ -43,6 +47,14 @@ import {
   type WorkItemOperationLogger,
   type WorkItemToolName,
 } from "../observability/work-item-operation-logger.js";
+import {
+  JsonStderrTaskboardPreferencesOperationLogger,
+  type TaskboardPreferencesOperationLogger,
+  type TaskboardPreferencesToolName,
+} from "../observability/taskboard-preferences-operation-logger.js";
+import { JsonTaskboardPreferencesStore } from "../preferences/json-taskboard-preferences-store.js";
+import { TaskboardPreferencesService } from "../preferences/taskboard-preferences-service.js";
+import { TaskboardPreferencesStoreError } from "../preferences/taskboard-preferences-store.js";
 import {
   JsonProjectSelectionStore,
   resolveFlowRivetConfigDirectory,
@@ -86,6 +98,13 @@ export interface TaskboardMcpServerOptions {
   workItemLogger?: WorkItemOperationLogger;
   workItemDetailService?: WorkItemDetailReader;
   workItemDetailLogger?: WorkItemDetailOperationLogger;
+  taskboardPreferences?: TaskboardPreferencesReaderWriter;
+  taskboardPreferencesLogger?: TaskboardPreferencesOperationLogger;
+}
+
+export interface TaskboardPreferencesReaderWriter {
+  get(): Promise<TaskboardPreferences>;
+  save(preferences: TaskboardPreferences): Promise<TaskboardPreferences>;
 }
 
 export function createTaskboardMcpServer(
@@ -122,6 +141,12 @@ export function createTaskboardMcpServer(
   );
   const workItemDetailLogger = options.workItemDetailLogger
     ?? new JsonStderrWorkItemDetailOperationLogger();
+  const taskboardPreferences = options.taskboardPreferences
+    ?? new TaskboardPreferencesService(new JsonTaskboardPreferencesStore({
+      directory: resolveFlowRivetConfigDirectory(),
+    }));
+  const taskboardPreferencesLogger = options.taskboardPreferencesLogger
+    ?? new JsonStderrTaskboardPreferencesOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: "0.1.0" });
 
   registerAppResource(
@@ -170,6 +195,29 @@ export function createTaskboardMcpServer(
     description: "重新发现项目并刷新真实只读工作项。",
     run: buildTaskboardSnapshot,
   });
+
+  registerTaskboardPreferencesTool(
+    server,
+    taskboardPreferencesLogger,
+    "get_taskboard_preferences",
+    {
+      title: "读取看板刷新设置",
+      description: "读取本机保存的看板自动刷新频率。",
+      inputSchema: {},
+      run: () => taskboardPreferences.get(),
+    },
+  );
+  registerTaskboardPreferencesTool(
+    server,
+    taskboardPreferencesLogger,
+    "save_taskboard_preferences",
+    {
+      title: "保存看板刷新设置",
+      description: "在本机保存看板自动刷新频率。",
+      inputSchema: { refreshIntervalSeconds: z.any() },
+      run: (input) => taskboardPreferences.save(taskboardPreferencesSchema.parse(input)),
+    },
+  );
 
   registerAppTool(
     server,
@@ -441,6 +489,71 @@ export function createTaskboardMcpServer(
   );
 
   return server;
+}
+
+function registerTaskboardPreferencesTool(
+  server: McpServer,
+  logger: TaskboardPreferencesOperationLogger,
+  tool: TaskboardPreferencesToolName,
+  options: {
+    title: string;
+    description: string;
+    inputSchema: Record<string, z.ZodType>;
+    run: (input: Record<string, unknown>) => Promise<TaskboardPreferences>;
+  },
+) {
+  registerAppTool(server, tool, {
+    title: options.title,
+    description: options.description,
+    inputSchema: options.inputSchema,
+    outputSchema: taskboardPreferencesSchema.shape,
+    annotations: tool === "get_taskboard_preferences"
+      ? { readOnlyHint: true, openWorldHint: false }
+      : {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+    _meta: {},
+  }, async (input) => {
+    const requestId = randomUUID();
+    const startedAt = performance.now();
+    try {
+      const preferences = taskboardPreferencesSchema.parse(await options.run(input));
+      logger.completed({
+        requestId,
+        tool,
+        outcome: "success",
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        refreshIntervalSeconds: preferences.refreshIntervalSeconds,
+      });
+      return {
+        structuredContent: preferences,
+        content: [{ type: "text" as const, text: "看板刷新设置已更新。" }],
+      };
+    } catch (error) {
+      const errorCode = taskboardPreferencesErrorCode(error);
+      logger.completed({
+        requestId,
+        tool,
+        outcome: "error",
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        ...(typeof input.refreshIntervalSeconds === "number"
+          && taskboardPreferencesSchema.safeParse(input).success
+          ? { refreshIntervalSeconds: input.refreshIntervalSeconds }
+          : {}),
+        errorCode,
+      });
+      throw new Error(errorCode);
+    }
+  });
+}
+
+function taskboardPreferencesErrorCode(error: unknown) {
+  if (error instanceof z.ZodError) return "taskboard_preferences_invalid" as const;
+  if (error instanceof TaskboardPreferencesStoreError) return error.code;
+  return "taskboard_preferences_write_failed" as const;
 }
 
 function registerProjectTool(
