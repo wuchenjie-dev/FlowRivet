@@ -15,8 +15,14 @@ import {
   TapdAuthService,
   type TapdAuthenticator,
 } from "../auth/tapd-auth-service.js";
-import { TapdIdentityClient } from "../auth/tapd-identity-client.js";
-import { authResultSchema } from "../contracts/auth.js";
+import {
+  TapdIdentityClient,
+  TapdIdentityError,
+  type TapdIdentity,
+} from "../auth/tapd-identity-client.js";
+import { authResultSchema, type AuthResult } from "../contracts/auth.js";
+import { createWorkItemCacheStore } from "../cache/create-work-item-cache-store.js";
+import { WorkItemCacheError } from "../cache/work-item-cache-store.js";
 import { projectCatalogSchema } from "../contracts/projects.js";
 import { canonicalStages, taskboardSnapshotSchema } from "../contracts/taskboard.js";
 import {
@@ -46,12 +52,14 @@ import {
   type ProjectCatalog,
 } from "../projects/project-catalog-service.js";
 import { ProjectProviderError } from "../projects/project-management-provider.js";
+import { ProjectSelectionStoreError } from "../projects/project-selection-store.js";
 import {
   StoredTapdProjectCredentialResolver,
   TapdProjectProvider,
 } from "../projects/tapd-project-provider.js";
 import {
   WorkItemService,
+  type WorkItemSyncSnapshot,
   type WorkItemSynchronizer,
 } from "../work-items/work-item-service.js";
 import { TapdWorkItemProvider } from "../work-items/tapd-work-item-provider.js";
@@ -106,6 +114,7 @@ export function createTaskboardMcpServer(
   const workItemService = options.workItemService ?? new WorkItemService(
     new TapdWorkItemProvider({ credentialResolver }),
     now,
+    createWorkItemCacheStore(),
   );
   const workItemLogger = options.workItemLogger ?? new JsonStderrWorkItemOperationLogger();
   const workItemDetailService = options.workItemDetailService ?? new WorkItemDetailService(
@@ -226,9 +235,43 @@ export function createTaskboardMcpServer(
 
   async function buildTaskboardSnapshot() {
     const syncAttemptAt = now().toISOString();
-    const auth = await authService.getConnectionStatus();
+    const session = await authService.getSession();
+    const auth = session.result;
     const connected = auth.connection.tapd === "connected";
-    const catalog = connected ? await projectCatalog.discover() : {
+    const liveCatalog = connected ? await projectCatalog.discover() : undefined;
+    let synchronized: WorkItemSyncSnapshot | undefined;
+    if (connected && liveCatalog) {
+      synchronized = await workItemService.sync({
+        accountDisplayName: liveCatalog.provider.accountDisplayName
+          ?? auth.connection.userName
+          ?? "",
+        projects: liveCatalog.projects.filter((project) => project.available),
+        ...(session.identity?.accountKey ? {
+          cacheAccount: {
+            providerId: "tapd",
+            accountKey: session.identity.accountKey,
+            ...(session.identity.companyId ? { tenantKey: session.identity.companyId } : {}),
+            accountDisplayName: session.identity.userName,
+            ...(session.identity.companyName
+              ? { tenantDisplayName: session.identity.companyName }
+              : {}),
+          },
+        } : {}),
+      });
+    } else {
+      try {
+        synchronized = await workItemService.loadCached("tapd");
+      } catch (error) {
+        synchronized = {
+          ...emptyWorkItemSnapshot(syncAttemptAt),
+          ...(error instanceof WorkItemCacheError && error.code !== "cache_clear_failed"
+            ? { cacheWarningCode: error.code }
+            : { cacheWarningCode: "cache_read_failed" as const }),
+        };
+      }
+    }
+    synchronized ??= emptyWorkItemSnapshot(syncAttemptAt);
+    const catalog = liveCatalog ?? {
       provider: {
         providerId: "tapd",
         displayName: "TAPD",
@@ -240,19 +283,12 @@ export function createTaskboardMcpServer(
           ? { tenantDisplayName: auth.connection.companyName }
           : {}),
       },
-      projects: [],
-      stale: false,
+      projects: synchronized.projects.map(({ count: _count, ...project }) => project),
+      stale: synchronized.dataFreshness === "offline",
     };
-    const synchronized = connected ? await workItemService.sync({
-      accountDisplayName: catalog.provider.accountDisplayName
-        ?? auth.connection.userName
-        ?? "",
-      projects: catalog.projects.filter((project) => project.available),
-    }) : {
-      items: [],
-      projects: [],
-      summary: { successfulProjects: 0, failedProjects: 0, itemCount: 0 },
-    };
+    const freshnessReasonCode = connected
+      ? synchronized.freshnessReasonCode
+      : offlineReason(auth);
     return taskboardSnapshotSchema.parse({
       projectCatalog: catalog,
       projects: synchronized.projects,
@@ -260,11 +296,18 @@ export function createTaskboardMcpServer(
       readOnly: true,
       syncSummary: synchronized.summary,
       stages: canonicalStages,
-      dataFreshness: "live",
-      staleScopeCount: 0,
-      lastSuccessfulSyncAt: syncAttemptAt,
-      lastSyncAttemptAt: syncAttemptAt,
-      lastSyncedAt: syncAttemptAt,
+      dataFreshness: synchronized.dataFreshness,
+      freshScopeCount: synchronized.freshScopeCount,
+      staleScopeCount: synchronized.staleScopeCount,
+      ...(synchronized.lastSuccessfulSyncAt
+        ? { lastSuccessfulSyncAt: synchronized.lastSuccessfulSyncAt }
+        : {}),
+      lastSyncAttemptAt: synchronized.lastSyncAttemptAt,
+      ...(synchronized.cacheWarningCode
+        ? { cacheWarningCode: synchronized.cacheWarningCode }
+        : {}),
+      ...(freshnessReasonCode ? { freshnessReasonCode } : {}),
+      lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
       connection: { ...auth.connection, gitlab: "not_configured" },
     });
   }
@@ -295,12 +338,30 @@ export function createTaskboardMcpServer(
       _meta: {},
     },
     async ({ token }) => {
-      const before = await authService.getConnectionStatus();
-      const result = await authService.login(token);
-      if (result.ok && identityChanged(before.connection, result.connection)) {
-        await projectCatalog.clear();
+      const before = await authService.getSession();
+      let candidate: TapdIdentity;
+      try {
+        candidate = await authService.validateCandidate(token);
+      } catch (error) {
+        return authToolResult(authFailure(error, before.result.connection));
       }
-      return authToolResult(result);
+      if (sessionIdentityChanged(before, candidate)) {
+        try {
+          await projectCatalog.clear();
+        } catch (error) {
+          return authToolResult(authFailure(error, before.result.connection));
+        }
+        try {
+          await workItemService.clearCached("tapd");
+        } catch (error) {
+          return authToolResult(authFailure(error, before.result.connection));
+        }
+      }
+      const committed = await authService.commitCandidate(token, candidate);
+      return authToolResult(committed.ok ? committed : {
+        ...committed,
+        connection: before.result.connection,
+      });
     },
   );
 
@@ -316,9 +377,14 @@ export function createTaskboardMcpServer(
       _meta: {},
     },
     async () => {
-      const result = await authService.disconnect();
-      if (result.ok) await projectCatalog.clear();
-      return authToolResult(result);
+      const before = await authService.getConnectionStatus();
+      try {
+        await workItemService.clearCached("tapd");
+        await projectCatalog.clear();
+      } catch (error) {
+        return authToolResult(authFailure(error, before.connection));
+      }
+      return authToolResult(await authService.disconnect());
     },
   );
 
@@ -454,12 +520,18 @@ function registerWorkItemTool(
         outcome: snapshot.syncSummary.failedProjects > 0 ? "partial" : "success",
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
         ...snapshot.syncSummary,
+        dataFreshness: snapshot.dataFreshness,
+        freshScopeCount: snapshot.freshScopeCount,
+        staleScopeCount: snapshot.staleScopeCount,
+        cacheOutcome: cacheOutcome(snapshot),
       });
       return {
         structuredContent: snapshot,
         content: [{
           type: "text" as const,
-          text: snapshot.connection.tapd === "connected"
+          text: snapshot.dataFreshness === "offline"
+            ? `FlowRivet 已加载 ${snapshot.syncSummary.itemCount} 个缓存工作项。`
+            : snapshot.connection.tapd === "connected"
             ? `FlowRivet 看板已同步 ${snapshot.syncSummary.itemCount} 个工作项。`
             : "FlowRivet 看板已打开，请先连接 TAPD。",
         }],
@@ -487,12 +559,62 @@ function projectErrorCode(error: unknown) {
     : {};
 }
 
-function identityChanged(
-  before: { tapd: string; userName?: string; companyName?: string },
-  after: { tapd: string; userName?: string; companyName?: string },
+function sessionIdentityChanged(
+  before: Awaited<ReturnType<TapdAuthenticator["getSession"]>>,
+  candidate: TapdIdentity,
 ) {
-  if (before.tapd !== "connected" || after.tapd !== "connected") return false;
-  return before.userName !== after.userName || before.companyName !== after.companyName;
+  if (!before.identity) {
+    return !before.result.ok || before.result.connection.tapd !== "disconnected";
+  }
+  if (!before.identity.accountKey || !candidate.accountKey) return true;
+  return before.identity.accountKey !== candidate.accountKey
+    || (before.identity.companyId ?? "") !== (candidate.companyId ?? "");
+}
+
+function authFailure(error: unknown, connection: AuthResult["connection"] = {
+  tapd: "disconnected",
+}): AuthResult {
+  if (error instanceof TapdIdentityError
+    || error instanceof ProjectSelectionStoreError
+    || error instanceof WorkItemCacheError) {
+    const errorCode = error instanceof WorkItemCacheError
+      ? "cache_clear_failed" as const
+      : error.code;
+    return { ok: false, errorCode, connection };
+  }
+  return {
+    ok: false,
+    errorCode: "credential_store_failed",
+    connection,
+  };
+}
+
+function emptyWorkItemSnapshot(lastSyncAttemptAt: string): WorkItemSyncSnapshot {
+  return {
+    items: [],
+    projects: [],
+    summary: { successfulProjects: 0, failedProjects: 0, itemCount: 0 },
+    dataFreshness: "live" as const,
+    freshScopeCount: 0,
+    staleScopeCount: 0,
+    lastSyncAttemptAt,
+  };
+}
+
+function offlineReason(auth: AuthResult) {
+  if (auth.connection.tapd === "expired" || auth.errorCode === "invalid_token") {
+    return "provider_unauthorized" as const;
+  }
+  if (auth.errorCode === "tapd_unavailable") return "provider_unavailable" as const;
+  return undefined;
+}
+
+function cacheOutcome(snapshot: z.infer<typeof taskboardSnapshotSchema>) {
+  if (snapshot.cacheWarningCode === "cache_write_failed") return "write_error" as const;
+  if (snapshot.dataFreshness === "offline") return "hit" as const;
+  if (snapshot.dataFreshness === "mixed") return "write_success" as const;
+  if (snapshot.cacheWarningCode) return "miss" as const;
+  return snapshot.freshScopeCount === 0 ? "miss" as const : "write_success" as const;
 }
 
 function authToolResult(result: Awaited<ReturnType<TapdAuthenticator["login"]>>) {

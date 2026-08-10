@@ -329,7 +329,7 @@ git commit -m "feat(taskboard): merge live and cached scopes"
 - Test: `packages/codex-plugin/tests/tapd-auth-service.test.ts`
 - Test: `packages/codex-plugin/tests/server.test.ts`
 
-- [ ] **Step 1: Write failing authentication and MCP tests**
+- [x] **Step 1: Write failing authentication and MCP tests**
 
 Test connected live sync, expired/provider-unavailable cache fallback, no-cache error behavior, stable identity missing, mixed metadata, redacted logging, cross-account order, same-account retention, cache-clear failure, credential-write failure, and disconnect ordering.
 
@@ -345,13 +345,13 @@ expect(events).toEqual([
 expect(JSON.stringify(logEvents)).not.toMatch(/accountKey|companyId|project|title|token/i);
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/tapd-auth-service.test.ts tests/server.test.ts`
 
 Expected: FAIL because auth is one-phase and disconnected snapshots are empty.
 
-- [ ] **Step 3: Split internal session operations from public auth results**
+- [x] **Step 3: Split internal session operations from public auth results**
 
 Add internal methods that return `TapdIdentity` only to server-side orchestration:
 
@@ -363,17 +363,17 @@ getSession(): Promise<{ result: AuthResult; identity?: TapdIdentity }>;
 
 `getConnectionStatus()` remains the public redacted projection. `commitCandidate` performs only the atomic credential replacement after validation and cleanup have succeeded.
 
-- [ ] **Step 4: Wire one cache instance into server orchestration**
+- [x] **Step 4: Wire one cache instance into server orchestration**
 
 Allow `TaskboardMcpServerOptions` to inject a cache-aware synchronizer for tests. Connected sessions call live sync; stable identity supplies `cacheAccount`, while a connected session without it still returns live data plus `cache_identity_unavailable`. Expired or unavailable sessions call `loadCached("tapd")`; a hit keeps the real connection state and returns `offline`, while a miss preserves the current login/error behavior.
 
 For cross-account login: validate candidate, compare stable namespace identity, clear project selection and old cache while retaining old Token, atomically commit candidate, then sync under the new identity. A failure never activates the candidate identity. For disconnect: clear cache, clear project selection, then delete Token; cache failure must leave Token untouched.
 
-- [ ] **Step 5: Extend redacted operation logging**
+- [x] **Step 5: Extend redacted operation logging**
 
 Log only `dataFreshness`, fresh/stale scope counts, `cacheOutcome`, existing project/item counts, request ID, duration, and stable error codes. Do not log cache paths, identities, SQL inputs, item/project fields, or exception messages.
 
-- [ ] **Step 6: Run focused tests and typecheck**
+- [x] **Step 6: Run focused tests and typecheck**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/tapd-auth-service.test.ts tests/server.test.ts`
 
@@ -383,7 +383,7 @@ Run: `npm run typecheck --workspace @flowrivet/codex-plugin`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/codex-plugin/src/auth/tapd-auth-service.ts packages/codex-plugin/src/server/app.ts packages/codex-plugin/src/observability/work-item-operation-logger.ts packages/codex-plugin/tests/tapd-auth-service.test.ts packages/codex-plugin/tests/server.test.ts

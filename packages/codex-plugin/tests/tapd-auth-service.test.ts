@@ -105,6 +105,82 @@ describe("TAPD identity client", () => {
 });
 
 describe("TAPD auth service", () => {
+  it("validates and commits a candidate token in separate phases", async () => {
+    const events: string[] = [];
+    const store = credentialStore("old-token");
+    store.writeTapdToken.mockImplementation(async () => { events.push("write-token"); });
+    const identity = {
+      userName: "吴晨杰",
+      accountKey: "6081",
+      companyId: "66238498",
+    };
+    const service = new TapdAuthService({
+      store,
+      identityClient: {
+        validate: vi.fn().mockImplementation(async () => {
+          events.push("validate-candidate");
+          return identity;
+        }),
+      },
+    });
+
+    const candidate = await service.validateCandidate(" new-token ");
+    expect(events).toEqual(["validate-candidate"]);
+    expect(store.writeTapdToken).not.toHaveBeenCalled();
+    await expect(service.commitCandidate(" new-token ", candidate)).resolves.toMatchObject({
+      ok: true,
+      connection: { tapd: "connected", userName: "吴晨杰" },
+    });
+    expect(events).toEqual(["validate-candidate", "write-token"]);
+    expect(store.writeTapdToken).toHaveBeenCalledWith("new-token");
+  });
+
+  it("returns stable identity only from the internal session API", async () => {
+    const identity = {
+      userName: "吴晨杰",
+      accountKey: "6081",
+      companyName: "FlowRivet 测试企业",
+      companyId: "66238498",
+    };
+    const service = new TapdAuthService({
+      store: credentialStore("stored-token"),
+      identityClient: { validate: vi.fn().mockResolvedValue(identity) },
+    });
+
+    await expect(service.getSession()).resolves.toEqual({
+      result: {
+        ok: true,
+        connection: {
+          tapd: "connected",
+          userName: "吴晨杰",
+          companyName: "FlowRivet 测试企业",
+        },
+      },
+      identity,
+    });
+    expect(JSON.stringify(await service.getConnectionStatus()))
+      .not.toMatch(/6081|66238498|accountKey|companyId/);
+  });
+
+  it("does not report a candidate active when credential replacement fails", async () => {
+    const store = credentialStore("old-token");
+    store.writeTapdToken.mockRejectedValue(new Error("write failed"));
+    const service = new TapdAuthService({
+      store,
+      identityClient: { validate: vi.fn() },
+    });
+
+    await expect(service.commitCandidate("new-token", {
+      userName: "new-user",
+      accountKey: "new-id",
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: "credential_store_failed",
+      connection: { tapd: "disconnected" },
+    });
+    expect(store.readTapdToken).not.toHaveBeenCalled();
+  });
+
   it("stores a token only after successful validation", async () => {
     const store = credentialStore();
     const identityClient = {

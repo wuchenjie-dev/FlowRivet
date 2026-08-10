@@ -13,6 +13,14 @@ export interface TapdAuthenticator {
   login(token: string): Promise<AuthResult>;
   getConnectionStatus(): Promise<AuthResult>;
   disconnect(): Promise<AuthResult>;
+  validateCandidate(token: string): Promise<TapdIdentity>;
+  commitCandidate(token: string, identity: TapdIdentity): Promise<AuthResult>;
+  getSession(): Promise<TapdSession>;
+}
+
+export interface TapdSession {
+  result: AuthResult;
+  identity?: TapdIdentity;
 }
 
 export class TapdAuthService implements TapdAuthenticator {
@@ -22,10 +30,24 @@ export class TapdAuthService implements TapdAuthenticator {
   }) {}
 
   async login(token: string): Promise<AuthResult> {
+    try {
+      const identity = await this.validateCandidate(token);
+      return this.commitCandidate(token, identity);
+    } catch (error) {
+      return mapFailure(error, "disconnected");
+    }
+  }
+
+  async validateCandidate(token: string): Promise<TapdIdentity> {
+    const normalized = token.trim();
+    if (!normalized) throw new TapdIdentityError("invalid_token");
+    return this.options.identityClient.validate(normalized);
+  }
+
+  async commitCandidate(token: string, identity: TapdIdentity): Promise<AuthResult> {
     const normalized = token.trim();
     if (!normalized) return failure("invalid_token", "disconnected");
     try {
-      const identity = await this.options.identityClient.validate(normalized);
       await this.options.store.writeTapdToken(normalized);
       return success(identity);
     } catch (error) {
@@ -33,24 +55,29 @@ export class TapdAuthService implements TapdAuthenticator {
     }
   }
 
-  async getConnectionStatus(): Promise<AuthResult> {
+  async getSession(): Promise<TapdSession> {
     let token: string | undefined;
     try {
       token = await this.options.store.readTapdToken();
     } catch (error) {
-      return mapFailure(error, "disconnected");
+      return { result: mapFailure(error, "disconnected") };
     }
     if (!token) {
-      return { ok: true, connection: { tapd: "disconnected" } };
+      return { result: { ok: true, connection: { tapd: "disconnected" } } };
     }
     try {
-      return success(await this.options.identityClient.validate(token));
+      const identity = await this.options.identityClient.validate(token);
+      return { result: success(identity), identity };
     } catch (error) {
       const state = error instanceof TapdIdentityError && error.code === "invalid_token"
         ? "expired"
         : "disconnected";
-      return mapFailure(error, state);
+      return { result: mapFailure(error, state) };
     }
+  }
+
+  async getConnectionStatus(): Promise<AuthResult> {
+    return (await this.getSession()).result;
   }
 
   async disconnect(): Promise<AuthResult> {

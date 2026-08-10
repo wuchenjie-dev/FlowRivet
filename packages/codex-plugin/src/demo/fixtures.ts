@@ -100,6 +100,7 @@ export const demoTaskboardSnapshot = taskboardSnapshotSchema.parse({
     itemCount: 7,
   },
   dataFreshness: "live",
+  freshScopeCount: 0,
   staleScopeCount: 0,
   lastSuccessfulSyncAt: "2026-08-06T19:30:00+08:00",
   lastSyncAttemptAt: "2026-08-06T19:30:00+08:00",

@@ -84,6 +84,7 @@ describe("taskboard demo contract", () => {
     const snapshot = taskboardSnapshotSchema.parse({
       ...demoTaskboardSnapshot,
       dataFreshness: "mixed",
+      freshScopeCount: 1,
       staleScopeCount: 2,
       lastSuccessfulSyncAt: "2026-08-10T01:00:00.000Z",
       lastSyncAttemptAt: "2026-08-10T02:00:00.000Z",
@@ -101,6 +102,7 @@ describe("taskboard demo contract", () => {
 
     expect(snapshot).toMatchObject({
       dataFreshness: "mixed",
+      freshScopeCount: 1,
       staleScopeCount: 2,
       cacheWarningCode: "cache_write_failed",
       freshnessReasonCode: "provider_unavailable",

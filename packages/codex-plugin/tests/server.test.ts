@@ -7,6 +7,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TapdAuthenticator } from "../src/auth/tapd-auth-service.js";
+import { TapdIdentityError } from "../src/auth/tapd-identity-client.js";
+import { WorkItemCacheError } from "../src/cache/work-item-cache-store.js";
 import type { ProjectCatalogResult } from "../src/contracts/projects.js";
 import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import type { ProjectOperationLogger } from "../src/observability/project-operation-logger.js";
@@ -46,6 +48,13 @@ function authenticator(
   const connection = tapd === "connected"
     ? { tapd, userName: "吴晨杰", companyName: "FlowRivet 演示企业" } as const
     : { tapd } as const;
+  const identity = {
+    userName: "吴晨杰",
+    accountKey: "6081",
+    companyName: "FlowRivet 演示企业",
+    companyId: "66238498",
+  };
+  const connectedResult = { ok: true as const, connection };
   return {
     login: async () => ({ ok: true, connection: {
       tapd: "connected",
@@ -54,6 +63,15 @@ function authenticator(
     } }),
     getConnectionStatus: async () => ({ ok: true, connection }),
     disconnect: async () => ({ ok: true, connection: { tapd: "disconnected" } }),
+    validateCandidate: async () => identity,
+    commitCandidate: async () => ({ ok: true, connection: {
+      tapd: "connected",
+      userName: identity.userName,
+      companyName: identity.companyName,
+    } }),
+    getSession: async () => tapd === "connected"
+      ? { result: connectedResult, identity }
+      : { result: connectedResult },
   };
 }
 
@@ -148,8 +166,17 @@ function synchronizer(projects: ProjectCatalogResult["projects"] = []) {
       failedProjects: 0,
       itemCount: items.length,
     },
+    dataFreshness: "live" as const,
+    freshScopeCount: projects.length * 3,
+    staleScopeCount: 0,
+    lastSuccessfulSyncAt: "2026-08-07T00:00:00.000Z",
+    lastSyncAttemptAt: "2026-08-07T00:00:00.000Z",
   };
-  const service: WorkItemSynchronizer = { sync: vi.fn().mockResolvedValue(result) };
+  const service: WorkItemSynchronizer = {
+    sync: vi.fn().mockResolvedValue(result),
+    loadCached: vi.fn().mockResolvedValue(undefined),
+    clearCached: vi.fn().mockResolvedValue(undefined),
+  };
   return { result, service };
 }
 
@@ -393,6 +420,13 @@ describe("taskboard MCP app", () => {
       expect(fixture.service.getCatalog).not.toHaveBeenCalled();
       expect(workItems.service.sync).toHaveBeenCalledWith({
         accountDisplayName: "吴晨杰",
+        cacheAccount: {
+          providerId: "tapd",
+          accountKey: "6081",
+          tenantKey: "66238498",
+          accountDisplayName: "吴晨杰",
+          tenantDisplayName: "FlowRivet 演示企业",
+        },
         projects: fixture.result.projects,
       });
     } finally {
@@ -441,40 +475,75 @@ describe("taskboard MCP app", () => {
         successfulProjects: 1,
         failedProjects: 0,
         itemCount: 1,
+        dataFreshness: "live",
+        freshScopeCount: 3,
+        staleScopeCount: 0,
+        cacheOutcome: "write_success",
       })]);
       expect(JSON.stringify(events)).not.toMatch(
-        /sensitive-project-id|Project sensitive-project-id|Work 1|吴晨杰|example\.test/,
+        /sensitive-project-id|Project sensitive-project-id|Work 1|吴晨杰|example\.test|accountKey|companyId|token/,
       );
     } finally {
       await connection.close();
     }
   });
 
-  it("clears the project catalog on disconnect and account switch", async () => {
+  it("clears selection and cache before committing another account or disconnecting", async () => {
     const fixture = catalog([project("50396062")]);
-    const status = vi.fn()
-      .mockResolvedValueOnce({ ok: true, connection: {
-        tapd: "connected", userName: "old-user", companyName: "old-company",
-      } })
-      .mockResolvedValue({ ok: true, connection: {
-        tapd: "connected", userName: "new-user", companyName: "new-company",
-      } });
+    const workItems = synchronizer();
+    const events: string[] = [];
+    fixture.service.clear = vi.fn().mockImplementation(async () => {
+      events.push("clear-project-selection");
+    });
+    workItems.service.clearCached = vi.fn().mockImplementation(async () => {
+      events.push("clear-cache");
+    });
+    const oldIdentity = { userName: "old-user", accountKey: "old-id", companyId: "tenant" };
+    const newIdentity = { userName: "new-user", accountKey: "new-id", companyId: "tenant" };
     const authService: TapdAuthenticator = {
       ...authenticator(),
-      getConnectionStatus: status,
-      login: vi.fn().mockResolvedValue({ ok: true, connection: {
-        tapd: "connected", userName: "new-user", companyName: "new-company",
-      } }),
+      getSession: vi.fn().mockResolvedValue({
+        result: { ok: true, connection: { tapd: "connected", userName: "old-user" } },
+        identity: oldIdentity,
+      }),
+      validateCandidate: vi.fn().mockImplementation(async () => {
+        events.push("validate-candidate");
+        return newIdentity;
+      }),
+      commitCandidate: vi.fn().mockImplementation(async () => {
+        events.push("write-token");
+        return { ok: true, connection: { tapd: "connected", userName: "new-user" } };
+      }),
+      disconnect: vi.fn().mockImplementation(async () => {
+        events.push("delete-token");
+        return { ok: true, connection: { tapd: "disconnected" } };
+      }),
     };
-    const connection = await connectClient(await createBundle(), authService, fixture.service);
+    const connection = await connectClient(
+      await createBundle(), authService, fixture.service, undefined, workItems.service,
+    );
 
     try {
       await connection.client.callTool({
         name: "login_with_tapd_token",
         arguments: { token: "private-token" },
       });
+      expect(events).toEqual([
+        "validate-candidate",
+        "clear-project-selection",
+        "clear-cache",
+        "write-token",
+      ]);
       await connection.client.callTool({ name: "disconnect_tapd", arguments: {} });
-      expect(fixture.service.clear).toHaveBeenCalledTimes(2);
+      expect(events).toEqual([
+        "validate-candidate",
+        "clear-project-selection",
+        "clear-cache",
+        "write-token",
+        "clear-cache",
+        "clear-project-selection",
+        "delete-token",
+      ]);
     } finally {
       await connection.close();
     }
@@ -589,8 +658,215 @@ describe("taskboard MCP app", () => {
     }
   });
 
+  it("returns cached projects and work items while the TAPD token is expired", async () => {
+    const workItems = synchronizer([project("50396062")]);
+    workItems.service.loadCached = vi.fn().mockResolvedValue({
+      ...workItems.result,
+      items: workItems.result.items.map((item) => ({ ...item, freshness: "cached" as const })),
+      dataFreshness: "offline",
+      freshScopeCount: 0,
+      staleScopeCount: 1,
+      lastSuccessfulSyncAt: "2026-08-06T00:00:00.000Z",
+      lastSyncAttemptAt: "2026-08-07T00:00:00.000Z",
+    });
+    const connection = await connectClient(
+      await createBundle(), authenticator("expired"), catalog().service, undefined,
+      workItems.service,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "open_my_taskboard",
+        arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        connection: { tapd: "expired" },
+        dataFreshness: "offline",
+        freshScopeCount: 0,
+        staleScopeCount: 1,
+        freshnessReasonCode: "provider_unauthorized",
+        projectCatalog: {
+          stale: true,
+          projects: [{ externalId: "50396062" }],
+        },
+        items: [{ freshness: "cached" }],
+      });
+      expect(workItems.service.sync).not.toHaveBeenCalled();
+      expect(workItems.service.loadCached).toHaveBeenCalledWith("tapd");
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("syncs online without a cache namespace when stable identity is missing", async () => {
+    const fixture = catalog([project("50396062")]);
+    const workItems = synchronizer(fixture.result.projects);
+    workItems.service.sync = vi.fn().mockResolvedValue({
+      ...workItems.result,
+      cacheWarningCode: "cache_identity_unavailable",
+    });
+    const authService: TapdAuthenticator = {
+      ...authenticator(),
+      getSession: vi.fn().mockResolvedValue({
+        result: {
+          ok: true,
+          connection: { tapd: "connected", userName: "display-only" },
+        },
+        identity: { userName: "display-only" },
+      }),
+    };
+    const connection = await connectClient(
+      await createBundle(), authService, fixture.service, undefined, workItems.service,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "open_my_taskboard",
+        arguments: {},
+      });
+      expect(workItems.service.sync).toHaveBeenCalledWith({
+        accountDisplayName: "吴晨杰",
+        projects: fixture.result.projects,
+      });
+      expect(result.structuredContent).toMatchObject({
+        dataFreshness: "live",
+        cacheWarningCode: "cache_identity_unavailable",
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("preserves mixed synchronization metadata from the service", async () => {
+    const fixture = catalog([project("50396062")]);
+    const workItems = synchronizer(fixture.result.projects);
+    workItems.service.sync = vi.fn().mockResolvedValue({
+      ...workItems.result,
+      dataFreshness: "mixed",
+      freshScopeCount: 2,
+      staleScopeCount: 1,
+      freshnessReasonCode: "provider_unavailable",
+    });
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined, workItems.service,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "open_my_taskboard",
+        arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        dataFreshness: "mixed",
+        freshScopeCount: 2,
+        staleScopeCount: 1,
+        freshnessReasonCode: "provider_unavailable",
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps the token when cache cleanup fails during disconnect", async () => {
+    const fixture = catalog();
+    const workItems = synchronizer();
+    workItems.service.clearCached = vi.fn().mockRejectedValue(
+      new WorkItemCacheError("cache_clear_failed"),
+    );
+    const authService = authenticator();
+    authService.disconnect = vi.fn(authService.disconnect);
+    const connection = await connectClient(
+      await createBundle(), authService, fixture.service, undefined, workItems.service,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "disconnect_tapd",
+        arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        errorCode: "cache_clear_failed",
+        connection: { tapd: "connected" },
+      });
+      expect(fixture.service.clear).not.toHaveBeenCalled();
+      expect(authService.disconnect).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("retains selection and cache when the candidate belongs to the same account", async () => {
+    const fixture = catalog();
+    const workItems = synchronizer();
+    const identity = {
+      userName: "吴晨杰",
+      accountKey: "6081",
+      companyId: "66238498",
+    };
+    const authService: TapdAuthenticator = {
+      ...authenticator(),
+      getSession: vi.fn().mockResolvedValue({
+        result: { ok: true, connection: { tapd: "connected", userName: "吴晨杰" } },
+        identity,
+      }),
+      validateCandidate: vi.fn().mockResolvedValue(identity),
+      commitCandidate: vi.fn().mockResolvedValue({
+        ok: true,
+        connection: { tapd: "connected", userName: "吴晨杰" },
+      }),
+    };
+    const connection = await connectClient(
+      await createBundle(), authService, fixture.service, undefined, workItems.service,
+    );
+
+    try {
+      await connection.client.callTool({
+        name: "login_with_tapd_token",
+        arguments: { token: "replacement-token" },
+      });
+      expect(fixture.service.clear).not.toHaveBeenCalled();
+      expect(workItems.service.clearCached).not.toHaveBeenCalled();
+      expect(authService.commitCandidate).toHaveBeenCalledWith("replacement-token", identity);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps the current session untouched when candidate validation fails", async () => {
+    const fixture = catalog();
+    const workItems = synchronizer();
+    const authService: TapdAuthenticator = {
+      ...authenticator(),
+      validateCandidate: vi.fn().mockRejectedValue(new TapdIdentityError("invalid_token")),
+      commitCandidate: vi.fn(),
+    };
+    const connection = await connectClient(
+      await createBundle(), authService, fixture.service, undefined, workItems.service,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "login_with_tapd_token",
+        arguments: { token: "invalid-candidate" },
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        errorCode: "invalid_token",
+        connection: { tapd: "connected", userName: "吴晨杰" },
+      });
+      expect(fixture.service.clear).not.toHaveBeenCalled();
+      expect(workItems.service.clearCached).not.toHaveBeenCalled();
+      expect(authService.commitCandidate).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("logs in without returning the submitted token", async () => {
-    const login = vi.fn().mockResolvedValue({
+    const identity = { userName: "吴晨杰", accountKey: "6081" };
+    const validateCandidate = vi.fn().mockResolvedValue(identity);
+    const commitCandidate = vi.fn().mockResolvedValue({
       ok: true,
       connection: {
         tapd: "connected",
@@ -598,7 +874,11 @@ describe("taskboard MCP app", () => {
         companyName: "FlowRivet 测试企业",
       },
     });
-    const authService = { ...authenticator("disconnected"), login };
+    const authService = {
+      ...authenticator("disconnected"),
+      validateCandidate,
+      commitCandidate,
+    };
     const connection = await connectClient(await createBundle(), authService);
     const token = "sensitive-personal-token";
 
@@ -607,7 +887,8 @@ describe("taskboard MCP app", () => {
         name: "login_with_tapd_token",
         arguments: { token },
       });
-      expect(login).toHaveBeenCalledWith(token);
+      expect(validateCandidate).toHaveBeenCalledWith(token);
+      expect(commitCandidate).toHaveBeenCalledWith(token, identity);
       expect(result.structuredContent).toMatchObject({
         ok: true,
         connection: { tapd: "connected", userName: "吴晨杰" },

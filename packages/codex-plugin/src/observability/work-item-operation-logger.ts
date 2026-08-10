@@ -12,6 +12,10 @@ export interface WorkItemOperationEvent {
   successfulProjects: number;
   failedProjects: number;
   itemCount: number;
+  dataFreshness?: "live" | "mixed" | "offline";
+  freshScopeCount?: number;
+  staleScopeCount?: number;
+  cacheOutcome?: "hit" | "miss" | "write_success" | "write_error" | "purged";
   errorCode?: string;
 }
 

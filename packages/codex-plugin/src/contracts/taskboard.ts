@@ -62,6 +62,7 @@ export const taskboardSnapshotSchema = z.object({
   }),
   syncErrorCode: z.literal("work_item_sync_failed").optional(),
   dataFreshness: z.enum(["live", "mixed", "offline"]),
+  freshScopeCount: z.number().int().nonnegative(),
   staleScopeCount: z.number().int().nonnegative(),
   lastSuccessfulSyncAt: z.string().optional(),
   lastSyncAttemptAt: z.string(),

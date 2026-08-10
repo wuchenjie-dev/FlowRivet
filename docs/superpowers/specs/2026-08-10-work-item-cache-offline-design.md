@@ -160,6 +160,7 @@ freshness: "fresh" | "cached"
 
 ```ts
 dataFreshness: "live" | "mixed" | "offline";
+freshScopeCount: number;
 staleScopeCount: number;
 lastSuccessfulSyncAt?: string;
 lastSyncAttemptAt: string;
