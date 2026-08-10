@@ -94,6 +94,8 @@ interface WorkItemCacheStore {
 ```
 
 - `activateAccount` 以账号和企业身份的稳定哈希作为命名空间键。哈希输入不写入日志。
+- 内部认证身份必须保留 TAPD `id` 或 `nick` 作为稳定账号键，并优先组合 `companyId`；公开 `AuthResult` 仍只返回显示名称，不暴露稳定标识。
+- Provider 无法返回稳定账号键时，在线同步继续但缓存返回 `cache_identity_unavailable`，不得退化为用显示名称隔离账号。
 - 活动账号发生变化时，先删除旧命名空间，再激活新命名空间。
 - `mergeScopes` 在单个事务内替换所有成功范围，失败范围保持不变。
 - `loadActive` 只返回当前 Provider 的活动命名空间；读取前按每个范围的 `last_success_at` 删除超过 7 天的范围，再删除没有范围的孤立项目和账号。
@@ -160,9 +162,11 @@ dataFreshness: "live" | "mixed" | "offline";
 staleScopeCount: number;
 lastSuccessfulSyncAt?: string;
 lastSyncAttemptAt: string;
-cacheWarningCode?: "cache_unavailable" | "cache_read_failed" | "cache_write_failed";
+cacheWarningCode?: "cache_unavailable" | "cache_identity_unavailable" | "cache_read_failed" | "cache_write_failed";
 freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_item_sync_failed";
 ```
+
+稳定账号键和企业键只在服务内部用于计算命名空间，不进入快照。
 
 现有 `lastSyncedAt` 保留以兼容 UI，其语义固定为最近一次成功写入 Provider 数据的时间。`lastSyncAttemptAt` 表示本次读取尝试时间，两者不得混用。
 
@@ -229,6 +233,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 - SQLite 包含项目和工作项业务摘要，必须只位于当前用户配置目录。
 - Linux/macOS 创建配置目录权限为 `0700`，数据库文件权限为 `0600`；Windows 使用当前用户配置目录 ACL。
 - 账号命名空间键使用 `providerId + tenant identity + account identity` 的 SHA-256，不把原始组合键写入日志。
+- `account identity` 使用 Provider 返回的稳定用户 `id`，缺失时使用 Provider 明确声明唯一的 `nick`；不得使用可变的显示姓名。`tenant identity` 优先使用 `companyId`，缺失时使用稳定空值占位并依赖 Provider 全局用户键隔离。
 - SQL 全部使用绑定参数，不拼接 Provider、项目、类型或工作项字段。
 - 缓存返回值必须经过 Zod 验证；无效 JSON 视为缓存读取失败。
 - 断开账号后的缓存清理属于用户可见安全承诺，失败必须显式返回。
@@ -238,6 +243,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 | 场景 | 行为 |
 |---|---|
 | `node:sqlite` 不可用 | 在线同步继续，返回 `cache_unavailable` 警告 |
+| Provider 身份缺少稳定账号键 | 在线同步继续，返回 `cache_identity_unavailable`，不读写缓存 |
 | 建库、迁移或读取失败 | 不删除数据库；在线同步继续，离线缓存不可用 |
 | 缓存写入失败 | 返回最新在线数据和 `cache_write_failed`，不声称已持久化 |
 | 缓存合并事务失败且有失败范围 | 返回本次成功范围和 `cache_write_failed`，不使用未确认的旧范围 |
@@ -292,6 +298,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 ### 15.3 MCP 与认证
 
 - Token 失效、Provider 不可用时读取活动缓存。
+- 稳定身份键只用于缓存命名空间，不进入 MCP 输出和日志。
 - 同账号和跨账号重新登录。
 - 候选 Token 验证、缓存切换和凭据持久化的两阶段顺序。
 - 跨账号任一步骤失败时保留原 Token 和原身份，新身份不得读取旧缓存。
@@ -318,6 +325,7 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 
 - Phase 1C 真实只读看板和详情抽屉在 `main` 可运行。
 - Node.js 22.5 或更高版本，并确认目标运行时提供 `node:sqlite`。
+- TAPD 身份接口可返回 `id` 或 `nick` 稳定账号键；缺失时按无缓存能力处理。
 - 现有工作项 Provider 可以暴露每个类型的独立成功或失败结果。
 - 测试使用临时数据库，不读取或删除用户真实缓存。
 - 本阶段不注册任何 TAPD 写工具。
