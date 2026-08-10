@@ -8,7 +8,15 @@ import {
   demoWorkItemDetail,
 } from "../demo/fixtures.js";
 
-type Scenario = "connected" | "disconnected" | "expired" | "partial" | "error";
+type Scenario =
+  | "connected"
+  | "disconnected"
+  | "expired"
+  | "partial"
+  | "error"
+  | "mixed"
+  | "offline"
+  | "offline-detail-error";
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";
@@ -16,6 +24,7 @@ interface JsonRpcMessage {
   method?: string;
   params?: Record<string, unknown>;
   result?: Record<string, unknown>;
+  error?: { code: number; message: string };
 }
 
 function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
@@ -32,6 +41,41 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
       projects: demoTaskboardSnapshot.projects.map((project) => ({ ...project, count: 0 })),
       syncSummary: { successfulProjects: 0, failedProjects: 2, itemCount: 0 },
       syncErrorCode: "work_item_sync_failed",
+    };
+  }
+  if (scenario === "mixed") {
+    return {
+      ...demoTaskboardSnapshot,
+      dataFreshness: "mixed",
+      freshScopeCount: 4,
+      staleScopeCount: 2,
+      lastSuccessfulSyncAt: "2026-08-06T12:00:00.000Z",
+      items: demoTaskboardSnapshot.items.map((item, index) => ({
+        ...item,
+        freshness: index < 2 ? "cached" : "fresh",
+      })),
+    };
+  }
+  if (scenario === "offline" || scenario === "offline-detail-error") {
+    return {
+      ...demoTaskboardSnapshot,
+      connection: {
+        ...demoTaskboardSnapshot.connection,
+        tapd: "expired",
+      },
+      projectCatalog: {
+        ...demoTaskboardSnapshot.projectCatalog,
+        stale: true,
+      },
+      dataFreshness: "offline",
+      freshScopeCount: 0,
+      staleScopeCount: 6,
+      lastSuccessfulSyncAt: "2026-08-06T12:00:00.000Z",
+      freshnessReasonCode: "provider_unauthorized",
+      items: demoTaskboardSnapshot.items.map((item) => ({
+        ...item,
+        freshness: "cached",
+      })),
     };
   }
   return {
@@ -96,6 +140,14 @@ function DemoHarness() {
       if (message.method === "tools/call" && message.id !== undefined) {
         const toolName = message.params?.name;
         const detailReference = workItemDetailRefSchema.safeParse(message.params?.arguments);
+        if (toolName === "get_work_item_detail" && scenario === "offline-detail-error") {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32000, message: "provider_not_connected" },
+          });
+          return;
+        }
         const connectedSnapshot = scenarioSnapshot("connected");
         const structuredContent = toolName === "login_with_tapd_token"
           ? {
@@ -107,7 +159,12 @@ function DemoHarness() {
               },
             }
           : toolName === "open_my_taskboard" || toolName === "refresh_my_work_items"
-            ? scenarioSnapshot(scenario === "disconnected" || scenario === "expired"
+            ? scenarioSnapshot([
+              "disconnected",
+              "expired",
+              "offline",
+              "offline-detail-error",
+            ].includes(scenario)
               ? "connected"
               : scenario)
             : toolName === "disconnect_tapd"

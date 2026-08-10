@@ -448,31 +448,31 @@ git commit -m "feat(taskboard): show mixed and offline data states"
 - Modify: `packages/codex-plugin/package.json`
 - Modify: `docs/operations/codex-plugin-demo.md`
 
-- [ ] **Step 1: Add failing browser journeys**
+- [x] **Step 1: Add failing browser journeys**
 
 Add deterministic harness fixtures for `mixed`, `offline`, reconnect dialog, expired cache/no-data login, mobile wrapping, keyboard focus restoration, and cached-card detail failure. Browser tests must assert no horizontal overflow at desktop and mobile viewports.
 
-- [ ] **Step 2: Run E2E and verify the new cases fail**
+- [x] **Step 2: Run E2E and verify the new cases fail**
 
 Run: `npm run test:e2e --workspace @flowrivet/codex-plugin`
 
 Expected: existing journeys pass and new offline journeys fail until harness fixtures/bridge behavior are complete.
 
-- [ ] **Step 3: Complete E2E fixtures and the real read-only probe**
+- [x] **Step 3: Complete E2E fixtures and the real read-only probe**
 
 The probe accepts an explicit temporary DB path, invokes one real read-only TAPD sync, disposes the first server/store, creates a second instance against the same temporary DB, and verifies an offline load. It must print only:
 
 ```json
-{"ok":true,"cacheHit":true,"dataFreshness":"offline","scopeCount":3,"requiredFieldsPresent":true}
+{"ok":true,"cacheHit":true,"dataFreshness":"offline","scopeCount":2,"requiredFieldsPresent":true}
 ```
 
-No identity, project/work-item values, paths, Token, URLs, descriptions, SQL, or response bodies may be printed. Always remove the temporary DB in `finally`; never point at the user config directory.
+`scopeCount` must equal the positive number of scopes successfully synchronized before restart; it is not fixed because TAPD modules and Token permissions vary by project. No identity, project/work-item values, paths, Token, URLs, descriptions, SQL, or response bodies may be printed. Always remove the temporary DB in `finally`; never point at the user config directory.
 
-- [ ] **Step 4: Document local behavior and commands**
+- [x] **Step 4: Document local behavior and commands**
 
 Document platform cache paths, seven-day per-scope retention, disconnect deletion, offline/reconnect behavior, Node 22.5 minimum, and the safe probe command. State explicitly that work-item details and credentials are never cached.
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 Run: `npm test`
 
@@ -492,7 +492,7 @@ Expected: all Playwright journeys PASS on desktop and mobile projects.
 
 Run the documented real probe only when a valid local TAPD Token is available. Expected: the redacted JSON shape above; otherwise record the probe as skipped, never fake success.
 
-- [ ] **Step 6: Inspect packaged output and repository diff**
+- [x] **Step 6: Inspect packaged output and repository diff**
 
 Run: `npm pack --dry-run --workspace @flowrivet/codex-plugin`
 
@@ -502,7 +502,7 @@ Run: `git diff --check`
 
 Expected: no whitespace errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/codex-plugin/e2e/taskboard.spec.ts packages/codex-plugin/scripts/probe-work-item-cache.mjs packages/codex-plugin/package.json docs/operations/codex-plugin-demo.md
@@ -511,11 +511,11 @@ git commit -m "test(taskboard): verify offline cache recovery"
 
 ## Completion Gate
 
-- [ ] Every task commit exists and the worktree is clean.
-- [ ] `npm test`, `npm run typecheck`, `npm run build`, and Playwright all pass.
-- [ ] A temporary-database restart restores the last valid board for unexpired scopes.
-- [ ] Per-scope expiry cannot be extended by success in another scope.
-- [ ] Expired/unavailable TAPD shows cached data with an explicit offline state and reconnect entry.
-- [ ] Cross-account and disconnect failure tests prove the old Token is not replaced before cache cleanup succeeds.
-- [ ] SQLite and logs contain no Token, description, comments, attachments, raw identities, or response bodies.
-- [ ] No TAPD write tool, polling loop, drag behavior, or detail persistence was introduced.
+- [x] Every task commit exists and the worktree is clean.
+- [x] `npm test`, `npm run typecheck`, `npm run build`, and Playwright all pass.
+- [x] A temporary-database restart restores the last valid board for unexpired scopes.
+- [x] Per-scope expiry cannot be extended by success in another scope.
+- [x] Expired/unavailable TAPD shows cached data with an explicit offline state and reconnect entry.
+- [x] Cross-account and disconnect failure tests prove the old Token is not replaced before cache cleanup succeeds.
+- [x] SQLite and logs contain no Token, description, comments, attachments, raw identities, or response bodies.
+- [x] No TAPD write tool, polling loop, drag behavior, or detail persistence was introduced.

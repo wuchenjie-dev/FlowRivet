@@ -52,6 +52,7 @@ export function TapdReconnectDialog({
     if (!dialog || dialog.open) return;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
+    dialog.querySelector<HTMLInputElement>("input")?.focus();
   }, []);
 
   return (

@@ -55,4 +55,13 @@ describe("FlowRivet plugin package", () => {
     expect(packagedText).not.toContain("吴晨杰");
     expect(packagedText).not.toContain("�");
   });
+
+  it("publishes only runtime output and the redacted cache probe", async () => {
+    const packageJson = await readJson("packages/codex-plugin/package.json");
+
+    expect(packageJson.files).toEqual([
+      "dist/",
+      "scripts/probe-work-item-cache.mjs",
+    ]);
+  });
 });

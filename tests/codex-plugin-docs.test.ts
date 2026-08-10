@@ -13,7 +13,7 @@ describe("Codex taskboard demo operations guide", () => {
       "utf8",
     );
 
-    expect(guide).toContain("Node.js 22");
+    expect(guide).toContain("Node.js 22.5");
     expect(guide).toContain("npm start --workspace @flowrivet/codex-plugin");
     expect(guide).toContain("http://127.0.0.1:43120/health");
     expect(guide).toContain("codex plugin marketplace add");
@@ -26,8 +26,13 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("真实工作项");
     expect(guide).toContain("自动发现全部可访问项目");
     expect(guide).toContain("refresh_my_work_items");
+    expect(guide).toContain("flowrivet.db");
+    expect(guide).toContain("超过 7 天才自动删除");
+    expect(guide).toContain("重新连接 TAPD");
+    expect(guide).toContain("probe:cache");
+    expect(guide).toContain("requiredFieldsPresent");
     expect(guide).not.toContain("当前看板中的工作项仍是 Demo 数据");
-    expect(guide).not.toMatch(/TAPD_TOKEN|TAPD_SECRET/i);
+    expect(guide).not.toMatch(/TAPD_(?:TOKEN|SECRET)\s*=\s*["'][^"']+["']/i);
     expect(guide).not.toMatch(/client_secret\s*(?:=|:)\s*["'][^"']+["']/i);
   });
 

@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist/",
+    "scripts/probe-work-item-cache.mjs"
+  ],
   "engines": {
     "node": ">=22.5"
   },
@@ -15,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
+    "probe:cache": "npm run --silent build:server && node --no-warnings scripts/probe-work-item-cache.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

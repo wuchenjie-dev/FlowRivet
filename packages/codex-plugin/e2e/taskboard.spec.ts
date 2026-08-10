@@ -233,3 +233,58 @@ test("mobile viewport keeps controls visible without outer overflow", async ({ p
   }));
   expect(boardMetrics.scrollWidth).toBeGreaterThan(boardMetrics.clientWidth);
 });
+
+test("mixed snapshot identifies cached scopes and cards", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=mixed");
+  const board = boardFrame(page);
+
+  await expect(board.getByRole("status")).toContainText("2 个范围使用缓存");
+  await expect(board.locator(".cache-badge")).toHaveCount(2);
+  await expect(board.getByRole("button", { name: /打开缓存工作项/ })).toHaveCount(2);
+  expect(await board.locator("html").evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+});
+
+test("offline snapshot stays browsable and reconnect restores focus", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/src/ui/demo-harness.html?scenario=offline");
+  const board = boardFrame(page);
+  const reconnect = board.getByRole("button", { name: "重新连接 TAPD" });
+
+  await expect(board.getByRole("region", { name: "工作项看板" })).toBeVisible();
+  await expect(board.getByRole("status")).toContainText("正在显示离线缓存");
+  await expect(board.locator(".cache-badge")).toHaveCount(7);
+  await reconnect.click();
+  await expect(board.getByRole("dialog", { name: "重新连接 TAPD" })).toBeVisible();
+  await expect(board.getByLabel("TAPD Token")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(board.getByRole("dialog", { name: "重新连接 TAPD" })).toHaveCount(0);
+  await expect(reconnect).toBeFocused();
+  await expect(board.locator(".work-card")).toHaveCount(7);
+});
+
+test("offline status and reconnect dialog do not overflow mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=offline");
+  const board = boardFrame(page);
+
+  await expect(board.getByRole("button", { name: "重新连接 TAPD" })).toBeVisible();
+  expect(await board.locator("html").evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+  await board.getByRole("button", { name: "重新连接 TAPD" }).click();
+  const dialog = board.getByRole("dialog", { name: "重新连接 TAPD" });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test("cached card detail failure asks the user to reconnect", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=offline-detail-error");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", {
+    name: "打开缓存工作项：统一检索结果的排序与筛选体验",
+  }).click();
+  await expect(board.getByText("重新连接后加载详情")).toBeVisible();
+});
