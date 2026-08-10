@@ -176,6 +176,8 @@ freshnessReasonCode?: "provider_unauthorized" | "provider_unavailable" | "work_i
 - `mixed`：至少一个范围为本次成功数据，且至少一个范围来自旧缓存。
 - `offline`：没有范围在本次成功，全部展示数据来自缓存。
 
+多个失败范围存在不同错误码时，`freshnessReasonCode` 按 `provider_unauthorized`、`provider_unavailable`、`work_item_sync_failed` 的顺序取最高优先级，保证输出稳定。
+
 无缓存且全部在线范围失败时，继续返回现有 `work_item_sync_failed`，不得返回离线空看板。
 
 ## 10. 数据流
