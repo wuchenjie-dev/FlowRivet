@@ -1,6 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import {
+  defaultTaskboardPreferences,
+  taskboardPreferencesSchema,
+} from "../contracts/taskboard-preferences.js";
 import type { TaskboardSnapshot } from "../contracts/taskboard.js";
 import { workItemDetailRefSchema } from "../contracts/work-item-detail.js";
 import {
@@ -91,6 +95,8 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
 
 function DemoHarness() {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const preferencesRef = useRef({ ...defaultTaskboardPreferences });
+  const [refreshCallCount, setRefreshCallCount] = useState(0);
   const scenario = (new URLSearchParams(location.search).get("scenario") ?? "connected") as Scenario;
 
   useEffect(() => {
@@ -139,6 +145,41 @@ function DemoHarness() {
 
       if (message.method === "tools/call" && message.id !== undefined) {
         const toolName = message.params?.name;
+        if (toolName === "get_taskboard_preferences") {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              content: [{ type: "text", text: "ok" }],
+              structuredContent: preferencesRef.current,
+            },
+          });
+          return;
+        }
+        if (toolName === "save_taskboard_preferences") {
+          const parsed = taskboardPreferencesSchema.safeParse(message.params?.arguments);
+          if (!parsed.success) {
+            send({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32602, message: "taskboard_preferences_write_failed" },
+            });
+            return;
+          }
+          preferencesRef.current = parsed.data;
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              content: [{ type: "text", text: "ok" }],
+              structuredContent: parsed.data,
+            },
+          });
+          return;
+        }
+        if (toolName === "refresh_my_work_items") {
+          setRefreshCallCount((count) => count + 1);
+        }
         const detailReference = workItemDetailRefSchema.safeParse(message.params?.arguments);
         if (toolName === "get_work_item_detail" && scenario === "offline-detail-error") {
           send({
@@ -188,12 +229,30 @@ function DemoHarness() {
   }, [scenario]);
 
   return (
-    <iframe
-      ref={frameRef}
-      title="FlowRivet MCP App"
-      src="/dist/ui/taskboard.html"
-      style={{ width: "100%", height: "100%", border: 0, display: "block" }}
-    />
+    <>
+      <output
+        aria-label="刷新调用次数"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: "hidden",
+          clipPath: "inset(50%)",
+          whiteSpace: "nowrap",
+          border: 0,
+        }}
+      >
+        {refreshCallCount}
+      </output>
+      <iframe
+        ref={frameRef}
+        title="FlowRivet MCP App"
+        src="/dist/ui/taskboard.html"
+        style={{ width: "100%", height: "100%", border: 0, display: "block" }}
+      />
+    </>
   );
 }
 

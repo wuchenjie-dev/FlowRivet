@@ -288,3 +288,73 @@ test("cached card detail failure asks the user to reconnect", async ({ page }) =
   }).click();
   await expect(board.getByText("重新连接后加载详情")).toBeVisible();
 });
+
+test("auto-refresh presets persist for the open Harness page", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  await expect(board.getByRole("menuitemradio", { name: "每 60 秒" }))
+    .toHaveAttribute("aria-checked", "true");
+  await board.getByRole("menuitemradio", { name: "不自动刷新" }).click();
+  await expect(board.getByRole("menuitemradio", { name: "不自动刷新" }))
+    .toHaveAttribute("aria-checked", "true");
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  await expect(board.getByRole("menuitemradio", { name: "不自动刷新" }))
+    .toHaveAttribute("aria-checked", "true");
+});
+
+test("five-second automatic refresh fires exactly once", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  await board.getByRole("menuitemradio", { name: "每 5 秒" }).click();
+  await expect(page.getByLabel("刷新调用次数")).toHaveText("0");
+  await page.clock.fastForward(4_000);
+  await expect(page.getByLabel("刷新调用次数")).toHaveText("0");
+  await page.clock.fastForward(1_000);
+  await expect(page.getByLabel("刷新调用次数")).toHaveText("1");
+});
+
+test("custom refresh dialog validates input and restores keyboard focus", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  const opener = board.getByRole("button", { name: "自定义刷新频率" });
+  await opener.click();
+  const dialog = board.getByRole("dialog", { name: "自定义刷新频率" });
+  const input = board.getByLabel("刷新间隔（秒）");
+  await expect(input).toBeFocused();
+  await input.fill("4");
+  await expect(dialog.getByRole("button", { name: "保存刷新频率" })).toBeDisabled();
+  await input.fill("137");
+  await dialog.getByRole("button", { name: "保存刷新频率" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  await expect(opener).toContainText("自定义：每 137 秒");
+});
+
+test("mobile refresh settings and custom dialog avoid outer overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "打开连接菜单" }).click();
+  await expect(board.getByRole("menuitemradio", { name: "每 60 秒" })).toBeVisible();
+  expect(await board.locator("html").evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+  await board.getByRole("button", { name: "自定义刷新频率" }).click();
+  const dialog = board.getByRole("dialog", { name: "自定义刷新频率" });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+  const screenshot = await page.screenshot();
+  expect(screenshot.byteLength).toBeGreaterThan(10_000);
+  expect(new Set(screenshot).size).toBeGreaterThan(32);
+});

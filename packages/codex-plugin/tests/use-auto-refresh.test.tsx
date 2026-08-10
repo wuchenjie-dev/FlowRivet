@@ -53,6 +53,22 @@ describe("useAutoRefresh", () => {
     expect(performRefresh).not.toHaveBeenCalled();
   });
 
+  it("starts a full interval after the saved preference changes", async () => {
+    const performRefresh = vi.fn().mockResolvedValue({});
+    const { rerender } = renderHook(({ intervalSeconds }) => useAutoRefresh({
+      enabled: true,
+      intervalSeconds,
+      performRefresh,
+    }), { initialProps: { intervalSeconds: 60 } });
+
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    rerender({ intervalSeconds: 5 });
+    await act(() => vi.advanceTimersByTimeAsync(4_999));
+    expect(performRefresh).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(performRefresh).toHaveBeenCalledOnce();
+  });
+
   it("shares one in-flight Promise and resets the deadline after manual refresh", async () => {
     let release!: () => void;
     const performRefresh = vi.fn().mockReturnValue(new Promise<{ retryAfterSeconds?: number }>(

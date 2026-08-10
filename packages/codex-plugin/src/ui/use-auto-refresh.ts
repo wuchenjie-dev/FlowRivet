@@ -19,6 +19,7 @@ export function useAutoRefresh({
   const mounted = useRef(false);
   const enabledRef = useRef(enabled);
   const intervalRef = useRef(intervalSeconds);
+  const previousIntervalRef = useRef<number | undefined>(undefined);
   const performRefreshRef = useRef(performRefresh);
   const timerRef = useRef<number | undefined>(undefined);
   const lastAttemptCompletedAtRef = useRef<number | undefined>(undefined);
@@ -114,6 +115,12 @@ export function useAutoRefresh({
   }, [clearTimer]);
 
   useEffect(() => {
+    if (previousIntervalRef.current !== intervalSeconds) {
+      lastAttemptCompletedAtRef.current = intervalSeconds === undefined || intervalSeconds === 0
+        ? undefined
+        : performance.now();
+      previousIntervalRef.current = intervalSeconds;
+    }
     scheduleRef.current();
   }, [enabled, intervalSeconds]);
 

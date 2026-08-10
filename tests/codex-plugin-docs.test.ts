@@ -28,6 +28,15 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("refresh_my_work_items");
     expect(guide).toContain("flowrivet.db");
     expect(guide).toContain("超过 7 天才自动删除");
+    expect(guide).toContain("taskboard-preferences.json");
+    expect(guide).toContain("默认 60 秒");
+    expect(guide).toContain("不自动刷新");
+    expect(guide).toContain("5～3600");
+    expect(guide).toContain("页面隐藏");
+    expect(guide).toContain("Retry-After");
+    expect(guide).toContain("多个看板");
+    expect(guide).toContain("Token 失效时暂停");
+    expect(guide).toContain("偏好读取失败");
     expect(guide).toContain("重新连接 TAPD");
     expect(guide).toContain("probe:cache");
     expect(guide).toContain("requiredFieldsPresent");
