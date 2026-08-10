@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TapdAuthenticator } from "../src/auth/tapd-auth-service.js";
 import type { ProjectCatalogResult } from "../src/contracts/projects.js";
+import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import type { ProjectOperationLogger } from "../src/observability/project-operation-logger.js";
+import type { WorkItemDetailOperationLogger } from "../src/observability/work-item-detail-operation-logger.js";
 import type { WorkItemOperationLogger } from "../src/observability/work-item-operation-logger.js";
 import type { ProjectCatalog } from "../src/projects/project-catalog-service.js";
 import {
@@ -16,6 +18,8 @@ import {
   TASKBOARD_RESOURCE_URI,
 } from "../src/server/app.js";
 import { createTaskboardHttpServer } from "../src/server/http.js";
+import type { WorkItemDetailReader } from "../src/work-items/work-item-detail-service.js";
+import { WorkItemDetailProviderError } from "../src/work-items/work-item-detail-provider.js";
 import type { WorkItemSynchronizer } from "../src/work-items/work-item-service.js";
 
 const temporaryDirectories: string[] = [];
@@ -60,6 +64,8 @@ async function connectClient(
   projectLogger?: ProjectOperationLogger,
   workItemService: WorkItemSynchronizer = synchronizer().service,
   workItemLogger?: WorkItemOperationLogger,
+  workItemDetailService: WorkItemDetailReader = detailReader().service,
+  workItemDetailLogger?: WorkItemDetailOperationLogger,
 ) {
   const server = createTaskboardMcpServer({
     uiBundlePath,
@@ -68,6 +74,8 @@ async function connectClient(
     ...(projectLogger ? { projectLogger } : {}),
     workItemService,
     ...(workItemLogger ? { workItemLogger } : {}),
+    workItemDetailService,
+    ...(workItemDetailLogger ? { workItemDetailLogger } : {}),
   });
   const client = new Client({ name: "flowrivet-test", version: "0.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -144,6 +152,27 @@ function synchronizer(projects: ProjectCatalogResult["projects"] = []) {
   return { result, service };
 }
 
+function detailReader(overrides: Partial<WorkItemDetail> = {}) {
+  const result: WorkItemDetail = {
+    key: "tapd:50396062:requirement:10001",
+    providerId: "tapd",
+    projectExternalId: "50396062",
+    providerItemType: "story",
+    externalId: "10001",
+    projectName: "Project 50396062",
+    kind: "requirement",
+    title: "Sensitive detail title",
+    providerStatus: "planning",
+    assignees: ["吴晨杰"],
+    sanitizedDescriptionHtml: "<p>Sensitive description</p>",
+    descriptionTruncated: false,
+    externalUrl: "https://www.tapd.cn/50396062/prong/stories/view/10001",
+    ...overrides,
+  };
+  const service: WorkItemDetailReader = { get: vi.fn().mockResolvedValue(result) };
+  return { result, service };
+}
+
 describe("taskboard MCP app", () => {
   it("lists the render and demo tools with UI metadata only on render", async () => {
     const connection = await connectClient(await createBundle());
@@ -155,6 +184,7 @@ describe("taskboard MCP app", () => {
           "open_my_taskboard",
           "list_my_work_items",
           "refresh_my_work_items",
+          "get_work_item_detail",
           "demo_ping",
           "get_connection_status",
           "login_with_tapd_token",
@@ -167,11 +197,136 @@ describe("taskboard MCP app", () => {
 
       const openTool = tools.find((tool) => tool.name === "open_my_taskboard");
       const pingTool = tools.find((tool) => tool.name === "demo_ping");
+      const detailTool = tools.find((tool) => tool.name === "get_work_item_detail");
       expect(openTool?._meta?.ui).toEqual({ resourceUri: TASKBOARD_RESOURCE_URI });
       expect(pingTool?._meta?.ui).toBeUndefined();
+      expect(detailTool?.annotations).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: true,
+      });
+      expect(Object.keys(detailTool?.inputSchema.properties ?? {}).sort()).toEqual([
+        "externalId",
+        "projectExternalId",
+        "providerId",
+        "providerItemType",
+      ]);
       for (const name of ["discover_projects", "save_project_selection", "add_project"]) {
         expect(tools.find((tool) => tool.name === name)?._meta?.ui).toBeUndefined();
       }
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("loads detail using current identity and the accessible project catalog", async () => {
+    const fixture = catalog([project("50396062")]);
+    const details = detailReader();
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined,
+      synchronizer().service, undefined, details.service,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "get_work_item_detail",
+        arguments: {
+          providerId: "tapd",
+          projectExternalId: "50396062",
+          providerItemType: "story",
+          externalId: "10001",
+        },
+      });
+
+      expect(result.structuredContent).toEqual(details.result);
+      expect(fixture.service.discover).toHaveBeenCalledOnce();
+      expect(details.service.get).toHaveBeenCalledWith({
+        reference: {
+          providerId: "tapd",
+          projectExternalId: "50396062",
+          providerItemType: "story",
+          externalId: "10001",
+        },
+        accountDisplayName: "吴晨杰",
+        projects: fixture.result.projects,
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("logs one redacted detail event with a request ID", async () => {
+    const fixture = catalog([project("50396062")]);
+    const details = detailReader();
+    const events: Parameters<WorkItemDetailOperationLogger["completed"]>[0][] = [];
+    const logger: WorkItemDetailOperationLogger = {
+      completed: (event) => events.push(event),
+    };
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined,
+      synchronizer().service, undefined, details.service, logger,
+    );
+
+    try {
+      await connection.client.callTool({
+        name: "get_work_item_detail",
+        arguments: {
+          providerId: "tapd",
+          projectExternalId: "50396062",
+          providerItemType: "story",
+          externalId: "10001",
+        },
+      });
+
+      expect(events).toEqual([expect.objectContaining({
+        requestId: expect.any(String),
+        tool: "get_work_item_detail",
+        providerId: "tapd",
+        providerItemType: "story",
+        outcome: "success",
+        durationMs: expect.any(Number),
+      })]);
+      expect(JSON.stringify(events)).not.toMatch(
+        /50396062|10001|Sensitive|description|吴晨杰|personal-token/i,
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("logs a stable detail error code without sensitive input", async () => {
+    const fixture = catalog([project("50396062")]);
+    const detailService: WorkItemDetailReader = {
+      get: vi.fn().mockRejectedValue(
+        new WorkItemDetailProviderError("work_item_detail_forbidden"),
+      ),
+    };
+    const events: Parameters<WorkItemDetailOperationLogger["completed"]>[0][] = [];
+    const logger: WorkItemDetailOperationLogger = {
+      completed: (event) => events.push(event),
+    };
+    const connection = await connectClient(
+      await createBundle(), authenticator(), fixture.service, undefined,
+      synchronizer().service, undefined, detailService, logger,
+    );
+
+    try {
+      const result = await connection.client.callTool({
+        name: "get_work_item_detail",
+        arguments: {
+          providerId: "tapd",
+          projectExternalId: "50396062",
+          providerItemType: "story",
+          externalId: "10001",
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(events).toEqual([expect.objectContaining({
+        requestId: expect.any(String),
+        outcome: "error",
+        errorCode: "work_item_detail_forbidden",
+      })]);
+      expect(JSON.stringify(events)).not.toMatch(/50396062|10001|吴晨杰/);
     } finally {
       await connection.close();
     }

@@ -20,10 +20,18 @@ import { authResultSchema } from "../contracts/auth.js";
 import { projectCatalogSchema } from "../contracts/projects.js";
 import { canonicalStages, taskboardSnapshotSchema } from "../contracts/taskboard.js";
 import {
+  workItemDetailRefSchema,
+  workItemDetailSchema,
+} from "../contracts/work-item-detail.js";
+import {
   JsonStderrProjectOperationLogger,
   type ProjectOperationLogger,
   type ProjectToolName,
 } from "../observability/project-operation-logger.js";
+import {
+  JsonStderrWorkItemDetailOperationLogger,
+  type WorkItemDetailOperationLogger,
+} from "../observability/work-item-detail-operation-logger.js";
 import {
   JsonStderrWorkItemOperationLogger,
   type WorkItemOperationLogger,
@@ -47,6 +55,12 @@ import {
   type WorkItemSynchronizer,
 } from "../work-items/work-item-service.js";
 import { TapdWorkItemProvider } from "../work-items/tapd-work-item-provider.js";
+import { TapdWorkItemDetailProvider } from "../work-items/tapd-work-item-detail-provider.js";
+import {
+  WorkItemDetailService,
+  type WorkItemDetailReader,
+} from "../work-items/work-item-detail-service.js";
+import { WorkItemDetailProviderError } from "../work-items/work-item-detail-provider.js";
 
 export const TASKBOARD_RESOURCE_URI = "ui://flowrivet/taskboard.html";
 
@@ -62,6 +76,8 @@ export interface TaskboardMcpServerOptions {
   projectLogger?: ProjectOperationLogger;
   workItemService?: WorkItemSynchronizer;
   workItemLogger?: WorkItemOperationLogger;
+  workItemDetailService?: WorkItemDetailReader;
+  workItemDetailLogger?: WorkItemDetailOperationLogger;
 }
 
 export function createTaskboardMcpServer(
@@ -92,6 +108,11 @@ export function createTaskboardMcpServer(
     now,
   );
   const workItemLogger = options.workItemLogger ?? new JsonStderrWorkItemOperationLogger();
+  const workItemDetailService = options.workItemDetailService ?? new WorkItemDetailService(
+    new TapdWorkItemDetailProvider({ credentialResolver }),
+  );
+  const workItemDetailLogger = options.workItemDetailLogger
+    ?? new JsonStderrWorkItemDetailOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: "0.1.0" });
 
   registerAppResource(
@@ -140,6 +161,68 @@ export function createTaskboardMcpServer(
     description: "重新发现项目并刷新真实只读工作项。",
     run: buildTaskboardSnapshot,
   });
+
+  registerAppTool(
+    server,
+    "get_work_item_detail",
+    {
+      title: "查看工作项详情",
+      description: "实时读取当前用户可访问且分配给自己的工作项详情。",
+      inputSchema: workItemDetailRefSchema.shape,
+      outputSchema: workItemDetailSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: {},
+    },
+    async (input) => {
+      const reference = workItemDetailRefSchema.parse(input);
+      const requestId = randomUUID();
+      const startedAt = performance.now();
+      try {
+        const auth = await authService.getConnectionStatus();
+        if (auth.connection.tapd !== "connected") {
+          throw new WorkItemDetailProviderError(
+            auth.connection.tapd === "expired"
+              ? "provider_unauthorized"
+              : "provider_not_connected",
+          );
+        }
+        const catalog = await projectCatalog.discover();
+        const accountDisplayName = catalog.provider.accountDisplayName
+          ?? auth.connection.userName;
+        if (!accountDisplayName) {
+          throw new WorkItemDetailProviderError("provider_unauthorized");
+        }
+        const detail = workItemDetailSchema.parse(await workItemDetailService.get({
+          reference,
+          accountDisplayName,
+          projects: catalog.projects,
+        }));
+        workItemDetailLogger.completed({
+          requestId,
+          tool: "get_work_item_detail",
+          providerId: reference.providerId,
+          providerItemType: reference.providerItemType,
+          outcome: "success",
+          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        });
+        return {
+          structuredContent: detail,
+          content: [{ type: "text" as const, text: "工作项详情已加载。" }],
+        };
+      } catch (error) {
+        workItemDetailLogger.completed({
+          requestId,
+          tool: "get_work_item_detail",
+          providerId: reference.providerId,
+          providerItemType: reference.providerItemType,
+          outcome: "error",
+          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+          ...projectErrorCode(error),
+        });
+        throw error;
+      }
+    },
+  );
 
   async function buildTaskboardSnapshot() {
     const auth = await authService.getConnectionStatus();
