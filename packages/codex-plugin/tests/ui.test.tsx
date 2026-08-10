@@ -1,29 +1,58 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { TaskboardPreferences } from "../src/contracts/taskboard-preferences.js";
 import type { TaskboardSnapshot } from "../src/contracts/taskboard.js";
 import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import { App } from "../src/ui/App.js";
 import type { McpAppsBridge } from "../src/ui/bridge.js";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
-function createBridge(overrides: Partial<McpAppsBridge> = {}): McpAppsBridge {
+function createBridge(
+  overrides: Partial<McpAppsBridge> = {},
+  preferences: {
+    get?: () => Promise<TaskboardPreferences>;
+    save?: (value: TaskboardPreferences) => Promise<TaskboardPreferences>;
+  } = {},
+): McpAppsBridge {
+  const delegatedCallTool = overrides.callTool;
   return {
     initialize: vi.fn().mockResolvedValue(undefined),
-    callTool: vi.fn().mockResolvedValue({
-    content: [],
-    structuredContent: { ok: true, repliedAt: "2026-08-06T12:00:00.000Z" },
-    }),
     getDisplayState: vi.fn(() => ({ canFullscreen: true, isFullscreen: false })),
     requestFullscreen: vi.fn().mockResolvedValue({ canFullscreen: true, isFullscreen: true }),
     onToolResult: vi.fn(() => () => undefined),
     dispose: vi.fn().mockResolvedValue(undefined),
     ...overrides,
+    callTool: vi.fn(async (name: string, arguments_: Record<string, unknown>) => {
+      if (name === "get_taskboard_preferences") {
+        return {
+          content: [],
+          structuredContent: await (preferences.get?.()
+            ?? Promise.resolve({ refreshIntervalSeconds: 60 })),
+        };
+      }
+      if (name === "save_taskboard_preferences") {
+        const value = arguments_ as TaskboardPreferences;
+        return {
+          content: [],
+          structuredContent: await (preferences.save?.(value) ?? Promise.resolve(value)),
+        };
+      }
+      return delegatedCallTool
+        ? delegatedCallTool(name, arguments_)
+        : {
+            content: [],
+            structuredContent: { ok: true, repliedAt: "2026-08-06T12:00:00.000Z" },
+          };
+    }),
   };
 }
 
@@ -438,6 +467,122 @@ describe("FlowRivet taskboard", () => {
     await user.click(screen.getByRole("button", { name: "打开连接菜单" }));
     expect(screen.getByText("GitLab 后续接入")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /登录 GitLab/ })).toBeNull();
+  });
+
+  it("uses a 60 second cooldown for a full rate-limit MCP error", async () => {
+    vi.useFakeTimers();
+    const callTool = vi.fn(async (name: string) => name === "refresh_my_work_items"
+      ? {
+          content: [{ type: "text" as const, text: "provider_rate_limited" }],
+          isError: true,
+        }
+      : { content: [], structuredContent: demoTaskboardSnapshot });
+    render(<App
+      initialSnapshot={demoTaskboardSnapshot}
+      bridge={createBridge({
+        callTool,
+        getDisplayState: vi.fn(() => ({ canFullscreen: false, isFullscreen: false })),
+      }, {
+        get: vi.fn().mockResolvedValue({ refreshIntervalSeconds: 5 }),
+      })}
+    />);
+    await act(async () => Promise.resolve());
+
+    await act(() => vi.advanceTimersByTimeAsync(5_000));
+    expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
+      .toHaveLength(1);
+    await act(() => vi.advanceTimersByTimeAsync(59_999));
+    expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
+      .toHaveLength(1);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
+      .toHaveLength(2);
+  });
+
+  it("loads and saves an auto-refresh preset from the connection menu", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn(async (value: TaskboardPreferences) => value);
+    render(<App
+      initialSnapshot={demoTaskboardSnapshot}
+      bridge={createBridge({}, { save })}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "打开连接菜单" }));
+    expect((await screen.findByRole("menuitemradio", { name: "每 60 秒" }))
+      .getAttribute("aria-checked")).toBe("true");
+    await user.click(screen.getByRole("menuitemradio", { name: "每 10 秒" }));
+
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith({
+      refreshIntervalSeconds: 10,
+    }));
+    expect(screen.getByRole("menuitemradio", { name: "每 10 秒" })
+      .getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("validates a custom interval and restores focus when the dialog closes", async () => {
+    const user = userEvent.setup();
+    const save = vi.fn(async (value: TaskboardPreferences) => value);
+    render(<App
+      initialSnapshot={demoTaskboardSnapshot}
+      bridge={createBridge({}, { save })}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "打开连接菜单" }));
+    const opener = await screen.findByRole("button", { name: "自定义刷新频率" });
+    await user.click(opener);
+    const input = screen.getByLabelText("刷新间隔（秒）") as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    await user.clear(input);
+    await user.type(input, "4");
+    expect((screen.getByRole("button", {
+      name: "保存刷新频率",
+    }) as HTMLButtonElement).disabled).toBe(true);
+    await user.clear(input);
+    await user.type(input, "3600");
+    await user.click(screen.getByRole("button", { name: "保存刷新频率" }));
+
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith({
+      refreshIntervalSeconds: 3600,
+    }));
+    expect(screen.queryByRole("dialog", { name: "自定义刷新频率" })).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+
+    await user.click(opener);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "自定义刷新频率" })).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it("keeps the previous interval after a preference save failure", async () => {
+    const user = userEvent.setup();
+    render(<App
+      initialSnapshot={demoTaskboardSnapshot}
+      bridge={createBridge({}, {
+        save: vi.fn().mockRejectedValue(new Error("taskboard_preferences_write_failed")),
+      })}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "打开连接菜单" }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "每 10 秒" }));
+
+    expect(await screen.findByText("无法保存自动刷新设置")).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "每 60 秒" })
+      .getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("disables automatic refresh for the session when preferences cannot be read", async () => {
+    render(<App
+      initialSnapshot={demoTaskboardSnapshot}
+      bridge={createBridge({}, {
+        get: vi.fn().mockRejectedValue(new Error("taskboard_preferences_read_failed")),
+      })}
+    />);
+
+    expect(await screen.findByText("无法读取自动刷新设置，本次会话已关闭自动刷新"))
+      .toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: "打开连接菜单" }));
+    expect(screen.getByRole("menuitemradio", { name: "不自动刷新" })
+      .getAttribute("aria-checked")).toBe("true");
   });
 
   it("calls demo_ping and reports the local Companion response", async () => {

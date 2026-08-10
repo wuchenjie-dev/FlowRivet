@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
 import {
+  taskboardPreferencesSchema,
+  type TaskboardPreferences,
+} from "../contracts/taskboard-preferences.js";
+import {
   taskboardSnapshotSchema,
   type TaskboardSnapshot,
 } from "../contracts/taskboard.js";
@@ -14,6 +18,7 @@ import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
 import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
+import { useAutoRefresh } from "./use-auto-refresh.js";
 
 interface AppProps {
   initialSnapshot: TaskboardSnapshot;
@@ -40,7 +45,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [authError, setAuthError] = useState<string>();
   const [authPending, setAuthPending] = useState(false);
   const [disconnectPending, setDisconnectPending] = useState(false);
-  const [refreshPending, setRefreshPending] = useState(false);
+  const [preferences, setPreferences] = useState<TaskboardPreferences>();
+  const [preferencesPending, setPreferencesPending] = useState(false);
   const [displayState, setDisplayState] = useState(() => bridge.getDisplayState());
   const [fullscreenPending, setFullscreenPending] = useState(false);
   const [selectedItem, setSelectedItem] = useState<WorkItem>();
@@ -53,6 +59,12 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
   const tapdState = connection.tapd;
+
+  const refreshCoordinator = useAutoRefresh({
+    enabled: tapdState === "connected",
+    intervalSeconds: preferences?.refreshIntervalSeconds,
+    performRefresh: refreshBoard,
+  });
 
   async function enterFullscreen(automatic = false) {
     setFullscreenPending(true);
@@ -74,6 +86,31 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
     // The host display capability is fixed for this mounted MCP App.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridge]);
+
+  useEffect(() => {
+    refreshCoordinator.markAttemptCompleted({
+      ...(initialSnapshot.freshnessReasonCode === "provider_rate_limited"
+        && initialSnapshot.retryAfterSeconds !== undefined
+        ? { retryAfterSeconds: initialSnapshot.retryAfterSeconds }
+        : {}),
+    });
+  }, [initialSnapshot, refreshCoordinator.markAttemptCompleted]);
+
+  useEffect(() => {
+    let active = true;
+    void bridge.callTool("get_taskboard_preferences", {})
+      .then((result) => {
+        const parsed = taskboardPreferencesSchema.safeParse(result.structuredContent);
+        if (!parsed.success) throw new Error("taskboard_preferences_read_failed");
+        if (active) setPreferences(parsed.data);
+      })
+      .catch(() => {
+        if (!active) return;
+        setPreferences({ refreshIntervalSeconds: 0 });
+        setNotice("无法读取自动刷新设置，本次会话已关闭自动刷新");
+      });
+    return () => { active = false; };
   }, [bridge]);
 
   const filteredItems = items.filter((item) => {
@@ -167,6 +204,15 @@ export function App({ initialSnapshot, bridge }: AppProps) {
 
   async function loadBoard(tool: "open_my_taskboard" | "refresh_my_work_items") {
     const result = await bridge.callTool(tool, {});
+    if (result.isError) {
+      const text = result.content
+        .filter((entry) => entry.type === "text")
+        .map((entry) => entry.text)
+        .join(" ");
+      throw new Error(text.includes("provider_rate_limited")
+        ? "provider_rate_limited"
+        : "work_item_sync_failed");
+    }
     const parsed = taskboardSnapshotSchema.safeParse(result.structuredContent);
     if (!parsed.success) throw new Error("invalid taskboard snapshot");
     applySnapshot(parsed.data);
@@ -186,6 +232,11 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         return;
       }
       const snapshot = await loadBoard("open_my_taskboard");
+      refreshCoordinator.markAttemptCompleted({
+        ...(snapshot.retryAfterSeconds !== undefined
+          ? { retryAfterSeconds: snapshot.retryAfterSeconds }
+          : {}),
+      });
       setReconnectOpen(false);
       setNotice(`TAPD 已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
     } catch {
@@ -222,15 +273,38 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   }
 
   async function refreshBoard() {
-    if (refreshPending) return;
-    setRefreshPending(true);
     try {
       const snapshot = await loadBoard("refresh_my_work_items");
       setNotice(`已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
-    } catch {
+      return {
+        ...(snapshot.freshnessReasonCode === "provider_rate_limited"
+          && snapshot.retryAfterSeconds !== undefined
+          ? { retryAfterSeconds: snapshot.retryAfterSeconds }
+          : {}),
+      };
+    } catch (error) {
       setNotice("看板同步失败，请重试");
+      throw error instanceof Error && error.message.includes("provider_rate_limited")
+        ? error
+        : new Error("work_item_sync_failed");
+    }
+  }
+
+  async function saveRefreshInterval(value: number) {
+    setPreferencesPending(true);
+    try {
+      const result = await bridge.callTool("save_taskboard_preferences", {
+        refreshIntervalSeconds: value,
+      });
+      const parsed = taskboardPreferencesSchema.safeParse(result.structuredContent);
+      if (!parsed.success) throw new Error("taskboard_preferences_invalid_response");
+      setPreferences(parsed.data);
+      return true;
+    } catch {
+      setNotice("无法保存自动刷新设置");
+      return false;
     } finally {
-      setRefreshPending(false);
+      setPreferencesPending(false);
     }
   }
 
@@ -252,9 +326,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         menuOpen={menuOpen}
         showFullscreen={displayState.canFullscreen && !displayState.isFullscreen}
         fullscreenPending={fullscreenPending}
-        refreshPending={refreshPending}
+        refreshPending={refreshCoordinator.pending}
         onFullscreen={() => void enterFullscreen()}
-        onRefresh={() => void refreshBoard()}
+        onRefresh={() => void refreshCoordinator.requestRefresh().catch(() => undefined)}
         onToggleMenu={() => setMenuOpen((open) => !open)}
       />
       {menuOpen ? (
@@ -264,6 +338,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           onPing={pingCompanion}
           disconnectPending={disconnectPending}
           onDisconnect={() => void disconnect()}
+          refreshIntervalSeconds={preferences?.refreshIntervalSeconds}
+          preferencesPending={preferencesPending}
+          onSaveRefreshInterval={saveRefreshInterval}
         />
       ) : null}
 

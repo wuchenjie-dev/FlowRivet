@@ -1,6 +1,7 @@
 import { Check, CircleOff, Server } from "lucide-react";
 
 import type { TaskboardSnapshot } from "../../contracts/taskboard.js";
+import { AutoRefreshSettings } from "./AutoRefreshSettings.js";
 
 interface ConnectionMenuProps {
   connection: TaskboardSnapshot["connection"];
@@ -8,6 +9,9 @@ interface ConnectionMenuProps {
   onPing: () => void;
   disconnectPending: boolean;
   onDisconnect: () => void;
+  refreshIntervalSeconds: number | undefined;
+  preferencesPending: boolean;
+  onSaveRefreshInterval: (value: number) => Promise<boolean>;
 }
 
 export function ConnectionMenu({
@@ -16,6 +20,9 @@ export function ConnectionMenu({
   onPing,
   disconnectPending,
   onDisconnect,
+  refreshIntervalSeconds,
+  preferencesPending,
+  onSaveRefreshInterval,
 }: ConnectionMenuProps) {
   return (
     <div className="connection-menu" role="menu" aria-label="连接状态">
@@ -29,6 +36,11 @@ export function ConnectionMenu({
         <div><strong>GitLab 后续接入</strong><small>Phase 0 不读取仓库数据</small></div>
         <span className="connection-value">未配置</span>
       </div>
+      <AutoRefreshSettings
+        value={refreshIntervalSeconds}
+        pending={preferencesPending}
+        onSave={onSaveRefreshInterval}
+      />
       <button
         className="menu-command"
         type="button"
