@@ -1,11 +1,11 @@
 import type {
   CanonicalStage,
   WorkItem,
-  WorkItemKind,
 } from "../contracts/taskboard.js";
 import type { TapdProjectCredentialResolver } from "../projects/tapd-project-provider.js";
 import {
   WorkItemProviderError,
+  type WorkItemErrorCode,
   type WorkItemProvider,
   type WorkItemQueryResult,
 } from "./work-item-provider.js";
@@ -17,10 +17,11 @@ const itemQueries: Array<{
   path: string;
   ownerParameter: "owner" | "current_owner";
   wrapper: "Story" | "Task" | "Bug";
+  providerItemType: "story" | "task" | "bug";
 }> = [
-  { kind: "requirement", path: "/stories", ownerParameter: "owner", wrapper: "Story" },
-  { kind: "task", path: "/tasks", ownerParameter: "owner", wrapper: "Task" },
-  { kind: "defect", path: "/bugs", ownerParameter: "current_owner", wrapper: "Bug" },
+  { kind: "requirement", path: "/stories", ownerParameter: "owner", wrapper: "Story", providerItemType: "story" },
+  { kind: "task", path: "/tasks", ownerParameter: "owner", wrapper: "Task", providerItemType: "task" },
+  { kind: "defect", path: "/bugs", ownerParameter: "current_owner", wrapper: "Bug", providerItemType: "bug" },
 ];
 
 export class TapdWorkItemProvider implements WorkItemProvider {
@@ -45,11 +46,25 @@ export class TapdWorkItemProvider implements WorkItemProvider {
     projectName: string;
     accountDisplayName: string;
   }): Promise<WorkItemQueryResult> {
-    const { token } = await this.credentialResolver.resolve();
-    const items: WorkItem[] = [];
-    const failedKinds: WorkItemKind[] = [];
+    let token: string;
+    try {
+      ({ token } = await this.credentialResolver.resolve());
+    } catch (error) {
+      const errorCode = providerErrorCode(error);
+      return {
+        projectExternalId: input.projectExternalId,
+        scopes: itemQueries.map((query) => failedScope(query, errorCode)),
+      };
+    }
+
+    const scopes: WorkItemQueryResult["scopes"] = [];
+    let authorizationFailed = false;
 
     for (const query of itemQueries) {
+      if (authorizationFailed) {
+        scopes.push(failedScope(query, "provider_unauthorized"));
+        continue;
+      }
       try {
         const rows = await this.listRows(
           query.path,
@@ -58,18 +73,24 @@ export class TapdWorkItemProvider implements WorkItemProvider {
           input.accountDisplayName,
           token,
         );
-        items.push(...rows.flatMap((row) => {
+        const items = rows.flatMap((row) => {
           const item = mapItem(row, query.kind, query.wrapper, input);
           return item ? [item] : [];
-        }));
+        });
+        scopes.push({
+          providerItemType: query.providerItemType,
+          kind: query.kind,
+          outcome: "success",
+          items,
+        });
       } catch (error) {
-        if (error instanceof WorkItemProviderError
-          && error.code === "provider_unauthorized") throw error;
-        failedKinds.push(query.kind);
+        const errorCode = providerErrorCode(error);
+        scopes.push(failedScope(query, errorCode));
+        authorizationFailed = errorCode === "provider_unauthorized";
       }
     }
 
-    return { projectExternalId: input.projectExternalId, items, failedKinds };
+    return { projectExternalId: input.projectExternalId, scopes };
   }
 
   private async listRows(
@@ -101,7 +122,7 @@ export class TapdWorkItemProvider implements WorkItemProvider {
         signal: AbortSignal.timeout(15_000),
       });
     } catch {
-      throw new WorkItemProviderError("work_item_sync_failed");
+      throw new WorkItemProviderError("provider_unavailable");
     }
     if (response.status === 401 || response.status === 403) {
       throw new WorkItemProviderError("provider_unauthorized");
@@ -119,6 +140,31 @@ export class TapdWorkItemProvider implements WorkItemProvider {
     }
     return payload.data;
   }
+}
+
+function failedScope(
+  query: (typeof itemQueries)[number],
+  errorCode: WorkItemErrorCode,
+): WorkItemQueryResult["scopes"][number] {
+  return {
+    providerItemType: query.providerItemType,
+    kind: query.kind,
+    outcome: "error",
+    items: [],
+    errorCode,
+  };
+}
+
+function providerErrorCode(error: unknown): WorkItemErrorCode {
+  if (error instanceof WorkItemProviderError) return error.code;
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String(error.code);
+    if (code === "provider_unauthorized") return code;
+    if (code === "provider_unavailable" || code === "provider_not_connected") {
+      return "provider_unavailable";
+    }
+  }
+  return "work_item_sync_failed";
 }
 
 function mapItem(

@@ -2,8 +2,15 @@ import type { WorkItem, WorkItemKind } from "../contracts/taskboard.js";
 
 export interface WorkItemQueryResult {
   projectExternalId: string;
+  scopes: WorkItemScopeResult[];
+}
+
+export interface WorkItemScopeResult {
+  providerItemType: string;
+  kind: WorkItemKind;
+  outcome: "success" | "error";
   items: WorkItem[];
-  failedKinds: WorkItemKind[];
+  errorCode?: WorkItemErrorCode;
 }
 
 export interface WorkItemProvider {
@@ -17,7 +24,8 @@ export interface WorkItemProvider {
 
 export type WorkItemErrorCode =
   | "work_item_sync_failed"
-  | "provider_unauthorized";
+  | "provider_unauthorized"
+  | "provider_unavailable";
 
 export class WorkItemProviderError extends Error {
   constructor(readonly code: WorkItemErrorCode) {

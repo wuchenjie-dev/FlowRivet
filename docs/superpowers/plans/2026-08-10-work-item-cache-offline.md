@@ -132,7 +132,7 @@ git commit -m "feat(taskboard): define cached snapshot contracts"
 - Test: `packages/codex-plugin/tests/tapd-work-item-provider.test.ts`
 - Test: `packages/codex-plugin/tests/work-item-service.test.ts`
 
-- [ ] **Step 1: Replace test fixtures with explicit scope results**
+- [x] **Step 1: Replace test fixtures with explicit scope results**
 
 Tests must require exactly three TAPD results and verify an empty successful scope is distinguishable from an error:
 
@@ -144,13 +144,13 @@ expect(result.scopes).toEqual([
 ]);
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/tapd-work-item-provider.test.ts tests/work-item-service.test.ts`
 
 Expected: FAIL because the provider still returns `items` and `failedKinds`.
 
-- [ ] **Step 3: Implement the provider-neutral result contract**
+- [x] **Step 3: Implement the provider-neutral result contract**
 
 ```ts
 export interface WorkItemScopeResult {
@@ -169,7 +169,7 @@ export interface WorkItemQueryResult {
 
 Extend `WorkItemErrorCode` with `provider_unavailable`. TAPD maps each API call to one result. A 401/403 returns `provider_unauthorized` for the affected and remaining scopes; transport failures return `provider_unavailable`, while invalid provider payloads return `work_item_sync_failed`. Never omit a configured scope.
 
-- [ ] **Step 4: Run provider tests and typecheck**
+- [x] **Step 4: Run provider tests and typecheck**
 
 Run: `npm test --workspace @flowrivet/codex-plugin -- --run tests/tapd-work-item-provider.test.ts tests/work-item-service.test.ts`
 
@@ -179,7 +179,7 @@ Run: `npm run typecheck --workspace @flowrivet/codex-plugin`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/codex-plugin/src/work-items/work-item-provider.ts packages/codex-plugin/src/work-items/tapd-work-item-provider.ts packages/codex-plugin/tests/tapd-work-item-provider.test.ts packages/codex-plugin/tests/work-item-service.test.ts

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectRef } from "../src/contracts/projects.js";
-import type { WorkItem } from "../src/contracts/taskboard.js";
+import type { WorkItem, WorkItemKind } from "../src/contracts/taskboard.js";
 import { WorkItemService } from "../src/work-items/work-item-service.js";
 import type {
   WorkItemProvider,
@@ -52,12 +52,31 @@ class FakeProvider implements WorkItemProvider {
 function result(
   projectExternalId: string,
   items: WorkItem[] = [],
-  failedKinds: WorkItemQueryResult["failedKinds"] = [],
+  failedKinds: WorkItemKind[] = [],
 ): WorkItemQueryResult {
+  const definitions = [
+    { kind: "requirement" as const, providerItemType: "story" },
+    { kind: "task" as const, providerItemType: "task" },
+    { kind: "defect" as const, providerItemType: "bug" },
+  ];
   return {
     projectExternalId,
-    items: items.map((entry) => ({ ...entry, projectExternalId })),
-    failedKinds,
+    scopes: definitions.map(({ kind, providerItemType }) => failedKinds.includes(kind)
+      ? {
+          providerItemType,
+          kind,
+          outcome: "error" as const,
+          items: [],
+          errorCode: "work_item_sync_failed" as const,
+        }
+      : {
+          providerItemType,
+          kind,
+          outcome: "success" as const,
+          items: items
+            .filter((entry) => entry.kind === kind)
+            .map((entry) => ({ ...entry, projectExternalId })),
+        }),
   };
 }
 

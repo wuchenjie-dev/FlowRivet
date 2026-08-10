@@ -51,17 +51,27 @@ describe("TAPD work item provider", () => {
       accountDisplayName: "alice",
     });
 
-    expect(result.failedKinds).toEqual([]);
-    expect(result.items).toHaveLength(202);
-    expect(result.items).toEqual(expect.arrayContaining([
+    expect(result).toMatchObject({
+      scopes: [
+        { providerItemType: "story", kind: "requirement", outcome: "success" },
+        { providerItemType: "task", kind: "task", outcome: "success" },
+        { providerItemType: "bug", kind: "defect", outcome: "success" },
+      ],
+    });
+    const items = (result as unknown as { scopes: Array<{ items: unknown[] }> })
+      .scopes.flatMap((scope) => scope.items);
+    expect(items).toHaveLength(202);
+    expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({ externalId: "301", kind: "task", stage: "in_progress" }),
       expect.objectContaining({
         externalId: "401", kind: "defect", stage: "in_review",
         completedAt: "2026-08-07T01:00:00.000Z",
       }),
     ]));
-    expect(result.items.some((item) => item.externalId === "201")).toBe(false);
-    expect(result.items.some((item) => item.externalId === "402")).toBe(false);
+    expect(items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ externalId: "201" }),
+      expect.objectContaining({ externalId: "402" }),
+    ]));
     expect(fetcher).toHaveBeenCalledTimes(4);
 
     const urls = fetcher.mock.calls.map(([input]) => new URL(String(input)));
@@ -90,8 +100,20 @@ describe("TAPD work item provider", () => {
       projectName: "Project A",
       accountDisplayName: "alice",
     })).resolves.toMatchObject({
-      items: [expect.objectContaining({ externalId: "1" })],
-      failedKinds: ["task"],
+      scopes: [
+        {
+          providerItemType: "story",
+          outcome: "success",
+          items: [expect.objectContaining({ externalId: "1" })],
+        },
+        {
+          providerItemType: "task",
+          outcome: "error",
+          items: [],
+          errorCode: "work_item_sync_failed",
+        },
+        { providerItemType: "bug", outcome: "success", items: [] },
+      ],
     });
   });
 
@@ -105,7 +127,34 @@ describe("TAPD work item provider", () => {
       projectExternalId: "100",
       projectName: "Project A",
       accountDisplayName: "alice",
-    })).rejects.toMatchObject({ code: "provider_unauthorized" });
+    })).resolves.toMatchObject({
+      scopes: [
+        { providerItemType: "story", outcome: "error", errorCode: "provider_unauthorized" },
+        { providerItemType: "task", outcome: "error", errorCode: "provider_unauthorized" },
+        { providerItemType: "bug", outcome: "error", errorCode: "provider_unauthorized" },
+      ],
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("maps transport failures to provider_unavailable without omitting scopes", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(payload([]))
+      .mockResolvedValueOnce(payload([]));
+    const provider = new TapdWorkItemProvider({ credentialResolver: credentials, fetcher });
+
+    await expect(provider.listProjectWorkItems({
+      projectExternalId: "100",
+      projectName: "Project A",
+      accountDisplayName: "alice",
+    })).resolves.toMatchObject({
+      scopes: [
+        { providerItemType: "story", outcome: "error", errorCode: "provider_unavailable" },
+        { providerItemType: "task", outcome: "success" },
+        { providerItemType: "bug", outcome: "success" },
+      ],
+    });
   });
 
   it("retains unknown statuses as todo without dropping the item", async () => {
@@ -121,6 +170,10 @@ describe("TAPD work item provider", () => {
       accountDisplayName: "alice",
     });
 
-    expect(result.items[0]).toMatchObject({ providerStatus: "custom_unknown", stage: "todo" });
+    const storyScope = result.scopes.find((scope) => scope.providerItemType === "story");
+    expect(storyScope?.items[0]).toMatchObject({
+      providerStatus: "custom_unknown",
+      stage: "todo",
+    });
   });
 });

@@ -59,13 +59,15 @@ export class WorkItemService implements WorkItemSynchronizer {
             projectName: project.name,
             accountDisplayName: input.accountDisplayName,
           });
-          results.set(project.externalId, result.items);
-          if (result.failedKinds.length === 0) {
+          const successfulScopes = result.scopes.filter((scope) => scope.outcome === "success");
+          const failedScopes = result.scopes.length - successfulScopes.length;
+          results.set(project.externalId, successfulScopes.flatMap((scope) => scope.items));
+          if (failedScopes === 0) {
             successfulProjects += 1;
           } else {
             failedProjects += 1;
           }
-          if (result.failedKinds.length < 3) usableProjects += 1;
+          if (successfulScopes.length > 0) usableProjects += 1;
         } catch {
           failedProjects += 1;
           results.set(project.externalId, []);
