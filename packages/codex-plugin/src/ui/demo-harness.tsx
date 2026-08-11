@@ -5,6 +5,7 @@ import {
   defaultTaskboardPreferences,
   taskboardPreferencesSchema,
 } from "../contracts/taskboard-preferences.js";
+import type { ProviderLoginSnapshot } from "../contracts/providers.js";
 import type { TaskboardSnapshot } from "../contracts/taskboard.js";
 import { workItemDetailRefSchema } from "../contracts/work-item-detail.js";
 import {
@@ -21,7 +22,9 @@ type Scenario =
   | "error"
   | "mixed"
   | "offline"
-  | "offline-detail-error";
+  | "offline-detail-error"
+  | "manual-browser"
+  | "expired-login";
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";
@@ -133,7 +136,9 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
       ...feishuDemoTaskboardSnapshot.connection,
       provider: {
         ...feishuDemoTaskboardSnapshot.connection.provider,
-        state: scenario,
+        state: scenario === "manual-browser" || scenario === "expired-login"
+          ? "disconnected"
+          : scenario,
         ...(scenario !== "connected"
           ? { accountDisplayName: undefined, tenantDisplayName: undefined }
           : {}),
@@ -145,6 +150,8 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
 function DemoHarness() {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const preferencesRef = useRef({ ...defaultTaskboardPreferences });
+  const loginSessionRef = useRef<ProviderLoginSnapshot | undefined>(undefined);
+  const loginReadCountRef = useRef(0);
   const [refreshCallCount, setRefreshCallCount] = useState(0);
   const scenario = (new URLSearchParams(location.search).get("scenario") ?? "connected") as Scenario;
 
@@ -229,6 +236,44 @@ function DemoHarness() {
         if (toolName === "refresh_my_work_items") {
           setRefreshCallCount((count) => count + 1);
         }
+        if (toolName === "start_provider_login") {
+          loginReadCountRef.current = 0;
+          loginSessionRef.current = createLoginSession(
+            scenario === "manual-browser" ? "waiting" : "starting",
+            scenario === "manual-browser",
+          );
+        }
+        if (toolName === "get_provider_login" && loginSessionRef.current) {
+          loginReadCountRef.current += 1;
+          loginSessionRef.current = advanceLoginSession(
+            loginSessionRef.current,
+            scenario,
+            loginReadCountRef.current,
+          );
+        }
+        if (toolName === "reopen_provider_login" && loginSessionRef.current) {
+          loginSessionRef.current = {
+            ...loginSessionRef.current,
+            browserLaunch: "opened",
+            manualFallback: undefined,
+            error: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        if (toolName === "cancel_provider_login" && loginSessionRef.current) {
+          loginSessionRef.current = {
+            ...loginSessionRef.current,
+            state: "cancelled",
+            manualFallback: undefined,
+            error: {
+              code: "provider_login_cancelled",
+              retryable: true,
+              recoveryAction: "retry_login",
+              requestId: "demo-cancel",
+            },
+            updatedAt: new Date().toISOString(),
+          };
+        }
         const detailReference = workItemDetailRefSchema.safeParse(message.params?.arguments);
         if (toolName === "get_work_item_detail" && scenario === "offline-detail-error") {
           send({
@@ -240,17 +285,15 @@ function DemoHarness() {
         }
         const connectedSnapshot = scenarioSnapshot("connected");
         const structuredContent = toolName === "start_provider_login"
-          ? {
-              transactionId: "demo-transaction",
-              providerId: "feishu-project",
-              verificationUri: "https://open.feishu.cn/device",
-              userCode: "DEMO-CODE",
-              expiresAt: "2026-08-11T16:00:00.000Z",
-            }
+          ? { requestId: "demo-start", session: loginSessionRef.current }
+          : toolName === "get_provider_login"
+            ? { requestId: "demo-get", ...(loginSessionRef.current ? { session: loginSessionRef.current } : {}) }
+          : toolName === "reopen_provider_login"
+            ? { requestId: "demo-reopen", session: loginSessionRef.current }
           : toolName === "get_provider_connection"
             ? connectedSnapshot.connection.provider
           : toolName === "cancel_provider_login"
-            ? scenarioSnapshot("disconnected").connection.provider
+            ? { requestId: "demo-cancel", session: loginSessionRef.current }
           : toolName === "login_with_tapd_token"
           ? {
               ok: true,
@@ -266,6 +309,8 @@ function DemoHarness() {
               "expired",
               "offline",
               "offline-detail-error",
+              "manual-browser",
+              "expired-login",
             ].includes(scenario)
               ? "connected"
               : scenario)
@@ -317,6 +362,63 @@ function DemoHarness() {
       />
     </>
   );
+}
+
+function createLoginSession(
+  state: ProviderLoginSnapshot["state"],
+  manualBrowser: boolean,
+): ProviderLoginSnapshot {
+  const now = Date.now();
+  return {
+    sessionId: "demo-login-session",
+    providerId: "feishu-project",
+    state,
+    startedAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 5 * 60_000).toISOString(),
+    browserLaunch: manualBrowser ? "manual_required" : "opened",
+    ...(manualBrowser ? {
+      error: {
+        code: "provider_browser_launch_failed" as const,
+        retryable: true,
+        recoveryAction: "open_manually" as const,
+        requestId: "demo-start",
+      },
+      manualFallback: {
+        verificationUri: "https://open.feishu.cn/device?code=demo",
+        userCode: "DEMO-CODE",
+      },
+    } : {}),
+  };
+}
+
+function advanceLoginSession(
+  current: ProviderLoginSnapshot,
+  scenario: Scenario,
+  readCount: number,
+): ProviderLoginSnapshot {
+  if (!["starting", "waiting", "verifying"].includes(current.state)) return current;
+  if (scenario === "manual-browser") return current;
+  const state = scenario === "expired-login" && readCount >= 2
+    ? "expired"
+    : readCount === 1
+      ? "waiting"
+      : readCount === 2
+        ? "verifying"
+        : "succeeded";
+  return {
+    ...current,
+    state,
+    updatedAt: new Date().toISOString(),
+    ...(state === "expired" ? {
+      error: {
+        code: "provider_login_expired" as const,
+        retryable: true,
+        recoveryAction: "retry_login" as const,
+        requestId: "demo-get",
+      },
+    } : {}),
+  };
 }
 
 const root = document.getElementById("harness-root");

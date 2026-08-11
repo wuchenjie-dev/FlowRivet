@@ -47,16 +47,20 @@ test("compact viewport keeps controls separate and board scrollable", async ({ p
   expect(refresh && account && refresh.x + refresh.width <= account.x).toBe(true);
 });
 
-test("disconnected scenario starts Feishu device authorization without a token", async ({ page }) => {
+test("one click starts browser authorization and automatically opens the board", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=disconnected");
   const board = boardFrame(page);
 
   await expect(board.getByLabel(/Token/)).toHaveCount(0);
   await board.getByRole("button", { name: "连接飞书项目" }).click();
-  await expect(board.getByLabel("飞书授权验证码")).toHaveText("DEMO-CODE");
-  await expect(board.getByRole("link", { name: "打开飞书授权页面" }))
-    .toHaveAttribute("rel", "noreferrer");
-  await expect(board.locator(".task-column")).toHaveCount(0);
+  await expect(board.getByRole("heading", { name: "正在准备安全授权会话" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "关闭飞书授权" })).toHaveCount(0);
+  await expect(board.getByText("DEMO-CODE")).toHaveCount(0);
+  await expect(board.getByRole("link")).toHaveCount(0);
+  await expect(board.getByRole("button", { name: /检查.*结果/ })).toHaveCount(0);
+  await expect(board.getByRole("heading", { name: "请在浏览器中完成飞书授权" })).toBeVisible();
+  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible({ timeout: 8_000 });
+  await expect(board.locator(".task-column")).toHaveCount(4);
 });
 
 test("expired scenario requires login again and hides stale data", async ({ page }) => {
@@ -67,16 +71,49 @@ test("expired scenario requires login again and hides stale data", async ({ page
   await expect(board.locator(".work-card")).toHaveCount(0);
 });
 
-test("device authorization opens the Feishu board", async ({ page }) => {
+test("reloading the plugin reconnects to the same active authorization", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=disconnected");
   const board = boardFrame(page);
 
   await board.getByRole("button", { name: "连接飞书项目" }).click();
-  await board.getByRole("button", { name: "检查授权结果" }).click();
+  await expect(board.getByRole("heading", { name: "请在浏览器中完成飞书授权" })).toBeVisible();
+  await page.locator('iframe[title="FlowRivet MCP App"]').evaluate((frame) => {
+    (frame as HTMLIFrameElement).contentWindow?.location.reload();
+  });
 
-  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
+  await expect(board.getByRole("heading", { name: "正在确认账号" })).toBeVisible();
+  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible({ timeout: 5_000 });
   await expect(board.locator(".task-column")).toHaveCount(4);
   await expect(board.getByText("数据来自 飞书项目")).toBeVisible();
+});
+
+test("manual browser fallback is temporary and long waits remain cancellable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.clock.install();
+  await page.goto("/src/ui/demo-harness.html?scenario=manual-browser");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "连接飞书项目" }).click();
+  await expect(board.getByRole("link", { name: "打开临时授权页" }))
+    .toHaveAttribute("rel", "noreferrer");
+  await expect(board.getByRole("status", { name: "飞书备用授权码" })).toHaveText("DEMO-CODE");
+  await page.clock.fastForward(15_000);
+  await expect(board.getByRole("heading", { name: "仍在等待飞书确认" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "重新打开授权页" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "取消授权" })).toBeVisible();
+  expect(await board.locator("html").evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+});
+
+test("expired authorization stops waiting and offers one recovery action", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=expired-login");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "连接飞书项目" }).click();
+  await expect(board.getByRole("button", { name: "重新授权" })).toBeVisible({ timeout: 6_000 });
+  await expect(board.getByRole("alert")).toHaveText("本次飞书授权已过期。");
+  await expect(board.getByRole("button", { name: "取消授权" })).toHaveCount(0);
 });
 
 test("missing CLI gives an install command without horizontal overflow", async ({ page }) => {
@@ -244,8 +281,12 @@ test("offline snapshot stays browsable while Feishu reconnects", async ({ page }
   await expect(board.locator(".cache-badge")).toHaveCount(7);
   await reconnect.click();
   await expect(board.getByRole("dialog", { name: "重新连接飞书项目" })).toBeVisible();
-  await expect(board.getByLabel("飞书授权验证码")).toHaveText("DEMO-CODE");
+  await expect(board.getByText("DEMO-CODE")).toHaveCount(0);
   await expect(board.locator(".work-card")).toHaveCount(7);
+  await board.getByRole("button", { name: "关闭飞书授权" }).click();
+  await expect(board.getByRole("dialog", { name: "重新连接飞书项目" })).toHaveCount(0);
+  await expect(reconnect).toBeFocused();
+  await expect(board.getByText("飞书项目 授权中")).toBeVisible();
 });
 
 test("offline status and reconnect dialog do not overflow mobile", async ({ page }) => {
