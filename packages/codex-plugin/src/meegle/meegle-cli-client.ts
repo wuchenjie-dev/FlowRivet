@@ -41,16 +41,6 @@ export interface MeegleCommandRunner {
 
 export type MeegleMyWorkAction = "this_week" | "overdue" | "done";
 
-export type MeegleDeviceLoginEvent =
-  | {
-      type: "verification";
-      verificationUri: string;
-      verificationUriComplete: string;
-      userCode: string;
-      expiresAt: string;
-    }
-  | { type: "authorized" };
-
 export interface MeegleDeviceAttempt {
   profileName: string;
   verificationUri: string;
@@ -72,14 +62,12 @@ export class MeegleCliClient {
   private readonly runner: MeegleCommandRunner;
   private readonly explicitExecutablePath?: string;
   private readonly executableResolver: () => Promise<string>;
-  private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   private readonly clock: () => Date;
 
   constructor(options: {
     runner?: MeegleCommandRunner;
     executablePath?: string;
     executableResolver?: () => Promise<string>;
-    sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
     clock?: () => Date;
   } = {}) {
     this.runner = options.runner ?? new BoundedCommandRunner();
@@ -91,7 +79,6 @@ export class MeegleCliClient {
           ? { explicitPath: this.explicitExecutablePath }
           : {}),
       }));
-    this.sleep = options.sleep ?? abortableSleep;
     this.clock = options.clock ?? (() => new Date());
   }
 
@@ -156,56 +143,6 @@ export class MeegleCliClient {
       "--profile", validateProfile(profile),
       "--format", "json",
     ], meegleMyWorkPageSchema, { timeoutMs: 30_000 });
-  }
-
-  async startDeviceLogin(
-    host: string,
-    signal: AbortSignal,
-    onEvent: (event: MeegleDeviceLoginEvent) => void,
-  ): Promise<void> {
-    if (host !== "project.feishu.cn") throw new MeegleCliError("provider_invalid_response");
-    const init = await this.runJson([
-      "auth", "login", "--device-code",
-      "--host", host,
-      "--phase", "init",
-      "--format", "json",
-    ], meegleDeviceInitSchema, { timeoutMs: 15_000, signal });
-    const expiresAt = new Date(Date.now() + init.expires_in * 1_000).toISOString();
-    onEvent({
-      type: "verification",
-      verificationUri: init.verification_uri,
-      verificationUriComplete: init.verification_uri_complete,
-      userCode: init.user_code,
-      expiresAt,
-    });
-
-    const attempts = Math.ceil(init.expires_in / init.interval);
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (signal.aborted) throw new MeegleCliError("provider_cancelled");
-      const poll = await this.runJson([
-        "auth", "login", "--device-code",
-        "--host", host,
-        "--phase", "poll", "--once",
-        "--client-id", init.client_id,
-        "--device-code-value", init.device_code,
-        "--expires-in", String(init.expires_in),
-        "--interval", String(init.interval),
-        "--format", "json",
-      ], meegleDevicePollSchema, {
-        timeoutMs: 15_000,
-        signal,
-        allowExitCodes: [0, 1],
-      });
-      if ("status" in poll) {
-        onEvent({ type: "authorized" });
-        return;
-      }
-      if (poll.error === "expired_token") {
-        throw new MeegleCliError("provider_unauthorized");
-      }
-      await this.sleep(init.interval * 1_000, signal);
-    }
-    throw new MeegleCliError("provider_unauthorized");
   }
 
   async initializeDeviceLogin(
@@ -334,14 +271,4 @@ function compareVersions(left: string, right: string) {
     if (difference !== 0) return difference;
   }
   return 0;
-}
-
-function abortableSleep(milliseconds: number, signal: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      reject(new MeegleCliError("provider_cancelled"));
-    }, { once: true });
-  });
 }

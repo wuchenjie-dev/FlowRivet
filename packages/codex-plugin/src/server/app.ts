@@ -13,7 +13,8 @@ import {
   activeProviderSchema,
   providerConnectionSchema,
   providerDescriptorSchema,
-  providerLoginTransactionSchema,
+  providerLoginLookupResultSchema,
+  providerLoginToolResultSchema,
 } from "../contracts/providers.js";
 import type { RuntimeServices } from "./runtime-services.js";
 
@@ -638,28 +639,67 @@ export function createTaskboardMcpServer(
       title: "连接项目管理系统",
       description: "启动当前项目管理系统的用户授权流程。",
       inputSchema: {},
-      outputSchema: providerLoginTransactionSchema.shape,
+      outputSchema: providerLoginToolResultSchema.shape,
       annotations: { readOnlyHint: false, openWorldHint: true },
       _meta: {},
     }, async () => {
       const active = await activeProvider();
-      const auth = runtimeServices.registry.get(active.activeProviderId).auth;
-      if (!auth.startLogin) throw new Error("provider_capability_unsupported");
-      const result = await auth.startLogin();
+      const requestId = randomUUID();
+      const session = await runtimeServices.loginCoordinator.start(
+        active.activeProviderId,
+        requestId,
+      );
+      const result = providerLoginToolResultSchema.parse({ requestId, session });
       return { structuredContent: result, content: [{ type: "text" as const, text: "授权流程已启动。" }] };
+    });
+    registerAppTool(server, "get_provider_login", {
+      title: "读取项目管理系统授权",
+      description: "读取当前项目管理系统的活动或最近授权会话。",
+      inputSchema: {},
+      outputSchema: providerLoginLookupResultSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: {},
+    }, async () => {
+      const active = await activeProvider();
+      const requestId = randomUUID();
+      const session = runtimeServices.loginCoordinator.get(active.activeProviderId);
+      const result = providerLoginLookupResultSchema.parse({ requestId, ...(session ? { session } : {}) });
+      return { structuredContent: result, content: [{ type: "text" as const, text: "授权状态已读取。" }] };
+    });
+    registerAppTool(server, "reopen_provider_login", {
+      title: "重新打开项目管理系统授权",
+      description: "重新打开当前活动授权会话的系统浏览器页面。",
+      inputSchema: { sessionId: z.string().min(1) },
+      outputSchema: providerLoginToolResultSchema.shape,
+      annotations: { readOnlyHint: false, openWorldHint: true },
+      _meta: {},
+    }, async ({ sessionId }) => {
+      const active = await activeProvider();
+      const requestId = randomUUID();
+      const session = await runtimeServices.loginCoordinator.reopen(
+        active.activeProviderId,
+        sessionId,
+        requestId,
+      );
+      const result = providerLoginToolResultSchema.parse({ requestId, session });
+      return { structuredContent: result, content: [{ type: "text" as const, text: "授权页面已重新打开。" }] };
     });
     registerAppTool(server, "cancel_provider_login", {
       title: "取消项目管理系统授权",
       description: "取消当前内存中的用户授权流程。",
-      inputSchema: { transactionId: z.string().min(1) },
-      outputSchema: providerConnectionSchema.shape,
+      inputSchema: { sessionId: z.string().min(1) },
+      outputSchema: providerLoginToolResultSchema.shape,
       annotations: { readOnlyHint: false, openWorldHint: false },
       _meta: {},
-    }, async ({ transactionId }) => {
+    }, async ({ sessionId }) => {
       const active = await activeProvider();
-      const auth = runtimeServices.registry.get(active.activeProviderId).auth;
-      if (!auth.cancelLogin) throw new Error("provider_capability_unsupported");
-      const result = await auth.cancelLogin(transactionId);
+      const requestId = randomUUID();
+      const session = await runtimeServices.loginCoordinator.cancel(
+        active.activeProviderId,
+        sessionId,
+        requestId,
+      );
+      const result = providerLoginToolResultSchema.parse({ requestId, session });
       return { structuredContent: result, content: [{ type: "text" as const, text: "授权流程已取消。" }] };
     });
     registerAppTool(server, "disconnect_provider", {

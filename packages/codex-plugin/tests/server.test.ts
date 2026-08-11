@@ -33,6 +33,8 @@ import { ProviderRegistry } from "../src/providers/provider-registry.js";
 import type { ActiveProviderStore } from "../src/providers/active-provider-store.js";
 import type { ProviderConnection } from "../src/contracts/providers.js";
 import type { RuntimeServices } from "../src/server/runtime-services.js";
+import { ProviderLoginCoordinator } from "../src/providers/provider-login-coordinator.js";
+import type { ProviderLoginDriver } from "../src/providers/provider-login-driver.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -238,15 +240,26 @@ describe("taskboard MCP app", () => {
         accountKey: "user_example",
         accountDisplayName: "Example User",
       })),
-      startLogin: vi.fn(async () => ({
-        transactionId: "transaction-example",
-        providerId: "feishu-project",
+      disconnect: vi.fn(async () => ({ ...providerConnection, state: "disconnected" as const })),
+    };
+    const login: ProviderLoginDriver = {
+      allowedBrowserHosts: ["open.feishu.cn"],
+      captureProfile: vi.fn(async () => "default"),
+      initialize: vi.fn(async () => ({
+        attempt: { internal: true },
         verificationUri: "https://open.feishu.cn/device",
+        verificationUriComplete: "https://open.feishu.cn/device?code=example",
         userCode: "USER-CODE",
         expiresAt: "2026-08-11T00:05:00.000Z",
+        intervalMs: 5_000,
       })),
-      cancelLogin: vi.fn(async () => ({ ...providerConnection, state: "disconnected" as const })),
-      disconnect: vi.fn(async () => ({ ...providerConnection, state: "disconnected" as const })),
+      poll: vi.fn(async () => ({ state: "pending" })),
+      verifyIdentity: vi.fn(async () => ({
+        profileName: "default",
+        accountKey: "user_example",
+        accountDisplayName: "Example User",
+      })),
+      dispose: vi.fn(async () => undefined),
     };
     const workItems = {
       id: "feishu-project",
@@ -258,8 +271,17 @@ describe("taskboard MCP app", () => {
       displayName: "飞书项目",
       loginMode: "device_code",
       auth,
+      login,
       workItems,
     }]);
+    const loginCoordinator = new ProviderLoginCoordinator({
+      resolveDriver: (providerId) => registry.get(providerId).login,
+      browserLauncher: { open: vi.fn(async () => "opened") },
+      logger: { log: vi.fn() },
+      clock: () => new Date("2026-08-11T00:00:00.000Z"),
+      sessionId: () => "session-example",
+      correlationId: () => "correlation-example",
+    });
     const activeProviderStore: ActiveProviderStore = {
       load: vi.fn(async () => ({ version: 1, activeProviderId: "feishu-project" })),
       save: vi.fn(async () => undefined),
@@ -276,6 +298,7 @@ describe("taskboard MCP app", () => {
     vi.mocked(synced.service.loadCached).mockResolvedValue(synced.result);
     const runtimeServices = {
       registry,
+      loginCoordinator,
       activeProviderStore,
       workItemServices: new Map([["feishu-project", synced.service]]),
     } as RuntimeServices;
@@ -297,6 +320,8 @@ describe("taskboard MCP app", () => {
         "set_active_provider",
         "get_provider_connection",
         "start_provider_login",
+        "get_provider_login",
+        "reopen_provider_login",
         "cancel_provider_login",
         "disconnect_provider",
       ]));
@@ -355,13 +380,33 @@ describe("taskboard MCP app", () => {
       });
       await expect(client.callTool({ name: "get_provider_connection", arguments: {} }))
         .resolves.toMatchObject({ structuredContent: { state: "connected" } });
-      await expect(client.callTool({ name: "start_provider_login", arguments: {} }))
-        .resolves.toMatchObject({ structuredContent: { transactionId: "transaction-example" } });
-      await client.callTool({
-        name: "cancel_provider_login",
-        arguments: { transactionId: "transaction-example" },
+      const started = await client.callTool({ name: "start_provider_login", arguments: {} });
+      expect(started.structuredContent).toMatchObject({
+        requestId: expect.any(String),
+        session: { sessionId: "session-example", state: "waiting" },
       });
-      expect(auth.cancelLogin).toHaveBeenCalledWith("transaction-example");
+      await expect(client.callTool({ name: "get_provider_login", arguments: {} }))
+        .resolves.toMatchObject({
+          structuredContent: {
+            requestId: expect.any(String),
+            session: { sessionId: "session-example" },
+          },
+        });
+      await expect(client.callTool({
+        name: "reopen_provider_login",
+        arguments: { sessionId: "session-example" },
+      })).resolves.toMatchObject({
+        structuredContent: { requestId: expect.any(String) },
+      });
+      await expect(client.callTool({
+        name: "cancel_provider_login",
+        arguments: { sessionId: "session-example" },
+      })).resolves.toMatchObject({
+        structuredContent: {
+          requestId: expect.any(String),
+          session: { state: "cancelled" },
+        },
+      });
       await client.callTool({ name: "disconnect_provider", arguments: {} });
       expect(auth.disconnect).toHaveBeenCalledOnce();
       expect(synced.service.clearCached).toHaveBeenCalledWith("feishu-project");

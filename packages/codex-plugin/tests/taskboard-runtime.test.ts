@@ -32,6 +32,23 @@ describe("taskboard Companion runtime", () => {
     expect(captured).toHaveLength(2);
   });
 
+  it("shares the default provider login coordinator across request servers", () => {
+    const captured: TaskboardMcpServerOptions[] = [];
+    const runtime = createTaskboardRuntime({}, {
+      createMcpServer: (options) => {
+        captured.push(options);
+        return options;
+      },
+    });
+
+    const first = runtime.createServer().runtimeServices?.loginCoordinator;
+    const second = runtime.createServer().runtimeServices?.loginCoordinator;
+
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+    expect(captured).toHaveLength(2);
+  });
+
   it("creates the default synchronizer once and shares it across request servers", () => {
     const shared = synchronizer();
     const createWorkItemSynchronizer = vi.fn(() => shared);

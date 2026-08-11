@@ -17,13 +17,11 @@ class FakeRunner implements MeegleCommandRunner {
 
 function client(
   runner: FakeRunner,
-  sleep = async () => undefined,
   clock = () => new Date("2026-08-11T00:00:00.000Z"),
 ) {
   return new MeegleCliClient({
     runner,
     executableResolver: async () => "C:\\tools\\meegle.exe",
-    sleep,
     clock,
   });
 }
@@ -147,49 +145,6 @@ describe("Meegle CLI client", () => {
       .resolves.toMatchObject({ total: 1 });
   });
 
-  it("runs the structured device login phases and emits only validated events", async () => {
-    const runner = new FakeRunner();
-    runner.run
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify({
-          client_id: "client-example",
-          device_code: "device-example",
-          expires_in: 600,
-          interval: 5,
-          user_code: "USER-CODE",
-          verification_uri: "https://open.feishu.cn/device",
-          verification_uri_complete: "https://open.feishu.cn/device?code=example",
-        }),
-        exitCode: 0,
-      })
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify({ error: "authorization_pending" }),
-        exitCode: 1,
-      })
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify({ status: "ok", message: "authorized" }),
-        exitCode: 0,
-      });
-    const events: unknown[] = [];
-    const sleep = vi.fn(async () => undefined);
-
-    await expect(client(runner, sleep).startDeviceLogin(
-      "project.feishu.cn",
-      new AbortController().signal,
-      (event) => events.push(event),
-    )).resolves.toBeUndefined();
-    expect(events).toEqual([
-      expect.objectContaining({
-        type: "verification",
-        userCode: "USER-CODE",
-        verificationUri: "https://open.feishu.cn/device",
-      }),
-      { type: "authorized" },
-    ]);
-    expect(sleep).toHaveBeenCalledWith(5_000, expect.any(AbortSignal));
-    expect(runner.run.mock.calls[1]![0].args).toContain("device-example");
-  });
-
   it("initializes a device login for an explicit profile", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValueOnce({
@@ -279,10 +234,10 @@ describe("Meegle CLI client", () => {
       exitCode: 0,
     });
 
-    await expect(client(runner).startDeviceLogin(
+    await expect(client(runner).initializeDeviceLogin(
+      "default",
       "project.feishu.cn",
       new AbortController().signal,
-      () => undefined,
     )).rejects.toMatchObject({ code: "provider_invalid_response" });
     expect(runner.run).toHaveBeenCalledOnce();
   });
