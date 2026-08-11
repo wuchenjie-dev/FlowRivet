@@ -116,7 +116,7 @@ describe("CompanionProcessManager", () => {
       processInfo({ arguments: ["dist/server/index.js"] }),
       processInfo({
         arguments: ["dist/server/index.js"],
-        startedAt: "2026-08-11T00:02:00.000Z",
+        startedAt: "2026-08-11T00:00:01.000Z",
       }),
     ];
 
@@ -137,6 +137,16 @@ describe("CompanionProcessManager", () => {
     expect(fixture.adapter.started).toHaveLength(1);
     expect(fixture.adapter.started[0]?.environment.FLOWRIVET_COMPANION_INSTANCE_FILE)
       .toBe(fixture.paths.instancePath);
+  });
+
+  it("normalizes detached process launch failures", async () => {
+    const fixture = await managerFixture({ managed: false });
+    fixture.adapter.onStart = async () => {
+      throw new Error("spawn node ENOENT");
+    };
+
+    await expect(fixture.manager.start())
+      .rejects.toMatchObject({ code: "companion_start_failed" });
   });
 });
 
@@ -180,6 +190,21 @@ describe("createSystemProcessAdapter", () => {
       arguments: ["dist/server/index.js"],
       startedAt: "2026-08-11T00:00:00.000Z",
     });
+  });
+
+  it("falls back to ss when lsof is unavailable on Linux", async () => {
+    const adapter = createSystemProcessAdapter({
+      platform: "linux",
+      runCommand: async (command) => command === "lsof"
+        ? { exitCode: 127, stdout: "", stderr: "missing" }
+        : {
+          exitCode: 0,
+          stdout: 'LISTEN 0 511 127.0.0.1:43120 0.0.0.0:* users:(("node",pid=4321,fd=18))\n',
+          stderr: "",
+        },
+    });
+
+    await expect(adapter.findListener("127.0.0.1", 43120)).resolves.toBe(4321);
   });
 });
 

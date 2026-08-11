@@ -57,7 +57,7 @@ npm run plugin:update
   "ok": true,
   "plugin": "flowrivet",
   "marketplace": "flowrivet-worktree",
-  "installedVersion": "0.1.0+codex.<cachebuster>",
+  "version": "0.1.0+codex.<cachebuster>",
   "companion": {
     "host": "127.0.0.1",
     "port": 43120,
@@ -98,7 +98,7 @@ npm run plugin:update ──┘       |
 
 ```text
 preflight
-  -> pulling? 
+  -> pulling?
   -> building
   -> installing
   -> stopping_companion
@@ -230,8 +230,8 @@ Companion 启动时写入本地实例文件：
 | `plugin_marketplace_ambiguous` | 多个已安装 marketplace 同时指向当前源码 |
 | `git_worktree_dirty` | `--pull` 遇到未提交修改 |
 | `git_upstream_missing` | 当前分支无上游 |
-| `git_fast_forward_failed` | fast-forward 拉取失败 |
-| `plugin_build_failed` | 构建失败 |
+| `git_pull_failed` | Git 检查、启动或 fast-forward 拉取失败 |
+| `build_failed` | 构建命令无法启动或构建失败 |
 | `plugin_cachebuster_failed` | 临时版本刷新失败 |
 | `plugin_install_failed` | Codex 插件安装失败 |
 | `plugin_manifest_restore_failed` | 无法恢复 manifest 原文 |

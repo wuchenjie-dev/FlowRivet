@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   createPluginUpdateService,
+  assertLoopbackCompanionHost,
+  runNpmBuild,
   resolveNpmInvocation,
   type PluginUpdateContext,
   type PluginUpdateOrchestratorDependencies,
@@ -106,6 +108,29 @@ describe("resolveNpmInvocation", () => {
       expect(result.stdout.trim()).toMatch(/^\d+\./u);
     },
   );
+});
+
+describe("assertLoopbackCompanionHost", () => {
+  it("rejects remote Companion bindings before the update starts", () => {
+    expect(() => assertLoopbackCompanionHost("0.0.0.0")).toThrowError(
+      expect.objectContaining({ code: "companion_start_failed" }),
+    );
+    expect(() => assertLoopbackCompanionHost("127.0.0.1")).not.toThrow();
+  });
+});
+
+describe("runNpmBuild", () => {
+  it("normalizes npm process launch failures", async () => {
+    await expect(runNpmBuild(
+      "C:\\source\\FlowRivet",
+      {},
+      ["run", "build"],
+      async () => {
+        throw new Error("spawn npm ENOENT");
+      },
+      async () => ({ command: process.execPath, prefixArgs: ["npm-cli.js"] }),
+    )).rejects.toMatchObject({ code: "build_failed" });
+  });
 });
 
 function dependencies(events: string[]): PluginUpdateOrchestratorDependencies {

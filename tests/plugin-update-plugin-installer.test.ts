@@ -40,6 +40,13 @@ describe("installLocalPlugin", () => {
           await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
           return { exitCode: 0, stdout: "updated", stderr: "" };
         }
+        if (args.includes("list")) {
+          return {
+            exitCode: 0,
+            stdout: codexPluginList("0.1.0+codex.transaction-test"),
+            stderr: "",
+          };
+        }
         return { exitCode: 0, stdout: "installed", stderr: "" };
       },
     });
@@ -77,6 +84,56 @@ describe("installLocalPlugin", () => {
     expect(await readFile(fixture.manifestPath)).toEqual(fixture.originalManifest);
   });
 
+  it("refuses success when Codex still reports the previous plugin version", async () => {
+    const fixture = await createFixture();
+
+    await expect(installLocalPlugin({
+      ...fixture,
+      cachebuster: "expected",
+      runCommand: async (_command, args) => {
+        if (args.includes("--version")) {
+          return { exitCode: 0, stdout: "Python 3", stderr: "" };
+        }
+        if (args.includes("--cachebuster")) {
+          const path = join(args[1]!, ".codex-plugin", "plugin.json");
+          await writeFile(path, '{"name":"flowrivet","version":"0.1.0+codex.expected"}\n');
+          return { exitCode: 0, stdout: "updated", stderr: "" };
+        }
+        if (args.includes("list")) {
+          return {
+            exitCode: 0,
+            stdout: codexPluginList("0.1.0+codex.previous"),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "installed", stderr: "" };
+      },
+    })).rejects.toMatchObject({ code: "plugin_install_failed" });
+
+    expect(await readFile(fixture.manifestPath)).toEqual(fixture.originalManifest);
+  });
+
+  it("normalizes Codex process launch failures and restores the manifest", async () => {
+    const fixture = await createFixture();
+
+    await expect(installLocalPlugin({
+      ...fixture,
+      cachebuster: "spawn-failure",
+      runCommand: async (_command, args) => {
+        if (args.includes("--version")) {
+          return { exitCode: 0, stdout: "Python 3", stderr: "" };
+        }
+        if (args.includes("--cachebuster")) {
+          const path = join(args[1]!, ".codex-plugin", "plugin.json");
+          await writeFile(path, '{"name":"flowrivet","version":"0.1.0+codex.spawn-failure"}\n');
+          return { exitCode: 0, stdout: "updated", stderr: "" };
+        }
+        throw new Error("spawn codex ENOENT");
+      },
+    })).rejects.toMatchObject({ code: "plugin_install_failed" });
+    expect(await readFile(fixture.manifestPath)).toEqual(fixture.originalManifest);
+  });
+
   it("recovers an interrupted prior transaction before reading the original", async () => {
     const fixture = await createFixture();
     const staleTemporary = Buffer.from(
@@ -110,6 +167,13 @@ describe("installLocalPlugin", () => {
         if (args.includes("--cachebuster")) {
           const path = join(args[1]!, ".codex-plugin", "plugin.json");
           await writeFile(path, '{"name":"flowrivet","version":"0.1.0+codex.recovered"}\n');
+        }
+        if (args.includes("list")) {
+          return {
+            exitCode: 0,
+            stdout: codexPluginList("0.1.0+codex.recovered"),
+            stderr: "",
+          };
         }
         return { exitCode: 0, stdout: "ok", stderr: "" };
       },
@@ -152,4 +216,15 @@ async function createTemporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "flowrivet-installer-"));
   temporaryDirectories.push(path);
   return path;
+}
+
+function codexPluginList(version: string): string {
+  return JSON.stringify({
+    installed: [{
+      pluginId: "flowrivet@flowrivet-worktree",
+      version,
+      installed: true,
+      enabled: true,
+    }],
+  });
 }

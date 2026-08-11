@@ -8,6 +8,7 @@ import {
   getManifestTransactionPaths,
   hashManifest,
   runManifestTransaction,
+  writeFileAtomically,
 } from "../src/plugin-update/manifest-transaction.js";
 
 const temporaryDirectories: string[] = [];
@@ -42,6 +43,22 @@ describe("runManifestTransaction", () => {
     await expect(runManifestTransaction(fixture, async () => {
       throw new Error("install failed");
     })).rejects.toThrow("install failed");
+
+    expect(await readFile(fixture.manifestPath)).toEqual(fixture.originalManifest);
+  });
+
+  it("restores the original when journal state persistence fails after apply", async () => {
+    const fixture = await createFixture();
+    let writes = 0;
+
+    await expect(runManifestTransaction({
+      ...fixture,
+      writeAtomic: async (path, contents) => {
+        writes += 1;
+        if (writes === 4) throw new Error("journal persistence failed");
+        await writeFileAtomically(path, contents);
+      },
+    }, async () => undefined)).rejects.toThrow("journal persistence failed");
 
     expect(await readFile(fixture.manifestPath)).toEqual(fixture.originalManifest);
   });
@@ -111,6 +128,27 @@ describe("runManifestTransaction", () => {
       .rejects.toMatchObject({ code: "plugin_manifest_recovery_conflict" });
     expect(await readFile(fixture.manifestPath)).toEqual(conflicting);
     expect(await readFile(paths.journalPath, "utf8")).toContain("temporaryHash");
+  });
+
+  it("reports a stable recovery conflict when the journal backup is missing", async () => {
+    const fixture = await createFixture();
+    const paths = getManifestTransactionPaths(fixture.sourceRoot, fixture.transactionDirectory);
+    await mkdir(paths.directory, { recursive: true });
+    await writeFile(fixture.manifestPath, fixture.temporaryManifest);
+    await writeFile(paths.journalPath, JSON.stringify({
+      version: 1,
+      sourcePath: fixture.sourceRoot,
+      manifestPath: fixture.manifestPath,
+      backupPath: paths.backupPath,
+      originalHash: hashManifest(fixture.originalManifest),
+      temporaryHash: hashManifest(fixture.temporaryManifest),
+      createdAt: "2026-08-11T00:00:00.000Z",
+      state: "applied",
+    }));
+
+    await expect(runManifestTransaction(fixture, async () => undefined))
+      .rejects.toMatchObject({ code: "plugin_manifest_recovery_conflict" });
+    expect(await readFile(fixture.manifestPath)).toEqual(fixture.temporaryManifest);
   });
 
   it("rejects a concurrent transaction owned by a live process", async () => {

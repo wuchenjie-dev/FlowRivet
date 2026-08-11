@@ -140,11 +140,11 @@
 - Modify as findings require: updater and Companion files from Tasks 1-7
 - Modify: `docs/superpowers/specs/2026-08-11-flowrivet-plugin-update-design.md` only if implementation proves a factual constraint wrong
 
-- [ ] Run the full suite: `npm test`.
-- [ ] Run `npm run typecheck` and `npm run build`.
-- [ ] Inspect `git status --short` and verify no generated manifest, journal, backup, log, or `dist` files are tracked.
-- [ ] Review the complete diff for correctness, maintainability, project standards, and test gaps; fix every blocking finding with a focused regression test.
-- [ ] Commit review fixes separately if any: `fix(plugin): address update workflow review`
+- [x] Run the full suite: `npm test`.
+- [x] Run `npm run typecheck` and `npm run build`.
+- [x] Inspect `git status --short` and verify no generated manifest, journal, backup, log, or `dist` files are tracked.
+- [x] Review the complete diff for correctness, maintainability, project standards, and test gaps; fix every blocking finding with a focused regression test.
+- [x] Commit review fixes separately if any: `fix(plugin): address update workflow review`
 - [ ] Execute `npm run plugin:update -- --adopt-legacy-companion --json` against the currently installed `flowrivet@flowrivet-worktree` plugin.
 - [ ] Verify the command reports success, the manifest hash matches its pre-update hash, the marketplace entry remains uniquely enabled, `/health` returns the new identity, and the instance file matches it.
 - [ ] Restart Codex manually, open a new task, and confirm the FlowRivet plugin UI loads the latest version without reinstalling or rebuilding by hand.

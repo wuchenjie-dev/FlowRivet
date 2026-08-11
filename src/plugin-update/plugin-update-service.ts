@@ -19,7 +19,11 @@ import {
   type PluginUpdateResult,
   type PluginUpdateService,
 } from "./contracts.js";
-import { runCommand } from "./command-runner.js";
+import {
+  runCommand,
+  type CommandResult,
+  type RunCommandOptions,
+} from "./command-runner.js";
 import { updateGitSource } from "./git-updater.js";
 import { recoverManifestTransaction } from "./manifest-transaction.js";
 import { selectInstalledLocalPlugin } from "./marketplace-locator.js";
@@ -124,6 +128,8 @@ export function createDefaultPluginUpdateService(options: {
           "FLOWRIVET_MCP_PORT 必须是 1 到 65535 之间的整数",
         );
       }
+      const host = environment.FLOWRIVET_MCP_HOST ?? "127.0.0.1";
+      assertLoopbackCompanionHost(host);
       return {
         sourceRoot: source.root,
         manifestPath: source.manifestPath,
@@ -133,7 +139,7 @@ export function createDefaultPluginUpdateService(options: {
         marketplace: plugin.marketplace,
         transactionDirectory: dirname(companionPaths.instancePath),
         companionPaths,
-        host: environment.FLOWRIVET_MCP_HOST ?? "127.0.0.1",
+        host,
         port,
       };
     },
@@ -159,7 +165,7 @@ export function createDefaultPluginUpdateService(options: {
             : []),
         ],
         buildUpdater: async () => {
-          await runBuild(context.sourceRoot, environment, ["run", "build:legacy"]);
+          await runNpmBuild(context.sourceRoot, environment, ["run", "build:legacy"]);
         },
         reexecute: async (reexecutedEnvironment, args) => {
           const result = await runCommand(process.execPath, [
@@ -175,7 +181,7 @@ export function createDefaultPluginUpdateService(options: {
       });
     },
     async build(context, environment) {
-      await runBuild(context.sourceRoot, environment, ["run", "build"]);
+      await runNpmBuild(context.sourceRoot, environment, ["run", "build"]);
     },
     async install(context) {
       return installLocalPlugin({
@@ -200,6 +206,16 @@ export function createDefaultPluginUpdateService(options: {
   });
 }
 
+export function assertLoopbackCompanionHost(host: string): void {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/gu, "");
+  if (normalized !== "127.0.0.1" && normalized !== "localhost" && normalized !== "::1") {
+    throw new PluginUpdateError(
+      "companion_start_failed",
+      "FLOWRIVET_MCP_HOST 必须是本机回环地址",
+    );
+  }
+}
+
 function createManager(
   context: PluginUpdateContext,
   environment: Record<string, string | undefined>,
@@ -216,21 +232,37 @@ function createManager(
   });
 }
 
-async function runBuild(
+export async function runNpmBuild(
   sourceRoot: string,
   environment: Record<string, string | undefined>,
   args: string[],
+  runner: (
+    command: string,
+    args: string[],
+    options?: RunCommandOptions,
+  ) => Promise<CommandResult> = runCommand,
+  resolveInvocation: typeof resolveNpmInvocation = resolveNpmInvocation,
 ): Promise<void> {
-  const npm = await resolveNpmInvocation({
-    environment,
-    platform: process.platform,
-    nodeExecutable: process.execPath,
-  });
-  const result = await runCommand(npm.command, [...npm.prefixArgs, ...args], {
-    cwd: sourceRoot,
-    env: environment as NodeJS.ProcessEnv,
-    timeoutMs: 10 * 60_000,
-  });
+  let result: CommandResult;
+  try {
+    const npm = await resolveInvocation({
+      environment,
+      platform: process.platform,
+      nodeExecutable: process.execPath,
+    });
+    result = await runner(npm.command, [...npm.prefixArgs, ...args], {
+      cwd: sourceRoot,
+      env: environment as NodeJS.ProcessEnv,
+      timeoutMs: 10 * 60_000,
+    });
+  } catch (error) {
+    if (error instanceof PluginUpdateError) throw error;
+    throw new PluginUpdateError(
+      "build_failed",
+      "无法启动 FlowRivet 构建命令",
+      { cause: error },
+    );
+  }
   if (result.exitCode !== 0) {
     throw new PluginUpdateError(
       "build_failed",

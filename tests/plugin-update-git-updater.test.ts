@@ -85,6 +85,17 @@ describe("updateGitSource", () => {
     await expect(updateGitSource({ ...options, pull: true }))
       .rejects.toMatchObject({ code: "git_pull_failed" });
   });
+
+  it("normalizes Git process launch failures", async () => {
+    const calls: string[] = [];
+    const options = baseOptions(calls);
+    options.runCommand = async () => {
+      throw new Error("spawn git ENOENT");
+    };
+
+    await expect(updateGitSource({ ...options, pull: true }))
+      .rejects.toMatchObject({ code: "git_pull_failed" });
+  });
 });
 
 function baseOptions(calls: string[]) {

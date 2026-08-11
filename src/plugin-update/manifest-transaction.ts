@@ -19,6 +19,7 @@ export interface ManifestTransactionOptions {
   originalManifest: Buffer;
   temporaryManifest: Buffer;
   isProcessAlive?: (pid: number) => boolean;
+  writeAtomic?: (path: string, contents: Buffer) => Promise<void>;
 }
 
 export interface ManifestTransactionPaths {
@@ -54,10 +55,10 @@ export async function runManifestTransaction<T>(
   );
   await mkdir(paths.directory, { recursive: true, mode: 0o700 });
   const lock = await acquireLock(paths.lockPath, options.isProcessAlive ?? isProcessAlive);
-  let operationError: unknown;
+  const writeAtomic = options.writeAtomic ?? writeFileAtomically;
 
   try {
-    await recoverInterruptedTransaction(paths, options.manifestPath);
+    await recoverInterruptedTransaction(paths, options.manifestPath, options.sourceRoot);
     const current = await readFile(options.manifestPath);
     if (hashManifest(current) !== hashManifest(options.originalManifest)) {
       throw recoveryConflict("manifest 在事务开始前发生变化");
@@ -73,29 +74,39 @@ export async function runManifestTransaction<T>(
       createdAt: new Date().toISOString(),
       state: "prepared",
     };
-    await atomicWrite(paths.backupPath, options.originalManifest);
-    await atomicWrite(paths.journalPath, Buffer.from(`${JSON.stringify(journal)}\n`));
-    await atomicWrite(options.manifestPath, options.temporaryManifest);
-    await atomicWrite(paths.journalPath, Buffer.from(`${JSON.stringify({
-      ...journal,
-      state: "applied",
-    })}\n`));
-
     try {
-      return await operation();
-    } catch (error) {
-      operationError = error;
-      throw error;
-    } finally {
+      await writeAtomic(paths.backupPath, options.originalManifest);
       try {
-        await restoreOriginal(paths, options.manifestPath, options.originalManifest);
-      } catch (restoreError) {
-        throw new PluginUpdateError(
-          "plugin_manifest_restore_failed",
-          "插件安装后无法恢复原始 manifest",
-          { cause: restoreError ?? operationError },
-        );
+        await writeAtomic(paths.journalPath, Buffer.from(`${JSON.stringify(journal)}\n`));
+      } catch (error) {
+        await rm(paths.backupPath, { force: true });
+        throw error;
       }
+      try {
+        await writeAtomic(options.manifestPath, options.temporaryManifest);
+        await writeAtomic(paths.journalPath, Buffer.from(`${JSON.stringify({
+          ...journal,
+          state: "applied",
+        })}\n`));
+        return await operation();
+      } finally {
+        try {
+          await restoreOriginal(
+            paths,
+            options.manifestPath,
+            options.originalManifest,
+            writeAtomic,
+          );
+        } catch (restoreError) {
+          throw new PluginUpdateError(
+            "plugin_manifest_restore_failed",
+            "插件安装后无法恢复原始 manifest",
+            { cause: restoreError },
+          );
+        }
+      }
+    } catch (error) {
+      throw error;
     }
   } finally {
     await releaseLock(lock, paths.lockPath);
@@ -112,7 +123,7 @@ export async function recoverManifestTransaction(
   await mkdir(paths.directory, { recursive: true, mode: 0o700 });
   const lock = await acquireLock(paths.lockPath, options.isProcessAlive ?? isProcessAlive);
   try {
-    await recoverInterruptedTransaction(paths, options.manifestPath);
+    await recoverInterruptedTransaction(paths, options.manifestPath, options.sourceRoot);
   } finally {
     await releaseLock(lock, paths.lockPath);
   }
@@ -139,6 +150,7 @@ export function hashManifest(contents: Uint8Array): string {
 async function recoverInterruptedTransaction(
   paths: ManifestTransactionPaths,
   manifestPath: string,
+  sourceRoot: string,
 ): Promise<void> {
   let journal: ManifestJournal;
   try {
@@ -147,7 +159,7 @@ async function recoverInterruptedTransaction(
     if (isNodeError(error, "ENOENT")) return;
     throw recoveryConflict("无法读取遗留的 manifest 事务日志", error);
   }
-  if (!isValidJournal(journal, manifestPath, paths.backupPath)) {
+  if (!isValidJournal(journal, sourceRoot, manifestPath, paths.backupPath)) {
     throw recoveryConflict("遗留的 manifest 事务日志格式无效");
   }
 
@@ -160,11 +172,16 @@ async function recoverInterruptedTransaction(
     throw recoveryConflict("manifest 与遗留事务的原始和临时哈希均不匹配");
   }
 
-  const backup = await readFile(paths.backupPath);
+  let backup: Buffer;
+  try {
+    backup = await readFile(paths.backupPath);
+  } catch (error) {
+    throw recoveryConflict("遗留事务的 manifest 备份不存在或不可读", error);
+  }
   if (hashManifest(backup) !== journal.originalHash) {
     throw recoveryConflict("遗留事务备份的哈希不匹配");
   }
-  await atomicWrite(manifestPath, backup);
+  await writeFileAtomically(manifestPath, backup);
   if (hashManifest(await readFile(manifestPath)) !== journal.originalHash) {
     throw recoveryConflict("恢复 manifest 后哈希校验失败");
   }
@@ -175,8 +192,9 @@ async function restoreOriginal(
   paths: ManifestTransactionPaths,
   manifestPath: string,
   originalManifest: Buffer,
+  writeAtomic: (path: string, contents: Buffer) => Promise<void> = writeFileAtomically,
 ): Promise<void> {
-  await atomicWrite(manifestPath, originalManifest);
+  await writeAtomic(manifestPath, originalManifest);
   if (hashManifest(await readFile(manifestPath)) !== hashManifest(originalManifest)) {
     throw new Error("restored manifest hash mismatch");
   }
@@ -188,7 +206,7 @@ async function cleanupTransactionEvidence(paths: ManifestTransactionPaths): Prom
   await rm(paths.backupPath, { force: true });
 }
 
-async function atomicWrite(path: string, contents: Buffer): Promise<void> {
+export async function writeFileAtomically(path: string, contents: Buffer): Promise<void> {
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporaryPath, contents, { mode: 0o600 });
@@ -250,10 +268,12 @@ function isProcessAlive(pid: number): boolean {
 
 function isValidJournal(
   value: ManifestJournal,
+  sourceRoot: string,
   manifestPath: string,
   backupPath: string,
 ): boolean {
   return value?.version === 1 &&
+    value.sourcePath === sourceRoot &&
     value.manifestPath === manifestPath &&
     value.backupPath === backupPath &&
     typeof value.sourcePath === "string" &&

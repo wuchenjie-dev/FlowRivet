@@ -130,18 +130,28 @@ export class CompanionProcessManager {
   async start(): Promise<CompanionInstance> {
     await mkdir(dirname(this.options.paths.instancePath), { recursive: true });
     await mkdir(dirname(this.options.paths.logPath), { recursive: true });
-    const pid = await this.options.adapter.start({
-      command: this.options.nodeExecutable ?? process.execPath,
-      arguments: [this.options.paths.serverEntry],
-      cwd: this.options.paths.sourceRoot,
-      environment: {
-        ...this.options.environment,
-        FLOWRIVET_MCP_HOST: this.options.host,
-        FLOWRIVET_MCP_PORT: String(this.options.port),
-        FLOWRIVET_COMPANION_INSTANCE_FILE: this.options.paths.instancePath,
-      },
-      logPath: this.options.paths.logPath,
-    });
+    let pid: number;
+    try {
+      pid = await this.options.adapter.start({
+        command: this.options.nodeExecutable ?? process.execPath,
+        arguments: [this.options.paths.serverEntry],
+        cwd: this.options.paths.sourceRoot,
+        environment: {
+          ...this.options.environment,
+          FLOWRIVET_MCP_HOST: this.options.host,
+          FLOWRIVET_MCP_PORT: String(this.options.port),
+          FLOWRIVET_COMPANION_INSTANCE_FILE: this.options.paths.instancePath,
+        },
+        logPath: this.options.paths.logPath,
+      });
+    } catch (error) {
+      if (error instanceof PluginUpdateError) throw error;
+      throw new PluginUpdateError(
+        "companion_start_failed",
+        "无法启动新版 FlowRivet Companion",
+        { cause: error },
+      );
+    }
     const deadline = Date.now() + (this.options.healthTimeoutMs ?? 15_000);
     let observedInstance = false;
 
@@ -279,13 +289,31 @@ export function createSystemProcessAdapter(options: {
         ], { timeoutMs: 5_000 });
         return parsePid(result.stdout);
       }
-      const result = await run("lsof", [
-        "-nP",
-        `-iTCP:${port}`,
-        "-sTCP:LISTEN",
-        "-t",
-      ], { timeoutMs: 5_000 });
-      return result.exitCode === 0 ? parsePid(result.stdout) : undefined;
+      let result: CommandResult | undefined;
+      try {
+        result = await run("lsof", [
+          "-nP",
+          `-iTCP:${port}`,
+          "-sTCP:LISTEN",
+          "-t",
+        ], { timeoutMs: 5_000 });
+      } catch {
+        result = undefined;
+      }
+      if (result?.exitCode === 0) return parsePid(result.stdout);
+      if (platform !== "linux") return undefined;
+      let fallback: CommandResult;
+      try {
+        fallback = await run("ss", ["-ltnp"], { timeoutMs: 5_000 });
+      } catch {
+        return undefined;
+      }
+      if (fallback.exitCode !== 0) return undefined;
+      const listenerLine = fallback.stdout
+        .split(/\r?\n/u)
+        .find((line) => line.includes(`:${port}`) && line.includes("LISTEN"));
+      const match = listenerLine?.match(/\bpid=(\d+)\b/u);
+      return match ? Number(match[1]) : undefined;
     },
     async stop(pid, force) {
       killProcess(pid, force ? "SIGKILL" : "SIGTERM");
@@ -422,9 +450,15 @@ function sameProcess(
 ): boolean {
   return actual !== undefined &&
     actual.pid === expected.pid &&
-    sameStartedAt(actual.startedAt, expected.startedAt) &&
+    sameExactStartedAt(actual.startedAt, expected.startedAt) &&
     actual.executable === expected.executable &&
     JSON.stringify(actual.arguments) === JSON.stringify(expected.arguments);
+}
+
+function sameExactStartedAt(left: string, right: string): boolean {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  return Number.isFinite(leftTime) && leftTime === rightTime;
 }
 
 function sameStartedAt(left: string, right: string): boolean {

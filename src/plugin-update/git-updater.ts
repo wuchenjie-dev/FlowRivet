@@ -35,7 +35,19 @@ export async function updateGitSource(
   }
   const run = options.runCommand ?? defaultRunCommand;
   const commandOptions = { cwd: options.sourceRoot, timeoutMs: 60_000 };
-  const status = await run("git", ["status", "--porcelain"], commandOptions);
+  const runGit = async (args: string[]): Promise<CommandResult> => {
+    try {
+      return await run("git", args, commandOptions);
+    } catch (error) {
+      if (error instanceof PluginUpdateError) throw error;
+      throw new PluginUpdateError(
+        "git_pull_failed",
+        "无法启动 Git 命令",
+        { cause: error },
+      );
+    }
+  };
+  const status = await runGit(["status", "--porcelain"]);
   if (status.exitCode !== 0) {
     throw new PluginUpdateError(
       "git_pull_failed",
@@ -49,12 +61,12 @@ export async function updateGitSource(
     );
   }
 
-  const upstream = await run("git", [
+  const upstream = await runGit([
     "rev-parse",
     "--abbrev-ref",
     "--symbolic-full-name",
     "@{upstream}",
-  ], commandOptions);
+  ]);
   if (upstream.exitCode !== 0 || upstream.stdout.trim().length === 0) {
     throw new PluginUpdateError(
       "git_upstream_missing",
@@ -62,7 +74,7 @@ export async function updateGitSource(
     );
   }
 
-  const pull = await run("git", ["pull", "--ff-only"], commandOptions);
+  const pull = await runGit(["pull", "--ff-only"]);
   if (pull.exitCode !== 0) {
     throw new PluginUpdateError(
       "git_pull_failed",

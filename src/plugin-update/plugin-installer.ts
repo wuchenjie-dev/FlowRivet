@@ -83,21 +83,56 @@ export async function installLocalPlugin(
       originalManifest,
       temporaryManifest,
     }, async () => {
-      const installResult = await run(options.codexExecutable, [
-        "plugin",
-        "add",
-        options.pluginId,
-      ]);
+      const runCodex = async (args: string[]): Promise<CommandResult> => {
+        try {
+          return await run(options.codexExecutable, args);
+        } catch (error) {
+          if (error instanceof PluginUpdateError) throw error;
+          throw new PluginUpdateError(
+            "plugin_install_failed",
+            "无法启动 Codex 插件命令",
+            { cause: error },
+          );
+        }
+      };
+      const installResult = await runCodex(["plugin", "add", options.pluginId]);
       if (installResult.exitCode !== 0) {
         throw new PluginUpdateError(
           "plugin_install_failed",
           `Codex 插件安装失败：${installResult.stderr.trim() || "unknown error"}`,
         );
       }
+      const listResult = await runCodex(["plugin", "list", "--json"]);
+      if (
+        listResult.exitCode !== 0 ||
+        !isInstalledVersion(listResult.stdout, options.pluginId, version)
+      ) {
+        throw new PluginUpdateError(
+          "plugin_install_failed",
+          "Codex 插件安装命令已结束，但插件列表未确认目标版本已启用",
+        );
+      }
     });
     return { version };
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function isInstalledVersion(json: string, pluginId: string, version: string): boolean {
+  try {
+    const parsed = JSON.parse(json) as { installed?: unknown };
+    if (!Array.isArray(parsed.installed)) return false;
+    return parsed.installed.some((value) => {
+      if (!value || typeof value !== "object") return false;
+      const plugin = value as Record<string, unknown>;
+      return plugin.pluginId === pluginId &&
+        plugin.version === version &&
+        plugin.installed === true &&
+        plugin.enabled === true;
+    });
+  } catch {
+    return false;
   }
 }
 
