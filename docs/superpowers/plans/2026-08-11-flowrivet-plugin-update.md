@@ -147,6 +147,6 @@
 - [x] Commit review fixes separately if any: `fix(plugin): address update workflow review`
 - [x] Execute `npm run plugin:update -- --adopt-legacy-companion --json` against the currently installed `flowrivet@flowrivet-worktree` plugin.
 - [x] Verify the command reports success, the manifest hash matches its pre-update hash, the marketplace entry remains uniquely enabled, `/health` returns the new identity, and the instance file matches it.
-- [ ] Restart Codex manually, open a new task, and confirm the FlowRivet plugin UI loads the latest version without reinstalling or rebuilding by hand.
+- [x] Restart Codex manually, open a new task, and confirm the FlowRivet plugin UI loads the latest version without reinstalling or rebuilding by hand.
 - [x] Commit any acceptance-only fixes with regression tests. (No acceptance-only fixes were required.)
 - [x] Push `codex/feishu-project-provider` and report the exact command users should run for future local updates.
