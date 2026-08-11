@@ -7,6 +7,11 @@ import { parseRequirement, type Requirement } from "../src/domain/requirement.js
 import type { PocStoryAdmin, PocStoryInput } from "../src/poc/seed.js";
 import type { RequirementCommentAdmin } from "../src/tapd/reminder-record.js";
 import type { RequirementTraceReader } from "../src/tapd/trace-client.js";
+import {
+  PluginUpdateError,
+  type PluginUpdateOptions,
+  type PluginUpdateResult,
+} from "../src/plugin-update/contracts.js";
 
 const env = {
   TAPD_API_ENDPOINT: "https://api.tapd.cn",
@@ -142,10 +147,85 @@ function dependencies(admin: CliFieldAdmin): CliDependencies {
     }),
     createRequirementCommentAdmin: () => commentAdmin,
     createRequirementTraceReader: () => traceReader,
+    updatePlugin: async () => {
+      throw new Error("plugin updater is not configured in this test");
+    },
   };
 }
 
 describe("runCli", () => {
+  it("passes plugin update options to the shared updater", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    let received: PluginUpdateOptions | undefined;
+    deps.updatePlugin = async (options): Promise<PluginUpdateResult> => {
+      received = options;
+      return successfulPluginUpdate();
+    };
+
+    const result = await runCli(
+      ["plugin", "update", "--pull", "--adopt-legacy-companion"],
+      env,
+      deps,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(received).toEqual({
+      pull: true,
+      json: false,
+      adoptLegacyCompanion: true,
+    });
+    expect(result.output).toContain("FlowRivet 插件已更新");
+    expect(result.output).toContain("重启 Codex");
+  });
+
+  it("prints only machine-readable JSON for plugin updates in JSON mode", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    deps.updatePlugin = async () => successfulPluginUpdate();
+
+    const result = await runCli(["plugin", "update", "--json"], env, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.output)).toEqual(successfulPluginUpdate());
+  });
+
+  it("rejects unsupported plugin update options before running the updater", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    let called = false;
+    deps.updatePlugin = async () => {
+      called = true;
+      return successfulPluginUpdate();
+    };
+
+    const result = await runCli(["plugin", "update", "--force"], env, deps);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("Unknown option: --force");
+    expect(called).toBe(false);
+  });
+
+  it("preserves stable plugin update error codes in human and JSON output", async () => {
+    const deps = dependencies(new CliFieldAdmin());
+    deps.updatePlugin = async () => {
+      throw new PluginUpdateError(
+        "plugin_marketplace_mismatch",
+        "未找到指向当前源码的本地插件",
+      );
+    };
+
+    const human = await runCli(["plugin", "update"], env, deps);
+    const json = await runCli(["plugin", "update", "--json"], env, deps);
+
+    expect(human).toEqual({
+      exitCode: 1,
+      output: "[plugin_marketplace_mismatch] 未找到指向当前源码的本地插件",
+    });
+    expect(JSON.parse(json.output)).toEqual({
+      ok: false,
+      code: "plugin_marketplace_mismatch",
+      error: "未找到指向当前源码的本地插件",
+    });
+  });
+
   it("runs doctor without exposing credentials", async () => {
     const result = await runCli(["doctor"], env, dependencies(new CliFieldAdmin()));
 
@@ -438,3 +518,18 @@ describe("runCli", () => {
     expect(result.output).not.toContain("abc123");
   });
 });
+
+function successfulPluginUpdate(): PluginUpdateResult {
+  return {
+    ok: true,
+    plugin: "flowrivet",
+    marketplace: "flowrivet-worktree",
+    version: "0.1.0+codex.20260811190000",
+    companion: {
+      pid: 1234,
+      instanceId: "instance-1",
+      healthUrl: "http://127.0.0.1:43120/health",
+    },
+    codexRestartRequired: true,
+  };
+}

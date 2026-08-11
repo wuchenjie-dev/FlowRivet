@@ -19,13 +19,13 @@
 - Modify: `tests/cli.test.ts`
 - Create: `tests/plugin-update-command-runner.test.ts`
 
-- [ ] Add failing CLI tests for `plugin update`, `--pull`, `--json`, `--adopt-legacy-companion`, unknown options, and stable updater error codes.
-- [ ] Run `npm test -- tests/cli.test.ts tests/plugin-update-command-runner.test.ts` and confirm the new cases fail because the command is not implemented.
-- [ ] Add updater result/error contracts and a bounded, injectable `spawn`-based command runner that captures stdout/stderr without invoking a shell.
-- [ ] Extend `runCli` with an injected `updatePlugin` service and parse the new command without changing existing command behavior.
-- [ ] Emit concise human output by default and a single JSON object with no prompts in `--json` mode.
-- [ ] Re-run the focused tests and `npm run typecheck`.
-- [ ] Commit: `feat(plugin): add local update command contract`
+- [x] Add failing CLI tests for `plugin update`, `--pull`, `--json`, `--adopt-legacy-companion`, unknown options, and stable updater error codes.
+- [x] Run `npm test -- tests/cli.test.ts tests/plugin-update-command-runner.test.ts` and confirm the new cases fail because the command is not implemented.
+- [x] Add updater result/error contracts and a bounded, injectable `spawn`-based command runner that captures stdout/stderr without invoking a shell.
+- [x] Extend `runCli` with an injected `updatePlugin` service and parse the new command without changing existing command behavior.
+- [x] Emit concise human output by default and a single JSON object with no prompts in `--json` mode.
+- [x] Re-run the focused tests and `npm run typecheck`.
+- [x] Commit: `feat(plugin): add local update command contract`
 
 ## Task 2: Locate the source, Codex CLI, and installed plugin
 

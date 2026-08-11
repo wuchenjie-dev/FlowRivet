@@ -22,6 +22,12 @@ import {
   type RequirementCommentAdmin,
 } from "./tapd/reminder-record.js";
 import { TapdTraceClient, type RequirementTraceReader } from "./tapd/trace-client.js";
+import {
+  PluginUpdateError,
+  type PluginUpdateOptions,
+  type PluginUpdateResult,
+  type PluginUpdateService,
+} from "./plugin-update/contracts.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -33,6 +39,7 @@ export interface CliDependencies {
   createFeishuNotifier(config: FlowRivetConfig): FeishuNotifier;
   createRequirementCommentAdmin(config: FlowRivetConfig): RequirementCommentAdmin;
   createRequirementTraceReader(config: FlowRivetConfig): RequirementTraceReader;
+  updatePlugin: PluginUpdateService;
 }
 
 export interface CliResult {
@@ -106,6 +113,12 @@ const defaultDependencies: CliDependencies = {
       workspaceId: config.sourceWorkspaceId,
       personalToken: config.personalToken,
     }),
+  updatePlugin: async () => {
+    throw new PluginUpdateError(
+      "plugin_updater_unavailable",
+      "当前构建尚未包含本地插件更新服务",
+    );
+  },
 };
 
 export async function runCli(
@@ -114,6 +127,33 @@ export async function runCli(
   dependencies: CliDependencies = defaultDependencies,
 ): Promise<CliResult> {
   try {
+    if (args[0] === "plugin" && args[1] === "update") {
+      const supported = new Set(["--pull", "--json", "--adopt-legacy-companion"]);
+      const unsupported = args.slice(2).find((arg) => !supported.has(arg));
+      if (unsupported) return usage(`Unknown option: ${unsupported}`);
+
+      const options: PluginUpdateOptions = {
+        pull: args.includes("--pull"),
+        json: args.includes("--json"),
+        adoptLegacyCompanion: args.includes("--adopt-legacy-companion"),
+      };
+      try {
+        const result = await dependencies.updatePlugin(options, environment);
+        return {
+          exitCode: 0,
+          output: options.json ? JSON.stringify(result) : formatPluginUpdate(result),
+        };
+      } catch (error) {
+        if (!(error instanceof PluginUpdateError)) throw error;
+        return {
+          exitCode: 1,
+          output: options.json
+            ? JSON.stringify({ ok: false, code: error.code, error: error.message })
+            : `[${error.code}] ${error.message}`,
+        };
+      }
+    }
+
     if (args[0] === "doctor" && args.length === 1) {
       const config = loadConfig(environment);
       const report = await runDoctor(config, dependencies.createDoctorProbe(config));
@@ -313,8 +353,16 @@ export async function runCli(
 function usage(message: string): CliResult {
   return {
     exitCode: 2,
-    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd check-code-trace <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet tapd record-blocker-reminder [--apply]\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]`,
+    output: `${message}\n\nUsage:\n  flowrivet doctor\n  flowrivet tapd init-fields [--apply]\n  flowrivet tapd check-admission <requirement-id>\n  flowrivet tapd check-code-trace <requirement-id>\n  flowrivet tapd seed-poc [--apply]\n  flowrivet tapd verify-poc\n  flowrivet tapd record-blocker-reminder [--apply]\n  flowrivet feishu check-messaging\n  flowrivet feishu send-poc-card [--apply]\n  flowrivet feishu verify-identity\n  flowrivet feishu preview-blocker-reminder\n  flowrivet feishu send-blocker-reminder [--apply]\n  flowrivet plugin update [--pull] [--json] [--adopt-legacy-companion]`,
   };
+}
+
+function formatPluginUpdate(result: PluginUpdateResult): string {
+  return [
+    `FlowRivet 插件已更新：${result.version}`,
+    `Companion 已启动并通过健康检查（PID ${result.companion.pid}）`,
+    "请重启 Codex，然后新建任务以加载最新版插件。",
+  ].join("\n");
 }
 
 async function loadBlockedPocReminder(
