@@ -1,9 +1,14 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import type { TaskboardMcpServerOptions } from "./app.js";
 import { createTaskboardRuntime } from "./taskboard-runtime.js";
+import {
+  COMPANION_PRODUCT,
+  type CompanionHealth,
+} from "./companion-instance.js";
 
 const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
 
@@ -38,9 +43,17 @@ function applyCors(origin: string | undefined, response: import("node:http").Ser
 }
 
 export function createTaskboardHttpServer(
-  options: TaskboardMcpServerOptions = {},
+  options: TaskboardMcpServerOptions & { companionHealth?: CompanionHealth } = {},
 ) {
-  const runtime = createTaskboardRuntime(options);
+  const {
+    companionHealth = {
+      product: COMPANION_PRODUCT,
+      pid: process.pid,
+      instanceId: randomUUID(),
+    },
+    ...runtimeOptions
+  } = options;
+  const runtime = createTaskboardRuntime(runtimeOptions);
   return createServer(async (request, response) => {
     const url = new URL(
       request.url ?? "/",
@@ -49,7 +62,7 @@ export function createTaskboardHttpServer(
 
     if (request.method === "GET" && url.pathname === "/health") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ status: "ok" }));
+      response.end(JSON.stringify({ status: "ok", ...companionHealth }));
       return;
     }
 

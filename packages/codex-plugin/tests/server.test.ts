@@ -1297,6 +1297,11 @@ describe("taskboard HTTP server", () => {
   it("serves health checks and rejects unknown routes", async () => {
     const server = createTaskboardHttpServer({
       uiBundlePath: await createBundle(),
+      companionHealth: {
+        product: "flowrivet-companion",
+        pid: 4321,
+        instanceId: "instance-health-test",
+      },
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -1309,7 +1314,12 @@ describe("taskboard HTTP server", () => {
       const health = await fetch(`${baseUrl}/health`);
       const missing = await fetch(`${baseUrl}/missing`);
 
-      await expect(health.json()).resolves.toEqual({ status: "ok" });
+      await expect(health.json()).resolves.toEqual({
+        status: "ok",
+        product: "flowrivet-companion",
+        pid: 4321,
+        instanceId: "instance-health-test",
+      });
       expect(health.status).toBe(200);
       expect(missing.status).toBe(404);
     } finally {

@@ -87,14 +87,14 @@
 - Modify: `packages/codex-plugin/src/server/index.ts`
 - Modify: `packages/codex-plugin/tests/server.test.ts`
 
-- [ ] Add failing tests for cross-platform default registry paths, atomic instance-file writes, stale-file cleanup, and explicit `FLOWRIVET_COMPANION_INSTANCE_FILE` override.
-- [ ] Add failing server tests requiring `/health` to return `product`, `pid`, and `instanceId` while retaining `status: "ok"`.
-- [ ] Run `npm test --workspace @flowrivet/codex-plugin -- companion-instance.test.ts server.test.ts` and confirm failures.
-- [ ] Generate one instance ID per server process, expose it from `/health`, and atomically write the registry after the listener is ready.
-- [ ] Store PID, OS process start time, host, port, instance ID, and startup timestamp; remove the file only when it still identifies the exiting instance.
-- [ ] Handle normal exit signals without changing existing server APIs used by tests.
-- [ ] Re-run workspace tests, typecheck, and build.
-- [ ] Commit: `feat(companion): publish verified instance identity`
+- [x] Add failing tests for cross-platform default registry paths, atomic instance-file writes, stale-file cleanup, and explicit `FLOWRIVET_COMPANION_INSTANCE_FILE` override.
+- [x] Add failing server tests requiring `/health` to return `product`, `pid`, and `instanceId` while retaining `status: "ok"`.
+- [x] Run `npm test --workspace @flowrivet/codex-plugin -- companion-instance.test.ts server.test.ts` and confirm failures.
+- [x] Generate one instance ID per server process, expose it from `/health`, and atomically write the registry after the listener is ready.
+- [x] Store PID, OS process start time, host, port, instance ID, and startup timestamp; remove the file only when it still identifies the exiting instance.
+- [x] Handle normal exit signals without changing existing server APIs used by tests.
+- [x] Re-run workspace tests, typecheck, and build.
+- [x] Commit: `feat(companion): publish verified instance identity`
 
 ## Task 6: Restart Companion safely across platforms
 
