@@ -53,15 +53,15 @@
 - Create: `tests/plugin-update-manifest-transaction.test.ts`
 - Create: `tests/plugin-update-plugin-installer.test.ts`
 
-- [ ] Add failing tests for transaction creation, original restoration, stale-journal recovery, already-restored cleanup, hash conflict refusal, lock contention, and cleanup after command failure.
-- [ ] Add failing installer tests that assert use of the official `update_plugin_cachebuster.py` helper followed by `codex plugin add`, without hand-editing marketplace JSON.
-- [ ] Run the focused tests and confirm they fail.
-- [ ] Implement an exclusive update lock plus an external journal containing source path, backup path, original hash, temporary hash, timestamps, and state.
-- [ ] Restore the exact original manifest bytes in `finally`; preserve conflicting evidence and return `manifest_recovery_conflict` rather than overwriting unknown changes.
-- [ ] Locate Python and the helper beneath the active Codex home, run the helper against the source manifest, install through Codex CLI, and restore the source manifest.
-- [ ] Verify tests leave both the fixture repository and manifest byte-identical after success and failure.
-- [ ] Re-run focused tests and `npm run typecheck`.
-- [ ] Commit: `feat(plugin): install with crash-safe manifest transaction`
+- [x] Add failing tests for transaction creation, original restoration, stale-journal recovery, already-restored cleanup, hash conflict refusal, lock contention, and cleanup after command failure.
+- [x] Add failing installer tests that assert use of the official `update_plugin_cachebuster.py` helper followed by `codex plugin add`, without hand-editing marketplace JSON.
+- [x] Run the focused tests and confirm they fail.
+- [x] Implement an exclusive update lock plus an external journal containing source path, backup path, original hash, temporary hash, timestamps, and state.
+- [x] Restore the exact original manifest bytes in `finally`; preserve conflicting evidence and return `manifest_recovery_conflict` rather than overwriting unknown changes.
+- [x] Locate Python and the helper beneath the active Codex home, run the helper against the source manifest, install through Codex CLI, and restore the source manifest.
+- [x] Verify tests leave both the fixture repository and manifest byte-identical after success and failure.
+- [x] Re-run focused tests and `npm run typecheck`.
+- [x] Commit: `feat(plugin): install with crash-safe manifest transaction`
 
 ## Task 4: Add guarded Git pull and fresh-updater re-exec
 
