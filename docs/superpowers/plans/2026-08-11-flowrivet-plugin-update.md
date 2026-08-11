@@ -36,14 +36,14 @@
 - Create: `tests/plugin-update-source-locator.test.ts`
 - Create: `tests/plugin-update-marketplace-locator.test.ts`
 
-- [ ] Add failing table-driven tests for source discovery from the current checkout, packaged CLI paths, symlinks/junctions, and unsupported layouts.
-- [ ] Add failing tests for Codex executable lookup and for zero, one, or multiple enabled local marketplace entries matching the source.
-- [ ] Run `npm test -- tests/plugin-update-source-locator.test.ts tests/plugin-update-marketplace-locator.test.ts` and confirm the expected failures.
-- [ ] Implement canonical path comparison that is case-insensitive on Windows and resolves links before comparing.
-- [ ] Read marketplace metadata only; require exactly one installed and enabled local plugin whose source resolves to the current checkout.
-- [ ] Locate the bundled Codex executable first, then fall back to `codex` on `PATH`, and validate it with a bounded version command.
-- [ ] Re-run focused tests and `npm run typecheck`.
-- [ ] Commit: `feat(plugin): discover installed local plugin`
+- [x] Add failing table-driven tests for source discovery from the current checkout, packaged CLI paths, symlinks/junctions, and unsupported layouts.
+- [x] Add failing tests for Codex executable lookup and for zero, one, or multiple enabled local marketplace entries matching the source.
+- [x] Run `npm test -- tests/plugin-update-source-locator.test.ts tests/plugin-update-marketplace-locator.test.ts` and confirm the expected failures.
+- [x] Implement canonical path comparison that is case-insensitive on Windows and resolves links before comparing.
+- [x] Read marketplace metadata only; require exactly one installed and enabled local plugin whose source resolves to the current checkout.
+- [x] Locate the bundled Codex executable first, then fall back to `codex` on `PATH`, and validate it with a bounded version command.
+- [x] Re-run focused tests and `npm run typecheck`.
+- [x] Commit: `feat(plugin): discover installed local plugin`
 
 ## Task 3: Make manifest installation crash-safe
 
