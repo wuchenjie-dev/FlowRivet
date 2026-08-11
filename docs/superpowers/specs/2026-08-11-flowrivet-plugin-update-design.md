@@ -38,12 +38,13 @@ FlowRivet 以本地 Codex 插件和回环地址 Companion 运行。源码更新�
 ## 5. 命令合同
 
 ```text
-flowrivet plugin update [--pull] [--json]
+flowrivet plugin update [--pull] [--json] [--adopt-legacy-companion]
 npm run plugin:update
 ```
 
 - `--pull`：构建前执行受限 Git 更新。
 - `--json`：输出稳定的机器可读结果；默认输出分阶段的人类可读结果。
+- `--adopt-legacy-companion`：仅首次迁移旧版 Companion 时，显式确认接管通过旧版特征校验的进程；已有实例文件时忽略该参数。
 - 未知参数返回退出码 `2` 和用法说明。
 - 更新失败返回非零退出码，且不得输出成功提示。
 
@@ -197,12 +198,13 @@ Companion 启动时写入本地实例文件：
 
 首次更新时旧 Companion 可能没有实例文件。迁移路径额外要求：
 
-- 端口由本机进程监听。
-- 进程是 Node.js。
-- 完整命令行匹配 FlowRivet 固定 server 入口。
-- 工作目录或入口绝对路径落在本次确认的 FlowRivet 源码目录内。
+- 目标端口只在回环地址监听，并能解析到唯一 PID。
+- 进程可执行文件是 Node.js，命令行参数精确匹配旧版固定相对 server 入口。
+- `/health` 返回严格的旧版合同 `{ "status": "ok" }`，不得包含无法识别的字段。
+- 更新器向 TTY 用户展示 PID、端口、进程启动时间和 Node.js 可执行文件路径，并取得一次明确确认；不展示完整命令参数。
+- 无 TTY 或使用 `--json` 时，必须显式传入 `--adopt-legacy-companion`，否则返回 `companion_legacy_confirmation_required`。
 
-四项不能全部确认时停止。迁移只用于旧版本；新实例启动后必须写入实例文件，后续更新不得继续依赖命令行猜测。
+以上条件不能全部满足时停止。迁移确认只对本次检测到的 PID 和进程启动时间有效，检测后任一值变化都必须重新校验。迁移只用于旧版本；新实例启动后必须写入实例文件，后续更新不得继续依赖命令行猜测或继续接受 legacy adoption 参数。
 
 ## 11. 启动与健康验证
 
@@ -236,6 +238,7 @@ Companion 启动时写入本地实例文件：
 | `plugin_manifest_recovery_conflict` | 未完成事务与当前 manifest 发生冲突 |
 | `plugin_update_in_progress` | 同一源码根已有更新事务运行 |
 | `companion_ownership_unverified` | 无法确认端口进程属于 FlowRivet |
+| `companion_legacy_confirmation_required` | 首次接管旧 Companion 需要明确确认 |
 | `companion_start_failed` | 新 Companion 提前退出 |
 | `companion_health_timeout` | 新 Companion 未在时限内健康 |
 | `plugin_version_mismatch` | Codex 安装版本与本次版本不一致 |
@@ -260,6 +263,7 @@ Companion 启动时写入本地实例文件：
 - marketplace 零匹配、唯一匹配和多匹配。
 - 构建或安装失败时不停止 Companion。
 - PID、进程启动时间、端口、product、instance ID 的全部匹配与不匹配组合。
+- 旧版 Companion 的精确特征、TTY 确认、非交互显式接管和检测后 PID 变化。
 - Windows、Linux、macOS 的固定启动命令与隐藏/detached 选项。
 - 新进程健康、提前退出和超时。
 - 人类输出、JSON 输出、稳定退出码和敏感字段排除。
@@ -297,6 +301,7 @@ Companion 启动时写入本地实例文件：
 - Codex 已安装版本使用新的单一 cachebuster。
 - `--pull` 使用拉取后重新构建的更新器继续执行，且最多重执行一次。
 - 旧 Companion 只有在所有权确认后才停止。
+- 首次迁移无法验证源码工作目录时必须明确确认，之后的托管实例更新保持全自动。
 - 新 Companion 在 15 秒内通过带实例标识的健康检查。
 - 失败路径返回稳定错误且不记录敏感信息。
 - Windows、Linux、macOS 自动化合同通过。
