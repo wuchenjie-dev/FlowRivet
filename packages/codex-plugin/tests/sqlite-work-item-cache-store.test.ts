@@ -116,6 +116,26 @@ describe("SQLite work item cache store", () => {
     });
   });
 
+  it("keeps an item's native provider type inside an account-scoped query scope", async () => {
+    const { store } = await fixture();
+    const nativeItem = item("1", "A", "native-task", "task");
+
+    await store.mergeScopes({
+      account: account(),
+      projects: [project("A")],
+      scopes: [scope("A", "mywork:this_week:task", "task", [nativeItem])],
+      now,
+    });
+
+    await expect(store.loadActive("tapd", now)).resolves.toMatchObject({
+      scopes: [{
+        providerItemType: "mywork:this_week:task",
+        items: [{ providerItemType: "native-task", freshness: "cached" }],
+      }],
+      items: [{ providerItemType: "native-task", freshness: "cached" }],
+    });
+  });
+
   it("persists only hashed account identity and provider-neutral item data", async () => {
     const { path, store } = await fixture();
     await store.mergeScopes({

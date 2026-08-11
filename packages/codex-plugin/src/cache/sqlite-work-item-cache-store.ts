@@ -119,7 +119,6 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
           const parsed = workItemSchema.parse(value);
           if (parsed.providerId !== input.account.providerId
             || parsed.projectExternalId !== scope.projectExternalId
-            || parsed.providerItemType !== scope.providerItemType
             || parsed.kind !== scope.kind) {
             throw new WorkItemCacheError("cache_write_failed");
           }
