@@ -154,7 +154,7 @@ Windows 必须兼容原生可执行文件和 npm 生成的 `.cmd` shim。若需�
 - 超时或超过输出限制时终止完整子进程树。
 - 仅接受退出码 0 且通过 Schema 校验的 JSON；无效输出不得覆盖缓存。
 
-实现前通过只读探针记录：CLI 版本、`auth status`、`user me`、`mywork todo` 的公开参数和脱敏响应结构。FlowRivet 建立最低兼容版本；版本过低返回 `provider_cli_unsupported` 并展示升级命令。不得依赖 CLI 的 Go 内部包或缓存文件格式。
+实现前通过只读探针记录：CLI 版本、`auth status`、`user me`、`mywork todo` 的公开参数和脱敏响应结构。首版最低兼容版本固定为已验证的 `1.0.19`；版本过低返回 `provider_cli_unsupported` 并展示升级命令。不得依赖 CLI 的 Go 内部包或缓存文件格式。`config profile current` 在该版本即使指定 JSON 格式仍返回单行文本，Profile 读取必须使用独立的受限文本合同。
 
 ## 8. 安装与认证状态机
 
@@ -187,7 +187,7 @@ checking
 meegle auth login --device-code --host project.feishu.cn
 ```
 
-实现探针必须确认授权命令是否提供稳定机器可读事件。如果官方版本能结构化返回授权 URL 和验证码，页面直接渲染；如果只有人类可读输出，FlowRivet 不建立脆弱的自由文本解析合同，而是展示可复制命令，并周期性执行：
+已验证 `1.0.19` 的设备码授权提供稳定两阶段 JSON 合同：`phase init` 返回授权 URL、用户码、设备码和轮询间隔，`phase poll --once` 返回等待、成功或过期状态。页面直接渲染授权 URL 与用户码，并按服务端间隔轮询；若未来版本不再满足 Schema，FlowRivet 不解析自由文本，而是降级为展示可复制命令，并周期性执行：
 
 ```text
 meegle auth status --format json
@@ -211,9 +211,9 @@ mywork todo --action overdue   --page-num N --format json
 mywork todo --action done      --page-num N --format json
 ```
 
-确切的页大小参数、响应分页字段和终止条件由实现前的 `meegle inspect` 与真实脱敏探针确认。Provider 必须以服务端分页元数据或空页/不足页的公开合同终止；不能固定只取第一页，也不能在分页结构未知时把截断结果标记为成功。每个 action 设置 50,000 条或 1,000 页的安全上限，任一上限触发时返回 `provider_output_limit_exceeded`，不得把截断结果标为成功或覆盖缓存。
+`1.0.19` 已验证每页 50 条，响应为 `{ list, total }`，没有游标或 `has_more`；空页和超出尾页时 `list` 为 `null`。Provider 从第 1 页开始，遇到 `list == null` 或不足 50 条时终止，并用 `total` 交叉校验累计数量；不能固定只取第一页。每个 action 设置 50,000 条或 1,000 页的安全上限，任一上限触发时返回 `provider_output_limit_exceeded`，不得把截断结果标为成功或覆盖缓存。
 
-`done` 的优先方案是使用 CLI 提供的完成时间过滤；若没有过滤参数，则仅在探针证明结果按可信完成时间倒序时，读到早于 7 天截止线后停止；两者都不成立时完整分页后再过滤。探针必须评估历史完成量，避免为了 7 天结果无界扫描账号全部历史。
+`1.0.19` 的 `done` 没有完成时间过滤参数。真实样本虽按可信完成时间倒序，但单账号样本不足以形成服务端排序保证；首版必须在安全上限内完整分页，再在本地过滤最近 7 天，不按时间提前停止。
 
 同步流程：
 
@@ -225,7 +225,7 @@ mywork todo --action done      --page-num N --format json
 6. 完成时间缺失时使用官方明确标记的状态完成时间；仍缺失则不进入已完成列。
 7. 项目侧栏从归一化工作项的项目信息聚合，不要求项目发现或选择。
 
-若 `mywork todo` 缺少看板必需的标题、项目、类型、状态、URL 或完成时间，Provider 可按项目分组调用官方 `workitem +batch-get` 补齐，单批不超过 CLI 公布的限制。是否需要补齐必须由真实响应探针决定，不在无证据时增加额外网络调用。
+已验证 `mywork todo` 提供标题、项目、类型、状态/节点和完成时间，但不提供工作项 URL；默认 `workitem get` 也不提供 URL。首版不猜测 URL 路径，也不为此发起详情补齐。若后续看板字段确需补齐，Provider 才可按项目分组调用官方 `workitem batch-get`，单批不超过 CLI 公布的限制。
 
 任一 action 的任一分页失败时，该 action 视为失败；不得用已取得的部分页面覆盖该 scope 的最近成功缓存。其他 action 可以继续并形成现有的 mixed/offline 快照。
 
@@ -249,7 +249,7 @@ interface WorkItem {
   dueAt?: string;
   completedAt?: string;
   updatedAt?: string;
-  externalUrl: string;
+  externalUrl?: string;
 }
 ```
 
@@ -260,7 +260,7 @@ interface WorkItem {
 - 活跃记录优先使用返回的流程状态 ID、状态类别或节点元数据映射 `todo`、`in_progress`、`in_review`。
 - 未识别活跃状态保守映射为 `todo`，保留 `providerStatus`，不得丢弃工作项。
 - 飞书项目类型映射基于稳定类型 key，不基于可编辑显示名；未知类型进入 `other`。
-- `externalUrl` 只接受飞书项目 HTTPS 域名或 CLI 返回并通过允许列表校验的租户域名。
+- `externalUrl` 可缺失；存在时只接受飞书项目 HTTPS 域名或 CLI 返回并通过允许列表校验的租户域名。缺失时界面不得猜测路径或提供外链操作。
 - 所有日期先验证为有效时间，再转换 ISO 8601；无效可选日期忽略，稳定键字段无效则拒绝该记录并把 scope 标记为合同错误。
 
 第一轮真实探针必须产出脱敏 Fixture：删除用户、项目、标题、ID、URL、正文和 Token，仅保留字段名、类型、枚举形状及合成值。状态和类型映射测试只依赖该 Fixture 与公开元数据，不依赖中文显示名猜测。
@@ -295,7 +295,7 @@ Provider 选择、复制安装命令、连接、取消和重新检测必须支�
 
 TAPD 专属兼容工具暂时保留，但 UI 不再直接依赖其命名。通用认证工具只接受已注册的 `providerId`，不得接受任意命令、可执行文件、Profile、host 或 CLI 参数。
 
-只读阶段不注册移动、更新、评论或流程流转工具。卡片不可拖动。飞书项目未提供详情 Adapter 时，点击卡片直接打开通过允许列表校验的原工作项链接；不得调用 TAPD 详情服务或显示错误抽屉。
+只读阶段不注册移动、更新、评论或流程流转工具。卡片不可拖动。飞书项目未提供详情 Adapter 时，仅在工作项含通过允许列表校验的原链接时允许打开；没有链接时保持卡片只读，不得猜测 URL、调用 TAPD 详情服务或显示错误抽屉。
 
 ## 12. 错误与日志
 

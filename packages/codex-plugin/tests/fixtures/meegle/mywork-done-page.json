@@ -1,0 +1,47 @@
+{
+  "list": [
+    {
+      "finish_time": {
+        "finish_time": "2026-08-10T08:30:00+08:00"
+      },
+      "node_info": {
+        "node_name": "Example completed node",
+        "node_state_key": "node_done"
+      },
+      "project_key": "PROJ",
+      "project_name": "Example Project",
+      "schedule": null,
+      "state_info": {
+        "end_state_key_name": "state_done",
+        "start_state_key_name": "state_started"
+      },
+      "work_item_info": {
+        "work_item_id": 10001,
+        "work_item_name": "Example requirement",
+        "work_item_type_key": "story"
+      }
+    },
+    {
+      "finish_time": {
+        "finish_time": "2026-07-01T09:00:00+08:00"
+      },
+      "node_info": {
+        "node_name": "Example completed node",
+        "node_state_key": "node_done"
+      },
+      "project_key": "PROJ",
+      "project_name": "Example Project",
+      "schedule": null,
+      "state_info": {
+        "end_state_key_name": "state_done",
+        "start_state_key_name": "state_started"
+      },
+      "work_item_info": {
+        "work_item_id": 10002,
+        "work_item_name": "Example task",
+        "work_item_type_key": "task"
+      }
+    }
+  ],
+  "total": 2
+}

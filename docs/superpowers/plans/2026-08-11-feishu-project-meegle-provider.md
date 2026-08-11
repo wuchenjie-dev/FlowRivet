@@ -67,8 +67,9 @@ Existing files with focused changes:
 - Create: `packages/codex-plugin/tests/fixtures/meegle/mywork-done-page.json`
 - Create: `docs/abf-poc/2026-08-11-meegle-cli-probe.md`
 - Modify if assumptions fail: `docs/superpowers/specs/2026-08-11-feishu-project-meegle-provider-design.md`
+- Modify if assumptions fail: `docs/superpowers/plans/2026-08-11-feishu-project-meegle-provider.md`
 
-- [ ] **Step 1: Verify installation and public command metadata without writing credentials**
+- [x] **Step 1: Verify installation and public command metadata without writing credentials**
 
 Run:
 
@@ -82,7 +83,7 @@ meegle auth status --format json
 
 Expected: CLI version is printed; `mywork.todo` exposes `action` and `page_num`; unauthenticated status returns structured JSON and a documented nonzero exit rather than hanging.
 
-- [ ] **Step 2: Complete user OAuth only if status is disconnected**
+- [x] **Step 2: Complete user OAuth only if status is disconnected**
 
 Run in a real terminal:
 
@@ -94,7 +95,7 @@ meegle user me --format json
 
 Expected: the user completes authorization in the browser or phone; status reports `authenticated: true`; user output contains stable account identity fields. Never paste credentials into chat or a file.
 
-- [ ] **Step 3: Inspect all selected scopes and pagination behavior**
+- [x] **Step 3: Inspect all selected scopes and pagination behavior**
 
 Run each page in the terminal and inspect without redirecting raw output to the repo:
 
@@ -104,17 +105,17 @@ meegle mywork todo --action overdue --page-num 1 --format json
 meegle mywork todo --action done --page-num 1 --format json
 ```
 
-Expected: each response preserves `list`, `total`, and/or `pagination`; determine the page size, next-page rule, stable work-item/project/type/status fields, completion-time field, and whether `done` is newest-first.
+Expected: each response preserves `list` and `total`; `list` may be `null`. Determine the 50-item page size, null/short-page termination rule, stable work-item/project/type/status fields, completion-time field, and whether `done` is newest-first.
 
-- [ ] **Step 4: Write synthetic fixtures, never copied production values**
+- [x] **Step 4: Write synthetic fixtures, never copied production values**
 
 Use stable fake values such as `PROJ`, `10001`, `Example requirement`, and `user_example`. Preserve only field names, nesting, scalar types, and documented enum shapes. Assert manually that none of the following appears in the staged diff: real user name, project name/key, work-item ID/title, tenant, URL, device code, token, stdout, or stderr.
 
-- [ ] **Step 5: Record the gate result**
+- [x] **Step 5: Record the gate result**
 
 Document CLI version, executable form on Windows, auth JSON shape, login event shape, pagination contract, done ordering/filter support, required enrichment calls, and structured errors. If the probe contradicts authentication, pagination, or required-field assumptions, update the design spec and obtain approval before Task 2.
 
-- [ ] **Step 6: Verify and commit the evidence**
+- [x] **Step 6: Verify and commit the evidence**
 
 Run:
 
@@ -334,7 +335,7 @@ logout(profile)
 getMyWorkPage(profile, action, pageNum)
 ```
 
-Every JSON command appends `--format json`; business commands append the captured `--profile`. Validate against Task 1 schemas. Map missing CLI, unsupported version, auth exit 1, server exit 2, timeout, output limit, invalid JSON, and unknown failures to stable provider errors.
+Every JSON command appends `--format json`; business commands append the captured `--profile`. `getCurrentProfile()` parses the bounded single-line text emitted by `config profile current`, because `1.0.19` does not honor JSON format for that command. Validate all other responses against Task 1 schemas. Map missing CLI, unsupported version, auth exit 1, server exit 2, timeout, output limit, invalid JSON, and unknown failures to stable provider errors.
 
 - [ ] **Step 5: Run focused tests and typecheck**
 
@@ -435,7 +436,7 @@ Expected: FAIL because the provider is absent.
 
 - [ ] **Step 3: Implement account-scoped pagination**
 
-Declare `queryMode: "account_scoped"`. Fetch `this_week`, `overdue`, and `done` with concurrency 2. Use the probed pagination metadata; never infer success from page 1 alone. If `done` supports date filtering or verified newest-first ordering, stop at the seven-day cutoff; otherwise fully paginate within hard safety limits.
+Declare `queryMode: "account_scoped"`. Fetch `this_week`, `overdue`, and `done` with concurrency 2. Treat `list: null` as empty, fetch 50-item pages until a null/short page, and cross-check accumulated count with `total`; never infer success from page 1 alone. Fully paginate `done` within hard safety limits, then filter the seven-day window locally.
 
 - [ ] **Step 4: Normalize and deduplicate**
 
@@ -445,11 +446,11 @@ Build keys as:
 `feishu-project:${projectKey}:${typeKey}:${workItemId}`
 ```
 
-Merge duplicate active records by completeness, preserve overdue state, map stable type keys to requirement/task/defect/other, map stable state metadata to four stages, keep unknown active states in `todo`, and accept only HTTPS URLs on the configured Feishu Project host.
+Merge duplicate active records by completeness, preserve overdue state, map stable type keys to requirement/task/defect/other, map stable state metadata to four stages, and keep unknown active states in `todo`. Preserve only HTTPS URLs on the configured Feishu Project host; when the CLI omits a URL, leave `externalUrl` absent and keep the card read-only.
 
 - [ ] **Step 5: Add enrichment only when Task 1 requires it**
 
-If the list omits mandatory card fields, group IDs by project and call `workitem +batch-get` in documented batches. Treat partial enrichment as a failed scope and never commit truncated data. If Task 1 shows list records are sufficient, omit this code and note the skip in the probe document.
+The verified list provides the card's identity, title, project, type, status/node, and completion time. It omits URL, and `workitem get` does not add one, so omit enrichment in the first release and allow `externalUrl` to be absent. Add batch enrichment later only for a newly required field with a verified CLI contract.
 
 - [ ] **Step 6: Verify provider and common cache behavior**
 
