@@ -24,7 +24,11 @@ function successfulSpawn() {
 
 describe("system browser launcher", () => {
   it.each([
-    ["win32", "explorer.exe", ["https://open.feishu.cn/device?code=example"]],
+    [
+      "win32",
+      "rundll32.exe",
+      ["url.dll,FileProtocolHandler", "https://open.feishu.cn/device?code=example"],
+    ],
     ["darwin", "/usr/bin/open", ["https://open.feishu.cn/device?code=example"]],
     ["linux", "xdg-open", ["https://open.feishu.cn/device?code=example"]],
   ] as const)("uses a fixed %s executable without a shell", async (

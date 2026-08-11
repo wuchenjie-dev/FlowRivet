@@ -101,7 +101,10 @@ function browserInvocation(
 ): { command: string; args: string[] } {
   switch (platform) {
     case "win32":
-      return { command: "explorer.exe", args: [url] };
+      return {
+        command: "rundll32.exe",
+        args: ["url.dll,FileProtocolHandler", url],
+      };
     case "darwin":
       return { command: "/usr/bin/open", args: [url] };
     default:
