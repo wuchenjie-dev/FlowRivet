@@ -145,8 +145,8 @@
 - [x] Inspect `git status --short` and verify no generated manifest, journal, backup, log, or `dist` files are tracked.
 - [x] Review the complete diff for correctness, maintainability, project standards, and test gaps; fix every blocking finding with a focused regression test.
 - [x] Commit review fixes separately if any: `fix(plugin): address update workflow review`
-- [ ] Execute `npm run plugin:update -- --adopt-legacy-companion --json` against the currently installed `flowrivet@flowrivet-worktree` plugin.
-- [ ] Verify the command reports success, the manifest hash matches its pre-update hash, the marketplace entry remains uniquely enabled, `/health` returns the new identity, and the instance file matches it.
+- [x] Execute `npm run plugin:update -- --adopt-legacy-companion --json` against the currently installed `flowrivet@flowrivet-worktree` plugin.
+- [x] Verify the command reports success, the manifest hash matches its pre-update hash, the marketplace entry remains uniquely enabled, `/health` returns the new identity, and the instance file matches it.
 - [ ] Restart Codex manually, open a new task, and confirm the FlowRivet plugin UI loads the latest version without reinstalling or rebuilding by hand.
-- [ ] Commit any acceptance-only fixes with regression tests.
+- [x] Commit any acceptance-only fixes with regression tests. (No acceptance-only fixes were required.)
 - [ ] Push `codex/feishu-project-provider` and report the exact command users should run for future local updates.
