@@ -4,6 +4,9 @@ import { authResultSchema } from "../src/contracts/auth.js";
 import {
   activeProviderSchema,
   providerConnectionSchema,
+  providerLoginLookupResultSchema,
+  providerLoginSnapshotSchema,
+  providerLoginToolResultSchema,
   providerLoginTransactionSchema,
 } from "../src/contracts/providers.js";
 import { projectCatalogSchema } from "../src/contracts/projects.js";
@@ -87,6 +90,76 @@ describe("taskboard demo contract", () => {
       userCode: "EXAMPLE-CODE",
       expiresAt: "2026-08-11T12:00:00.000Z",
     })).toMatchObject({ transactionId: "login-1", userCode: "EXAMPLE-CODE" });
+  });
+
+  it("validates recoverable provider login session snapshots", () => {
+    const session = providerLoginSnapshotSchema.parse({
+      sessionId: "session-1",
+      providerId: "feishu-project",
+      state: "waiting",
+      startedAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+      expiresAt: "2026-08-11T00:05:00.000Z",
+      browserLaunch: "opened",
+    });
+
+    expect(session).toMatchObject({ sessionId: "session-1", state: "waiting" });
+    for (const state of [
+      "starting", "waiting", "verifying", "succeeded",
+      "failed", "expired", "cancelled",
+    ]) {
+      expect(providerLoginSnapshotSchema.safeParse({ ...session, state }).success).toBe(true);
+    }
+    expect(providerLoginSnapshotSchema.parse({
+      ...session,
+      browserLaunch: "manual_required",
+      error: {
+        code: "provider_browser_launch_failed",
+        retryable: true,
+        recoveryAction: "open_manually",
+        requestId: "request-1",
+      },
+      manualFallback: {
+        verificationUri: "https://open.feishu.cn/device?code=example",
+        userCode: "EXAMPLE-CODE",
+      },
+    })).toMatchObject({ browserLaunch: "manual_required" });
+  });
+
+  it("returns request IDs and rejects login internals from session contracts", () => {
+    const session = {
+      sessionId: "session-1",
+      providerId: "feishu-project",
+      state: "waiting",
+      startedAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+      expiresAt: "2026-08-11T00:05:00.000Z",
+      browserLaunch: "opened",
+    } as const;
+
+    expect(providerLoginToolResultSchema.parse({
+      requestId: "request-1",
+      session,
+    })).toMatchObject({ requestId: "request-1", session });
+    expect(providerLoginLookupResultSchema.parse({ requestId: "request-2" }))
+      .toEqual({ requestId: "request-2" });
+
+    for (const forbidden of [
+      { deviceCode: "device-secret" },
+      { clientId: "client-secret" },
+      { token: "token-secret" },
+      { cliArgs: ["auth", "login"] },
+    ]) {
+      expect(providerLoginSnapshotSchema.safeParse({ ...session, ...forbidden }).success)
+        .toBe(false);
+    }
+    expect(providerLoginSnapshotSchema.safeParse({
+      ...session,
+      manualFallback: {
+        verificationUri: "https://open.feishu.cn/device",
+        userCode: "EXAMPLE-CODE",
+      },
+    }).success).toBe(false);
   });
 
   it("rejects provider secrets and login internals outside the ephemeral transaction", () => {

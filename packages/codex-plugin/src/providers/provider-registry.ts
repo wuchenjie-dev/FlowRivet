@@ -6,12 +6,14 @@ import type { ProjectManagementProvider } from "../projects/project-management-p
 import type { WorkItemDetailProvider } from "../work-items/work-item-detail-provider.js";
 import type { WorkItemProvider } from "../work-items/work-item-provider.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
+import type { ProviderLoginDriver } from "./provider-login-driver.js";
 
 export interface ProviderRegistration {
   id: string;
   displayName: string;
   loginMode: "personal_token" | "device_code";
   auth: ProviderAuthService;
+  login?: ProviderLoginDriver;
   workItems: WorkItemProvider;
   projects?: ProjectManagementProvider;
   details?: WorkItemDetailProvider;
