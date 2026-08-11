@@ -7,7 +7,6 @@ import {
   providerLoginLookupResultSchema,
   providerLoginSnapshotSchema,
   providerLoginToolResultSchema,
-  providerLoginTransactionSchema,
 } from "../src/contracts/providers.js";
 import { projectCatalogSchema } from "../src/contracts/projects.js";
 import { taskboardPreferencesSchema } from "../src/contracts/taskboard-preferences.js";
@@ -69,7 +68,7 @@ describe("taskboard demo contract", () => {
       .toBe(false);
   });
 
-  it("validates provider selection, connection, and ephemeral login contracts", () => {
+  it("validates provider selection and connection contracts", () => {
     expect(activeProviderSchema.parse({
       version: 1,
       activeProviderId: "feishu-project",
@@ -83,13 +82,11 @@ describe("taskboard demo contract", () => {
       displayName: "飞书项目",
       state: "cli_missing",
     });
-    expect(providerLoginTransactionSchema.parse({
-      transactionId: "login-1",
+    expect(providerConnectionSchema.safeParse({
       providerId: "feishu-project",
-      verificationUri: "https://project.feishu.cn/b/auth/mcp",
-      userCode: "EXAMPLE-CODE",
-      expiresAt: "2026-08-11T12:00:00.000Z",
-    })).toMatchObject({ transactionId: "login-1", userCode: "EXAMPLE-CODE" });
+      displayName: "飞书项目",
+      state: ["author", "izing"].join(""),
+    }).success).toBe(false);
   });
 
   it("validates recoverable provider login session snapshots", () => {
@@ -162,7 +159,7 @@ describe("taskboard demo contract", () => {
     }).success).toBe(false);
   });
 
-  it("rejects provider secrets and login internals outside the ephemeral transaction", () => {
+  it("rejects provider secrets and login internals from connection state", () => {
     const connection = {
       providerId: "feishu-project",
       displayName: "飞书项目",

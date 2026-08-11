@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
-import {
-  providerConnectionSchema,
-  providerLoginTransactionSchema,
-  type ProviderLoginTransaction,
-} from "../contracts/providers.js";
+import { providerConnectionSchema } from "../contracts/providers.js";
 import {
   taskboardPreferencesSchema,
   type TaskboardPreferences,
@@ -25,6 +21,7 @@ import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
 import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
 import { useAutoRefresh } from "./use-auto-refresh.js";
+import { useProviderLogin } from "./use-provider-login.js";
 
 interface AppProps {
   initialSnapshot: TaskboardSnapshot;
@@ -50,7 +47,6 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [notice, setNotice] = useState<string>();
   const [authError, setAuthError] = useState<string>();
   const [authPending, setAuthPending] = useState(false);
-  const [loginTransaction, setLoginTransaction] = useState<ProviderLoginTransaction>();
   const [disconnectPending, setDisconnectPending] = useState(false);
   const [preferences, setPreferences] = useState<TaskboardPreferences>();
   const [preferencesPending, setPreferencesPending] = useState(false);
@@ -65,8 +61,6 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
-  const authRequestSequence = useRef(0);
-  const authPollPending = useRef(false);
   const providerState = connection.provider.state;
   const isFeishuProject = connection.provider.providerId === "feishu-project";
 
@@ -74,6 +68,12 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     enabled: providerState === "connected",
     intervalSeconds: preferences?.refreshIntervalSeconds,
     performRefresh: refreshBoard,
+  });
+  const providerLogin = useProviderLogin({
+    bridge,
+    providerId: connection.provider.providerId,
+    enabled: isFeishuProject && providerState !== "connected",
+    onSucceeded: completeProviderLogin,
   });
 
   async function enterFullscreen(automatic = false) {
@@ -97,20 +97,6 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     // The host display capability is fixed for this mounted MCP App.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridge]);
-
-  useEffect(() => {
-    if (!loginTransaction) return;
-    const timer = window.setInterval(() => {
-      if (authPollPending.current) return;
-      authPollPending.current = true;
-      void recheckProviderConnection().finally(() => {
-        authPollPending.current = false;
-      });
-    }, 1_500);
-    return () => window.clearInterval(timer);
-    // The transaction ID defines the lifetime of this bounded authorization poll.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loginTransaction?.transactionId]);
 
   useEffect(() => {
     refreshCoordinator.markAttemptCompleted({
@@ -289,76 +275,60 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   }
 
   async function startProviderLogin() {
-    const sequence = ++authRequestSequence.current;
-    setAuthPending(true);
     setAuthError(undefined);
-    try {
-      const result = await bridge.callTool("start_provider_login", {});
-      const parsed = providerLoginTransactionSchema.safeParse(result.structuredContent);
-      if (!parsed.success) throw new Error("provider_login_invalid_response");
-      if (sequence !== authRequestSequence.current) return;
-      setLoginTransaction(parsed.data);
-      setConnection((current) => ({
-        ...current,
-        provider: { ...current.provider, state: "authorizing" },
-      }));
-    } catch {
-      if (sequence === authRequestSequence.current) {
-        setAuthError("无法启动飞书授权，请检查本地 CLI 后重试");
-      }
-    } finally {
-      if (sequence === authRequestSequence.current) setAuthPending(false);
-    }
+    await providerLogin.start();
   }
 
   async function recheckProviderConnection() {
-    const sequence = ++authRequestSequence.current;
-    setAuthPending(true);
     setAuthError(undefined);
     try {
       const result = await bridge.callTool("get_provider_connection", {});
       const parsed = providerConnectionSchema.safeParse(result.structuredContent);
       if (!parsed.success) throw new Error("provider_connection_invalid_response");
-      if (sequence !== authRequestSequence.current) return;
       setConnection((current) => ({ ...current, provider: parsed.data }));
       if (parsed.data.state === "connected") {
-        setLoginTransaction(undefined);
-        const snapshot = await loadBoard("open_my_taskboard");
-        setNotice(`飞书项目已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
+        providerLogin.clear();
+        setReconnectOpen(false);
+        try {
+          const snapshot = await loadBoard("open_my_taskboard");
+          setNotice(`飞书项目已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
+        } catch {
+          setNotice("飞书项目已连接，但任务同步失败，请重试");
+        }
       }
     } catch {
-      if (sequence === authRequestSequence.current) {
-        setAuthError("无法检查飞书项目连接，请稍后重试");
-      }
-    } finally {
-      if (sequence === authRequestSequence.current) setAuthPending(false);
+      setAuthError("无法检查飞书项目连接，请稍后重试");
     }
   }
 
-  async function cancelProviderLogin() {
-    if (!loginTransaction) return;
-    const sequence = ++authRequestSequence.current;
-    setAuthPending(true);
+  async function completeProviderLogin() {
+    setAuthError(undefined);
     try {
-      const result = await bridge.callTool("cancel_provider_login", {
-        transactionId: loginTransaction.transactionId,
-      });
+      const result = await bridge.callTool("get_provider_connection", {});
       const parsed = providerConnectionSchema.safeParse(result.structuredContent);
-      if (!parsed.success) throw new Error("provider_connection_invalid_response");
-      if (sequence !== authRequestSequence.current) return;
+      if (!parsed.success || parsed.data.state !== "connected") {
+        throw new Error("provider_connection_not_ready");
+      }
       setConnection((current) => ({ ...current, provider: parsed.data }));
-      setLoginTransaction(undefined);
-      setAuthError(undefined);
+      setReconnectOpen(false);
+      try {
+        const snapshot = await loadBoard("open_my_taskboard");
+        setNotice(`飞书项目已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
+      } catch {
+        setNotice("飞书项目已连接，但任务同步失败，请重试");
+      }
     } catch {
-      if (sequence === authRequestSequence.current) setAuthError("无法取消飞书授权");
-    } finally {
-      if (sequence === authRequestSequence.current) setAuthPending(false);
+      setAuthError("授权已完成，但无法确认飞书账号，请重新检查连接");
     }
   }
 
   async function disconnect() {
     setDisconnectPending(true);
     try {
+      if (isFeishuProject && providerLogin.session
+        && ["starting", "waiting", "verifying"].includes(providerLogin.session.state)) {
+        await providerLogin.cancel();
+      }
       const result = await bridge.callTool(
         isFeishuProject ? "disconnect_provider" : "disconnect_tapd",
         {},
@@ -381,7 +351,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       setStaleScopeCount(0);
       setLastSuccessfulSyncAt(undefined);
       setMenuOpen(false);
-      setLoginTransaction(undefined);
+      providerLogin.clear();
       setNotice(`${connection.provider.displayName}已断开`);
     } catch {
       setNotice(`无法断开${connection.provider.displayName}，请稍后重试`);
@@ -445,6 +415,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         showFullscreen={displayState.canFullscreen && !displayState.isFullscreen}
         fullscreenPending={fullscreenPending}
         refreshPending={refreshCoordinator.pending}
+        providerLoginActive={Boolean(providerLogin.session
+          && ["starting", "waiting", "verifying"].includes(providerLogin.session.state))}
         onFullscreen={() => void enterFullscreen()}
         onRefresh={() => void refreshCoordinator.requestRefresh().catch(() => undefined)}
         onToggleMenu={() => setMenuOpen((open) => !open)}
@@ -465,11 +437,14 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       {!showBoard && isFeishuProject ? (
         <FeishuProjectLogin
           connection={connection.provider}
-          transaction={loginTransaction}
-          pending={authPending}
+          session={providerLogin.session}
+          action={providerLogin.action}
+          errorCode={providerLogin.errorCode}
           error={authError}
+          waitingLong={providerLogin.waitingLong}
           onStart={() => void startProviderLogin()}
-          onCancel={() => void cancelProviderLogin()}
+          onCancel={() => void providerLogin.cancel()}
+          onReopen={() => void providerLogin.reopen()}
           onRecheck={() => void recheckProviderConnection()}
         />
       ) : !showBoard ? (
@@ -508,8 +483,8 @@ export function App({ initialSnapshot, bridge }: AppProps) {
               reconnectButtonRef={reconnectOpener}
               onReconnect={() => {
                 setAuthError(undefined);
+                setReconnectOpen(true);
                 if (isFeishuProject) void startProviderLogin();
-                else setReconnectOpen(true);
               }}
               providerDisplayName={connection.provider.displayName}
               onOpenItem={openDetail}
@@ -537,15 +512,19 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           onClose={() => closeReconnect()}
         />
       ) : null}
-      {isFeishuProject && showBoard && loginTransaction ? (
+      {isFeishuProject && showBoard && reconnectOpen ? (
         <FeishuProjectLogin
           connection={connection.provider}
-          transaction={loginTransaction}
-          pending={authPending}
+          session={providerLogin.session}
+          action={providerLogin.action}
+          errorCode={providerLogin.errorCode}
           error={authError}
+          waitingLong={providerLogin.waitingLong}
           onStart={() => void startProviderLogin()}
-          onCancel={() => void cancelProviderLogin()}
+          onCancel={() => void providerLogin.cancel()}
+          onReopen={() => void providerLogin.reopen()}
           onRecheck={() => void recheckProviderConnection()}
+          onClose={() => closeReconnect()}
           dialog
         />
       ) : null}

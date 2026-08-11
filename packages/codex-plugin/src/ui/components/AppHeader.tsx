@@ -9,6 +9,7 @@ interface AppHeaderProps {
   showFullscreen: boolean;
   fullscreenPending: boolean;
   refreshPending: boolean;
+  providerLoginActive?: boolean;
   onFullscreen: () => void;
   onRefresh: () => void;
   onToggleMenu: () => void;
@@ -18,7 +19,6 @@ const statusCopy = {
   checking: "检查中",
   cli_missing: "未安装",
   connected: "已连接",
-  authorizing: "授权中",
   disconnected: "未登录",
   expired: "需重新登录",
   unavailable: "暂不可用",
@@ -31,6 +31,7 @@ export function AppHeader({
   showFullscreen,
   fullscreenPending,
   refreshPending,
+  providerLoginActive = false,
   onFullscreen,
   onRefresh,
   onToggleMenu,
@@ -50,8 +51,8 @@ export function AppHeader({
         </div>
       </div>
       <div className="header-actions">
-        <span className={`status-dot status-dot--${connection.provider.state}`}>
-          {connection.provider.displayName} {statusCopy[connection.provider.state]}
+        <span className={`status-dot status-dot--${providerLoginActive ? "checking" : connection.provider.state}`}>
+          {connection.provider.displayName} {providerLoginActive ? "授权中" : statusCopy[connection.provider.state]}
         </span>
         <span className="sync-time">最后同步 {syncedAt}</span>
         {showFullscreen ? (

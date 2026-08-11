@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TaskboardPreferences } from "../src/contracts/taskboard-preferences.js";
 import type { TaskboardSnapshot } from "../src/contracts/taskboard.js";
+import type { ProviderLoginSnapshot } from "../src/contracts/providers.js";
 import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import { App } from "../src/ui/App.js";
@@ -116,6 +117,23 @@ function snapshotWithFeishuState(
   };
 }
 
+function providerLoginSession(
+  state: ProviderLoginSnapshot["state"],
+  overrides: Partial<ProviderLoginSnapshot> = {},
+): ProviderLoginSnapshot {
+  const now = Date.now();
+  return {
+    sessionId: "login-example",
+    providerId: "feishu-project",
+    state,
+    startedAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 5 * 60_000).toISOString(),
+    browserLaunch: "opened",
+    ...overrides,
+  };
+}
+
 function offlineSnapshot(): TaskboardSnapshot {
   return {
     ...snapshotWithTapdState("expired"),
@@ -165,18 +183,18 @@ function deferred<T>() {
 }
 
 describe("FlowRivet taskboard", () => {
-  it("starts Feishu device authorization without asking for a token", async () => {
+  it("starts one-click Feishu authorization without a token or verification code", async () => {
     const user = userEvent.setup();
     const callTool = vi.fn(async (name: string) => {
+      if (name === "get_provider_login") {
+        return { content: [], structuredContent: { requestId: "req-get" } };
+      }
       if (name === "start_provider_login") {
         return {
           content: [],
           structuredContent: {
-            transactionId: "transaction-example",
-            providerId: "feishu-project",
-            verificationUri: "https://open.feishu.cn/device",
-            userCode: "ABCD-EFGH",
-            expiresAt: "2026-08-11T16:00:00.000Z",
+            requestId: "req-start",
+            session: providerLoginSession("waiting"),
           },
         };
       }
@@ -190,28 +208,27 @@ describe("FlowRivet taskboard", () => {
     expect(screen.queryByLabelText(/Token/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "连接飞书项目" }));
 
-    expect(await screen.findByText("ABCD-EFGH")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "打开飞书授权页面" })).toMatchObject({
-      target: "_blank",
-      rel: "noreferrer",
-    });
+    expect(await screen.findByRole("heading", { name: "请在浏览器中完成飞书授权" })).toBeTruthy();
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
+    expect(screen.queryByRole("button", { name: /检查.*结果/ })).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
     expect(callTool).toHaveBeenCalledWith("start_provider_login", {});
-    expect(document.body.textContent).not.toContain("transaction-example");
+    expect(document.body.textContent).not.toContain("login-example");
   });
 
-  it("loads the board after Feishu authorization completes", async () => {
+  it("loads the board automatically after Feishu authorization completes", async () => {
     const user = userEvent.setup();
     const connected = snapshotWithFeishuState("connected");
     const callTool = vi.fn(async (name: string) => {
+      if (name === "get_provider_login") {
+        return { content: [], structuredContent: { requestId: "req-get" } };
+      }
       if (name === "start_provider_login") {
         return {
           content: [],
           structuredContent: {
-            transactionId: "transaction-example",
-            providerId: "feishu-project",
-            verificationUri: "https://open.feishu.cn/device",
-            userCode: "ABCD-EFGH",
-            expiresAt: "2026-08-11T16:00:00.000Z",
+            requestId: "req-start",
+            session: providerLoginSession("succeeded"),
           },
         };
       }
@@ -226,28 +243,71 @@ describe("FlowRivet taskboard", () => {
     />);
 
     await user.click(screen.getByRole("button", { name: "连接飞书项目" }));
-    await user.click(await screen.findByRole("button", { name: "检查授权结果" }));
 
     expect(await screen.findByRole("region", { name: "工作项看板" })).toBeTruthy();
     expect(callTool).toHaveBeenCalledWith("get_provider_connection", {});
     expect(callTool).toHaveBeenCalledWith("open_my_taskboard", {});
   });
 
+  it("shows a temporary manual fallback only when the system browser cannot open", async () => {
+    const user = userEvent.setup();
+    const callTool = vi.fn(async (name: string) => ({
+      content: [],
+      structuredContent: name === "get_provider_login"
+        ? { requestId: "req-get" }
+        : {
+            requestId: "req-start",
+            session: providerLoginSession("waiting", {
+              browserLaunch: "manual_required",
+              error: {
+                code: "provider_browser_launch_failed",
+                retryable: true,
+                recoveryAction: "open_manually",
+                requestId: "req-start",
+              },
+              manualFallback: {
+                verificationUri: "https://open.feishu.cn/device?code=example",
+                userCode: "ABCD-EFGH",
+              },
+            }),
+          },
+    }));
+    render(<App
+      initialSnapshot={snapshotWithFeishuState("disconnected")}
+      bridge={createBridge({ callTool })}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "连接飞书项目" }));
+
+    expect(await screen.findByRole("link", { name: "打开临时授权页" })).toMatchObject({
+      target: "_blank",
+      rel: "noreferrer",
+    });
+    expect(screen.getByLabelText("飞书备用授权码").textContent).toBe("ABCD-EFGH");
+    expect(screen.getByRole("button", { name: "复制飞书备用授权码" })).toBeTruthy();
+  });
+
   it("cancels an in-progress Feishu authorization", async () => {
     const user = userEvent.setup();
-    const disconnected = snapshotWithFeishuState("disconnected").connection.provider;
-    const callTool = vi.fn(async (name: string) => name === "start_provider_login"
-      ? {
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "get_provider_login") {
+        return { content: [], structuredContent: { requestId: "req-get" } };
+      }
+      if (name === "start_provider_login") return {
           content: [],
           structuredContent: {
-            transactionId: "transaction-example",
-            providerId: "feishu-project",
-            verificationUri: "https://open.feishu.cn/device",
-            userCode: "ABCD-EFGH",
-            expiresAt: "2026-08-11T16:00:00.000Z",
+            requestId: "req-start",
+            session: providerLoginSession("waiting"),
           },
-        }
-      : { content: [], structuredContent: disconnected });
+        };
+      return {
+        content: [],
+        structuredContent: {
+          requestId: "req-cancel",
+          session: providerLoginSession("cancelled"),
+        },
+      };
+    });
     render(<App
       initialSnapshot={snapshotWithFeishuState("disconnected")}
       bridge={createBridge({ callTool })}
@@ -256,9 +316,9 @@ describe("FlowRivet taskboard", () => {
     await user.click(screen.getByRole("button", { name: "连接飞书项目" }));
     await user.click(await screen.findByRole("button", { name: "取消授权" }));
 
-    expect(await screen.findByRole("button", { name: "连接飞书项目" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "重新授权" })).toBeTruthy();
     expect(callTool).toHaveBeenCalledWith("cancel_provider_login", {
-      transactionId: "transaction-example",
+      sessionId: "login-example",
     });
   });
 
@@ -269,23 +329,24 @@ describe("FlowRivet taskboard", () => {
     cached.freshScopeCount = 0;
     cached.staleScopeCount = 2;
     cached.items = cached.items.map((item) => ({ ...item, freshness: "cached" }));
-    const callTool = vi.fn().mockResolvedValue({
+    const callTool = vi.fn(async (name: string) => ({
       content: [],
-      structuredContent: {
-        transactionId: "transaction-example",
-        providerId: "feishu-project",
-        verificationUri: "https://open.feishu.cn/device",
-        userCode: "ABCD-EFGH",
-        expiresAt: "2026-08-11T16:00:00.000Z",
-      },
-    });
+      structuredContent: name === "get_provider_login"
+        ? { requestId: "req-get" }
+        : { requestId: "req-start", session: providerLoginSession("waiting") },
+    }));
     render(<App initialSnapshot={cached} bridge={createBridge({ callTool })} />);
 
     await user.click(screen.getByRole("button", { name: "重新连接飞书项目" }));
 
     expect(await screen.findByRole("dialog", { name: "重新连接飞书项目" })).toBeTruthy();
-    expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
+    expect(screen.queryByText("ABCD-EFGH")).toBeNull();
     expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "关闭飞书授权" }));
+    expect(screen.queryByRole("dialog", { name: "重新连接飞书项目" })).toBeNull();
+    expect(screen.getByText("飞书项目 授权中")).toBeTruthy();
+    const reconnectButton = screen.getByRole("button", { name: "重新连接飞书项目" });
+    await vi.waitFor(() => expect(document.activeElement).toBe(reconnectButton));
   });
 
   it("shows a bounded local CLI recovery when Feishu CLI is missing", async () => {

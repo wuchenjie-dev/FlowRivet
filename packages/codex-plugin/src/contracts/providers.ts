@@ -4,7 +4,6 @@ export const providerConnectionStates = [
   "checking",
   "cli_missing",
   "disconnected",
-  "authorizing",
   "connected",
   "expired",
   "unavailable",
@@ -17,14 +16,6 @@ export const providerConnectionSchema = z.object({
   accountDisplayName: z.string().min(1).optional(),
   tenantDisplayName: z.string().min(1).optional(),
   profileName: z.string().min(1).optional(),
-}).strict();
-
-export const providerLoginTransactionSchema = z.object({
-  transactionId: z.string().min(1),
-  providerId: z.string().min(1),
-  verificationUri: z.url().refine((value) => value.startsWith("https://")),
-  userCode: z.string().min(1),
-  expiresAt: z.iso.datetime(),
 }).strict();
 
 export const providerLoginStates = [
@@ -124,7 +115,6 @@ export const providerDescriptorSchema = z.object({
 
 export type ProviderConnectionState = (typeof providerConnectionStates)[number];
 export type ProviderConnection = z.infer<typeof providerConnectionSchema>;
-export type ProviderLoginTransaction = z.infer<typeof providerLoginTransactionSchema>;
 export type ProviderLoginState = (typeof providerLoginStates)[number];
 export type ProviderLoginErrorCode = (typeof providerLoginErrorCodes)[number];
 export type ProviderLoginRecoveryAction = (typeof providerLoginRecoveryActions)[number];
