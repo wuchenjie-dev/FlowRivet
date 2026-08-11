@@ -104,16 +104,16 @@
 - Create: `tests/plugin-update-companion-process-manager.test.ts`
 - Modify: `src/plugin-update/contracts.ts`
 
-- [ ] Add failing process-adapter tests for Windows, Linux, and macOS PID/start-time inspection, graceful stop, forced stop timeout, detached startup, and health polling.
-- [ ] Add failing ownership tests that reject PID reuse, mismatched health identity, non-loopback hosts, and unrelated Node processes.
-- [ ] Add failing legacy tests for exact old server command detection, strict `{status:"ok"}` health, interactive confirmation, JSON/non-TTY refusal, `--adopt-legacy-companion`, and revalidation immediately before termination.
-- [ ] Run the focused tests and confirm failures.
-- [ ] Implement platform adapters using argument arrays and no shell interpolation.
-- [ ] Stop a managed Companion only when registry PID, process start time, and health identity all match.
-- [ ] Adopt the old FlowRivet Companion only under the design's exact checks and explicit consent; otherwise return `companion_legacy_confirmation_required`.
-- [ ] Start the built Companion detached with an explicit instance-file path, poll health to a bounded deadline, and fail the update if identity validation does not succeed.
-- [ ] Re-run focused tests and `npm run typecheck`.
-- [ ] Commit: `feat(plugin): safely restart local companion`
+- [x] Add failing process-adapter tests for Windows, Linux, and macOS PID/start-time inspection, graceful stop, forced stop timeout, detached startup, and health polling.
+- [x] Add failing ownership tests that reject PID reuse, mismatched health identity, non-loopback hosts, and unrelated Node processes.
+- [x] Add failing legacy tests for exact old server command detection, strict `{status:"ok"}` health, interactive confirmation, JSON/non-TTY refusal, `--adopt-legacy-companion`, and revalidation immediately before termination.
+- [x] Run the focused tests and confirm failures.
+- [x] Implement platform adapters using argument arrays and no shell interpolation.
+- [x] Stop a managed Companion only when registry PID, process start time, and health identity all match.
+- [x] Adopt the old FlowRivet Companion only under the design's exact checks and explicit consent; otherwise return `companion_legacy_confirmation_required`.
+- [x] Start the built Companion detached with an explicit instance-file path, poll health to a bounded deadline, and fail the update if identity validation does not succeed.
+- [x] Re-run focused tests and `npm run typecheck`.
+- [x] Commit: `feat(plugin): safely restart local companion`
 
 ## Task 7: Orchestrate the full update and npm bootstrap
 
