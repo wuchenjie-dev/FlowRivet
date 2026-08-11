@@ -8,9 +8,15 @@ interface ProjectSidebarProps {
   projects: TaskboardSnapshot["projects"];
   selected: BoardFilter;
   onSelect: (filter: BoardFilter) => void;
+  providerDisplayName: string;
 }
 
-export function ProjectSidebar({ projects, selected, onSelect }: ProjectSidebarProps) {
+export function ProjectSidebar({
+  projects,
+  selected,
+  onSelect,
+  providerDisplayName,
+}: ProjectSidebarProps) {
   return (
     <aside className="project-sidebar" aria-label="项目导航">
       <nav>
@@ -40,7 +46,7 @@ export function ProjectSidebar({ projects, selected, onSelect }: ProjectSidebarP
         ))}
       </nav>
       <div className="sidebar-footer">
-        <div className="sidebar-footnote"><span>只读</span>数据来自 TAPD</div>
+        <div className="sidebar-footnote"><span>只读</span>数据来自 {providerDisplayName}</div>
       </div>
     </aside>
   );

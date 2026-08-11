@@ -24,6 +24,9 @@ export function ConnectionMenu({
   preferencesPending,
   onSaveRefreshInterval,
 }: ConnectionMenuProps) {
+  const disconnectLabel = connection.provider.displayName === "TAPD"
+    ? "断开 TAPD"
+    : `断开${connection.provider.displayName}`;
   return (
     <div className="connection-menu" role="menu" aria-label="连接状态">
       <div className="connection-row">
@@ -53,17 +56,16 @@ export function ConnectionMenu({
       </button>
       {pingState === "success" ? <p className="inline-status inline-status--success">本地 Companion 已响应</p> : null}
       {pingState === "error" ? <p className="inline-status inline-status--error">本地 Companion 无法访问</p> : null}
-      {connection.provider.providerId === "tapd"
-        && connection.provider.state === "connected" ? (
+      {connection.provider.state === "connected" ? (
         <button
           className="menu-command menu-command--danger"
           type="button"
           onClick={onDisconnect}
           disabled={disconnectPending}
-          aria-label="断开 TAPD"
+          aria-label={disconnectLabel}
         >
           <CircleOff size={15} aria-hidden="true" />
-          {disconnectPending ? "正在断开..." : "断开 TAPD"}
+          {disconnectPending ? "正在断开..." : disconnectLabel}
         </button>
       ) : null}
     </div>

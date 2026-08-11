@@ -15,6 +15,7 @@ import {
 type Scenario =
   | "connected"
   | "disconnected"
+  | "cli_missing"
   | "expired"
   | "partial"
   | "error"
@@ -31,30 +32,71 @@ interface JsonRpcMessage {
   error?: { code: number; message: string };
 }
 
+const feishuDemoTaskboardSnapshot: TaskboardSnapshot = {
+  ...demoTaskboardSnapshot,
+  connection: {
+    ...demoTaskboardSnapshot.connection,
+    provider: {
+      providerId: "feishu-project",
+      displayName: "飞书项目",
+      state: "connected",
+      accountDisplayName: "演示用户",
+      profileName: "default",
+    },
+  },
+  projectCatalog: {
+    ...demoTaskboardSnapshot.projectCatalog,
+    provider: {
+      providerId: "feishu-project",
+      displayName: "飞书项目",
+      state: "connected",
+      accountDisplayName: "演示用户",
+      profileName: "default",
+    },
+    projects: demoTaskboardSnapshot.projectCatalog.projects.map((project, index) => ({
+      ...project,
+      providerId: "feishu-project",
+      externalId: `PROJ-${index + 1}`,
+    })),
+  },
+  projects: demoTaskboardSnapshot.projects.map((project, index) => ({
+    ...project,
+    providerId: "feishu-project",
+    externalId: `PROJ-${index + 1}`,
+  })),
+  items: demoTaskboardSnapshot.items.map((item, index) => ({
+    ...item,
+    key: `feishu-project:PROJ-${index % 2 + 1}:work_item:${index + 1}`,
+    providerId: "feishu-project",
+    projectExternalId: `PROJ-${index % 2 + 1}`,
+    externalUrl: `https://project.feishu.cn/demo/work_item/${index + 1}`,
+  })),
+};
+
 function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
   if (scenario === "partial") {
     return {
-      ...demoTaskboardSnapshot,
+      ...feishuDemoTaskboardSnapshot,
       syncSummary: { successfulProjects: 1, failedProjects: 1, itemCount: 7 },
     };
   }
   if (scenario === "error") {
     return {
-      ...demoTaskboardSnapshot,
+      ...feishuDemoTaskboardSnapshot,
       items: [],
-      projects: demoTaskboardSnapshot.projects.map((project) => ({ ...project, count: 0 })),
+      projects: feishuDemoTaskboardSnapshot.projects.map((project) => ({ ...project, count: 0 })),
       syncSummary: { successfulProjects: 0, failedProjects: 2, itemCount: 0 },
       syncErrorCode: "work_item_sync_failed",
     };
   }
   if (scenario === "mixed") {
     return {
-      ...demoTaskboardSnapshot,
+      ...feishuDemoTaskboardSnapshot,
       dataFreshness: "mixed",
       freshScopeCount: 4,
       staleScopeCount: 2,
       lastSuccessfulSyncAt: "2026-08-06T12:00:00.000Z",
-      items: demoTaskboardSnapshot.items.map((item, index) => ({
+      items: feishuDemoTaskboardSnapshot.items.map((item, index) => ({
         ...item,
         freshness: index < 2 ? "cached" : "fresh",
       })),
@@ -62,16 +104,16 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
   }
   if (scenario === "offline" || scenario === "offline-detail-error") {
     return {
-      ...demoTaskboardSnapshot,
+      ...feishuDemoTaskboardSnapshot,
       connection: {
-        ...demoTaskboardSnapshot.connection,
+        ...feishuDemoTaskboardSnapshot.connection,
         provider: {
-          ...demoTaskboardSnapshot.connection.provider,
+          ...feishuDemoTaskboardSnapshot.connection.provider,
           state: "expired",
         },
       },
       projectCatalog: {
-        ...demoTaskboardSnapshot.projectCatalog,
+        ...feishuDemoTaskboardSnapshot.projectCatalog,
         stale: true,
       },
       dataFreshness: "offline",
@@ -79,20 +121,20 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
       staleScopeCount: 6,
       lastSuccessfulSyncAt: "2026-08-06T12:00:00.000Z",
       freshnessReasonCode: "provider_unauthorized",
-      items: demoTaskboardSnapshot.items.map((item) => ({
+      items: feishuDemoTaskboardSnapshot.items.map((item) => ({
         ...item,
         freshness: "cached",
       })),
     };
   }
   return {
-    ...demoTaskboardSnapshot,
+    ...feishuDemoTaskboardSnapshot,
     connection: {
-      ...demoTaskboardSnapshot.connection,
+      ...feishuDemoTaskboardSnapshot.connection,
       provider: {
-        ...demoTaskboardSnapshot.connection.provider,
+        ...feishuDemoTaskboardSnapshot.connection.provider,
         state: scenario,
-        ...(scenario === "disconnected"
+        ...(scenario !== "connected"
           ? { accountDisplayName: undefined, tenantDisplayName: undefined }
           : {}),
       },
@@ -197,7 +239,19 @@ function DemoHarness() {
           return;
         }
         const connectedSnapshot = scenarioSnapshot("connected");
-        const structuredContent = toolName === "login_with_tapd_token"
+        const structuredContent = toolName === "start_provider_login"
+          ? {
+              transactionId: "demo-transaction",
+              providerId: "feishu-project",
+              verificationUri: "https://open.feishu.cn/device",
+              userCode: "DEMO-CODE",
+              expiresAt: "2026-08-11T16:00:00.000Z",
+            }
+          : toolName === "get_provider_connection"
+            ? connectedSnapshot.connection.provider
+          : toolName === "cancel_provider_login"
+            ? scenarioSnapshot("disconnected").connection.provider
+          : toolName === "login_with_tapd_token"
           ? {
               ok: true,
               connection: {
@@ -215,6 +269,8 @@ function DemoHarness() {
             ].includes(scenario)
               ? "connected"
               : scenario)
+            : toolName === "disconnect_provider"
+              ? scenarioSnapshot("disconnected").connection.provider
             : toolName === "disconnect_tapd"
               ? { ok: true, connection: { tapd: "disconnected" } }
               : toolName === "get_work_item_detail" && detailReference.success

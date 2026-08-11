@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
 import {
+  providerConnectionSchema,
+  providerLoginTransactionSchema,
+  type ProviderLoginTransaction,
+} from "../contracts/providers.js";
+import {
   taskboardPreferencesSchema,
   type TaskboardPreferences,
 } from "../contracts/taskboard-preferences.js";
@@ -14,6 +19,7 @@ import { workItemDetailSchema, type WorkItemDetail } from "../contracts/work-ite
 import type { WorkItem } from "../contracts/taskboard.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
+import { FeishuProjectLogin } from "./components/FeishuProjectLogin.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
@@ -44,6 +50,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [notice, setNotice] = useState<string>();
   const [authError, setAuthError] = useState<string>();
   const [authPending, setAuthPending] = useState(false);
+  const [loginTransaction, setLoginTransaction] = useState<ProviderLoginTransaction>();
   const [disconnectPending, setDisconnectPending] = useState(false);
   const [preferences, setPreferences] = useState<TaskboardPreferences>();
   const [preferencesPending, setPreferencesPending] = useState(false);
@@ -58,10 +65,13 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
-  const tapdState = connection.provider.state;
+  const authRequestSequence = useRef(0);
+  const authPollPending = useRef(false);
+  const providerState = connection.provider.state;
+  const isFeishuProject = connection.provider.providerId === "feishu-project";
 
   const refreshCoordinator = useAutoRefresh({
-    enabled: tapdState === "connected",
+    enabled: providerState === "connected",
     intervalSeconds: preferences?.refreshIntervalSeconds,
     performRefresh: refreshBoard,
   });
@@ -87,6 +97,20 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     // The host display capability is fixed for this mounted MCP App.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridge]);
+
+  useEffect(() => {
+    if (!loginTransaction) return;
+    const timer = window.setInterval(() => {
+      if (authPollPending.current) return;
+      authPollPending.current = true;
+      void recheckProviderConnection().finally(() => {
+        authPollPending.current = false;
+      });
+    }, 1_500);
+    return () => window.clearInterval(timer);
+    // The transaction ID defines the lifetime of this bounded authorization poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loginTransaction?.transactionId]);
 
   useEffect(() => {
     refreshCoordinator.markAttemptCompleted({
@@ -164,6 +188,12 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   }
 
   function openDetail(item: WorkItem, opener: HTMLButtonElement) {
+    if (item.providerId === "feishu-project") {
+      if (!openValidatedProviderUrl(item.externalUrl)) {
+        setNotice("工作项链接无效，无法打开");
+      }
+      return;
+    }
     detailOpener.current = opener;
     setSelectedItem(item);
     const cached = detailCache.current.get(item.key);
@@ -258,19 +288,87 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
   }
 
+  async function startProviderLogin() {
+    const sequence = ++authRequestSequence.current;
+    setAuthPending(true);
+    setAuthError(undefined);
+    try {
+      const result = await bridge.callTool("start_provider_login", {});
+      const parsed = providerLoginTransactionSchema.safeParse(result.structuredContent);
+      if (!parsed.success) throw new Error("provider_login_invalid_response");
+      if (sequence !== authRequestSequence.current) return;
+      setLoginTransaction(parsed.data);
+      setConnection((current) => ({
+        ...current,
+        provider: { ...current.provider, state: "authorizing" },
+      }));
+    } catch {
+      if (sequence === authRequestSequence.current) {
+        setAuthError("无法启动飞书授权，请检查本地 CLI 后重试");
+      }
+    } finally {
+      if (sequence === authRequestSequence.current) setAuthPending(false);
+    }
+  }
+
+  async function recheckProviderConnection() {
+    const sequence = ++authRequestSequence.current;
+    setAuthPending(true);
+    setAuthError(undefined);
+    try {
+      const result = await bridge.callTool("get_provider_connection", {});
+      const parsed = providerConnectionSchema.safeParse(result.structuredContent);
+      if (!parsed.success) throw new Error("provider_connection_invalid_response");
+      if (sequence !== authRequestSequence.current) return;
+      setConnection((current) => ({ ...current, provider: parsed.data }));
+      if (parsed.data.state === "connected") {
+        setLoginTransaction(undefined);
+        const snapshot = await loadBoard("open_my_taskboard");
+        setNotice(`飞书项目已连接，已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
+      }
+    } catch {
+      if (sequence === authRequestSequence.current) {
+        setAuthError("无法检查飞书项目连接，请稍后重试");
+      }
+    } finally {
+      if (sequence === authRequestSequence.current) setAuthPending(false);
+    }
+  }
+
+  async function cancelProviderLogin() {
+    if (!loginTransaction) return;
+    const sequence = ++authRequestSequence.current;
+    setAuthPending(true);
+    try {
+      const result = await bridge.callTool("cancel_provider_login", {
+        transactionId: loginTransaction.transactionId,
+      });
+      const parsed = providerConnectionSchema.safeParse(result.structuredContent);
+      if (!parsed.success) throw new Error("provider_connection_invalid_response");
+      if (sequence !== authRequestSequence.current) return;
+      setConnection((current) => ({ ...current, provider: parsed.data }));
+      setLoginTransaction(undefined);
+      setAuthError(undefined);
+    } catch {
+      if (sequence === authRequestSequence.current) setAuthError("无法取消飞书授权");
+    } finally {
+      if (sequence === authRequestSequence.current) setAuthPending(false);
+    }
+  }
+
   async function disconnect() {
     setDisconnectPending(true);
     try {
-      const result = await bridge.callTool("disconnect_tapd", {});
-      const parsed = authResultSchema.safeParse(result.structuredContent);
-      if (!parsed.success || !parsed.data.ok) throw new Error("disconnect failed");
+      const result = await bridge.callTool(
+        isFeishuProject ? "disconnect_provider" : "disconnect_tapd",
+        {},
+      );
+      const nextProvider = isFeishuProject
+        ? providerConnectionSchema.parse(result.structuredContent)
+        : parseLegacyDisconnectedProvider(result.structuredContent, connection.provider);
       setConnection((current) => ({
         ...current,
-        provider: {
-          providerId: current.provider.providerId,
-          displayName: current.provider.displayName,
-          state: parsed.data.connection.tapd,
-        },
+        provider: nextProvider,
       }));
       setProjects([]);
       setProjectCatalog((current) => ({ ...current, projects: [], stale: false }));
@@ -283,9 +381,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       setStaleScopeCount(0);
       setLastSuccessfulSyncAt(undefined);
       setMenuOpen(false);
-      setNotice("TAPD 已断开，本机凭据已删除");
+      setLoginTransaction(undefined);
+      setNotice(`${connection.provider.displayName}已断开`);
     } catch {
-      setNotice("无法断开 TAPD，请稍后重试");
+      setNotice(`无法断开${connection.provider.displayName}，请稍后重试`);
     } finally {
       setDisconnectPending(false);
     }
@@ -327,7 +426,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
   }
 
-  const isDisconnected = tapdState !== "connected";
+  const isDisconnected = providerState !== "connected";
   const showCachedBoard = dataFreshness === "offline"
     && (items.length > 0 || projects.length > 0);
   const showBoard = !isDisconnected || showCachedBoard;
@@ -363,9 +462,19 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         />
       ) : null}
 
-      {!showBoard ? (
+      {!showBoard && isFeishuProject ? (
+        <FeishuProjectLogin
+          connection={connection.provider}
+          transaction={loginTransaction}
+          pending={authPending}
+          error={authError}
+          onStart={() => void startProviderLogin()}
+          onCancel={() => void cancelProviderLogin()}
+          onRecheck={() => void recheckProviderConnection()}
+        />
+      ) : !showBoard ? (
         <TapdLogin
-          expired={tapdState === "expired"}
+          expired={providerState === "expired"}
           pending={authPending}
           error={authError}
           onSubmit={login}
@@ -376,6 +485,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
             projects={projects}
             selected={selectedFilter}
             onSelect={setSelectedFilter}
+            providerDisplayName={connection.provider.displayName}
           />
           <main className="board-main">
             <div className="board-heading">
@@ -398,8 +508,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
               reconnectButtonRef={reconnectOpener}
               onReconnect={() => {
                 setAuthError(undefined);
-                setReconnectOpen(true);
+                if (isFeishuProject) void startProviderLogin();
+                else setReconnectOpen(true);
               }}
+              providerDisplayName={connection.provider.displayName}
               onOpenItem={openDetail}
             />
           </main>
@@ -417,7 +529,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           onRetry={() => void loadDetail(selectedItem)}
         />
       ) : null}
-      {reconnectOpen ? (
+      {reconnectOpen && !isFeishuProject ? (
         <TapdReconnectDialog
           pending={authPending}
           error={authError}
@@ -428,6 +540,31 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       {notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );
+}
+
+function openValidatedProviderUrl(value: string | undefined) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseLegacyDisconnectedProvider(
+  value: unknown,
+  current: TaskboardSnapshot["connection"]["provider"],
+) {
+  const parsed = authResultSchema.safeParse(value);
+  if (!parsed.success || !parsed.data.ok) throw new Error("disconnect failed");
+  return {
+    providerId: current.providerId,
+    displayName: current.displayName,
+    state: parsed.data.connection.tapd,
+  };
 }
 
 function authErrorCopy(code: AuthErrorCode | undefined) {

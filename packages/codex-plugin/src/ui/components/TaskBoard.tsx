@@ -12,6 +12,7 @@ interface TaskBoardProps {
   lastSuccessfulSyncAt?: string;
   reconnectButtonRef?: Ref<HTMLButtonElement>;
   onReconnect: () => void;
+  providerDisplayName: string;
   onOpenItem: (item: WorkItem, opener: HTMLButtonElement) => void;
 }
 
@@ -23,8 +24,12 @@ export function TaskBoard({
   lastSuccessfulSyncAt,
   reconnectButtonRef,
   onReconnect,
+  providerDisplayName,
   onOpenItem,
 }: TaskBoardProps) {
+  const reconnectLabel = providerDisplayName === "TAPD"
+    ? "重新连接 TAPD"
+    : `重新连接${providerDisplayName}`;
   return (
     <>
       {dataFreshness === "mixed" ? (
@@ -38,7 +43,7 @@ export function TaskBoard({
           <span><strong>正在显示离线缓存</strong>{syncTime(lastSuccessfulSyncAt)}</span>
           <button ref={reconnectButtonRef} type="button" onClick={onReconnect}>
             <LogIn size={14} aria-hidden="true" />
-            重新连接 TAPD
+            {reconnectLabel}
           </button>
         </div>
       ) : null}
