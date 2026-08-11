@@ -166,7 +166,7 @@ export class MeegleAuthService implements ProviderAuthService {
           const transaction = providerLoginTransactionSchema.parse({
             transactionId,
             providerId,
-            verificationUri: event.verificationUri,
+            verificationUri: event.verificationUriComplete,
             userCode: event.userCode,
             expiresAt: new Date(Math.min(maximumExpiry, reportedExpiry)).toISOString(),
           });

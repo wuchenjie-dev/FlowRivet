@@ -104,6 +104,21 @@ describe("Meegle auth service", () => {
     await auth.cancelLogin(first.transactionId);
   });
 
+  it("opens the complete verification URI returned by the CLI", async () => {
+    const client = new FakeClient();
+    client.startDeviceLogin.mockImplementation(async (_host, signal, onEvent) => {
+      onEvent(verificationEvent());
+      await waitForAbort(signal);
+    });
+    const auth = service(client);
+
+    const transaction = await auth.startLogin();
+
+    expect(transaction.verificationUri)
+      .toBe("https://open.feishu.cn/device?code=example");
+    await auth.cancelLogin(transaction.transactionId);
+  });
+
   it("isolates login transactions when the current profile changes", async () => {
     const client = new FakeClient();
     client.getCurrentProfile
