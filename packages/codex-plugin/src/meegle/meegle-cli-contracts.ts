@@ -45,6 +45,20 @@ export const meegleMyWorkPageSchema = z.object({
   total: z.number().int().nonnegative(),
 }).strict();
 
+export const meegleProjectSearchSchema = z.object({
+  pagination: z.object({
+    has_more: z.boolean(),
+    page_num: z.number().int().nonnegative(),
+    page_size: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }).strict(),
+  projects: z.array(z.object({
+    name: z.string().min(1),
+    project_key: z.string().min(1),
+    simple_name: z.string().min(1),
+  }).strict()),
+}).strict();
+
 export const meegleDeviceInitSchema = z.object({
   client_id: cliOpaqueTokenSchema,
   device_code: cliOpaqueTokenSchema,

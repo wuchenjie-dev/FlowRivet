@@ -12,6 +12,7 @@ import {
   meegleDeviceInitSchema,
   meegleDevicePollSchema,
   meegleMyWorkPageSchema,
+  meegleProjectSearchSchema,
   meegleUserSchema,
   type MeegleAuthStatus,
   type MeegleMyWorkPage,
@@ -145,6 +146,16 @@ export class MeegleCliClient {
     ], meegleMyWorkPageSchema, { timeoutMs: 30_000 });
   }
 
+  async getProjectSimpleName(profile: string, projectKey: string): Promise<string | undefined> {
+    const result = await this.runJson([
+      "project", "search",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--profile", validateProfile(profile),
+      "--format", "json",
+    ], meegleProjectSearchSchema, { timeoutMs: 30_000 });
+    return result.projects.find((project) => project.project_key === projectKey)?.simple_name;
+  }
+
   async initializeDeviceLogin(
     profileName: string,
     host: string,
@@ -259,6 +270,13 @@ function mapRunnerError(error: unknown) {
 function validateProfile(profile: string) {
   if (!isSafeProfile(profile)) throw new MeegleCliError("provider_invalid_response");
   return profile;
+}
+
+function validateOpaqueKey(value: string) {
+  if (!/^[A-Za-z0-9._~+\-]{1,512}$/u.test(value) || value.startsWith("-")) {
+    throw new MeegleCliError("provider_invalid_response");
+  }
+  return value;
 }
 
 function isSafeProfile(profile: string) {

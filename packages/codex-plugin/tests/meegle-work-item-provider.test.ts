@@ -18,6 +18,8 @@ class FakeClient implements MeegleWorkItemClient {
   readonly getCurrentProfile = vi.fn(async () => "default");
   readonly getCurrentUser = vi.fn(async () => identity);
   readonly getMyWorkPage = vi.fn<MeegleWorkItemClient["getMyWorkPage"]>();
+  readonly getProjectSimpleName = vi.fn(async (_profile: string, projectKey: string) =>
+    `space-${projectKey.toLowerCase()}`);
 }
 
 function rawItem(id: number, options: {
@@ -25,6 +27,7 @@ function rawItem(id: number, options: {
   type?: string;
   node?: string;
   finish?: string;
+  schedule?: [number, number];
 } = {}): NonNullable<MeegleMyWorkPage["list"]>[number] {
   const project = options.project ?? "PROJ";
   return {
@@ -35,7 +38,7 @@ function rawItem(id: number, options: {
     },
     project_key: project,
     project_name: `Project ${project}`,
-    schedule: null,
+    schedule: options.schedule ?? null,
     state_info: { end_state_key_name: "", start_state_key_name: "" },
     work_item_info: {
       work_item_id: id,
@@ -51,6 +54,33 @@ function pages(entries: Partial<Record<MeegleMyWorkAction, MeegleMyWorkPage[]>>)
 }
 
 describe("Meegle work item provider", () => {
+  it("maps the schedule end and canonical Feishu detail URL", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({
+      this_week: [{
+        list: [rawItem(42, {
+          type: "story",
+          schedule: [
+            Date.parse("2026-08-08T00:00:00.000Z"),
+            Date.parse("2026-08-09T15:59:59.999Z"),
+          ],
+        })],
+        total: 1,
+      }],
+    }));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+    const item = result.scopes.flatMap((scope) => scope.items)[0];
+
+    expect(item).toMatchObject({
+      dueAt: "2026-08-09T15:59:59.999Z",
+      externalUrl: "https://project.feishu.cn/space-proj/story/detail/42",
+    });
+    expect(client.getProjectSimpleName).toHaveBeenCalledOnce();
+    expect(client.getProjectSimpleName).toHaveBeenCalledWith("default", "PROJ");
+  });
+
   it("fully paginates, deduplicates active work, and derives projects", async () => {
     const client = new FakeClient();
     const firstPage = Array.from({ length: 50 }, (_, index) => rawItem(index + 1));

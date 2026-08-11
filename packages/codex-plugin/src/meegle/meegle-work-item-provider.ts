@@ -22,6 +22,7 @@ import {
 export interface MeegleWorkItemClient {
   getCurrentProfile(): Promise<string>;
   getCurrentUser(profile: string): Promise<MeegleUser>;
+  getProjectSimpleName(profile: string, projectKey: string): Promise<string | undefined>;
   getMyWorkPage(
     profile: string,
     action: MeegleMyWorkAction,
@@ -69,12 +70,13 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
 
     const results = await this.fetchActions(profile);
 
+    const projectSimpleNames = await this.resolveProjectSimpleNames(profile, results);
     const afterProfile = await this.captureProfile();
     const after = await this.captureIdentity(profile);
     if (afterProfile !== profile || after.user_key !== before.user_key) {
       throw new WorkItemProviderError("provider_unauthorized");
     }
-    return this.normalize(results);
+    return this.normalize(results, projectSimpleNames);
   }
 
   private async fetchActions(profile: string): Promise<ActionResult[]> {
@@ -124,13 +126,42 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     throw new WorkItemProviderError("provider_unavailable");
   }
 
-  private normalize(results: ActionResult[]): AccountWorkItemQueryResult {
+  private async resolveProjectSimpleNames(profile: string, results: ActionResult[]) {
+    const projectKeys = new Set<string>();
+    for (const result of results) {
+      if (result.outcome !== "success") continue;
+      for (const item of result.items) {
+        const projectKey = item.project_key.trim();
+        if (projectKey) projectKeys.add(projectKey);
+      }
+    }
+
+    const simpleNames = new Map<string, string>();
+    for (const projectKey of projectKeys) {
+      try {
+        const simpleName = await this.client.getProjectSimpleName(profile, projectKey);
+        if (simpleName) simpleNames.set(projectKey, simpleName);
+      } catch {
+        // A failed project lookup must not hide otherwise usable work items.
+      }
+    }
+    return simpleNames;
+  }
+
+  private normalize(
+    results: ActionResult[],
+    projectSimpleNames: ReadonlyMap<string, string>,
+  ): AccountWorkItemQueryResult {
     const cutoff = this.clock().getTime() - 7 * 24 * 60 * 60 * 1_000;
     const winners = new Map<string, { action: MeegleMyWorkAction; item: WorkItem }>();
     for (const result of results) {
       if (result.outcome === "error") continue;
       for (const raw of result.items) {
-        const item = normalizeItem(raw, result.action);
+        const item = normalizeItem(
+          raw,
+          result.action,
+          projectSimpleNames.get(raw.project_key.trim()),
+        );
         if (!item) continue;
         if (result.action === "done") {
           const completed = item.completedAt ? new Date(item.completedAt).getTime() : Number.NaN;
@@ -221,7 +252,11 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
   }
 }
 
-function normalizeItem(raw: RawItem, action: MeegleMyWorkAction): WorkItem | undefined {
+function normalizeItem(
+  raw: RawItem,
+  action: MeegleMyWorkAction,
+  projectSimpleName?: string,
+): WorkItem | undefined {
   const projectExternalId = raw.project_key.trim();
   const projectName = raw.project_name.trim();
   const externalId = String(raw.work_item_info.work_item_id).trim();
@@ -248,6 +283,12 @@ function normalizeItem(raw: RawItem, action: MeegleMyWorkAction): WorkItem | und
   };
   const completedAt = normalizedDate(raw.finish_time?.finish_time);
   if (completedAt) item.completedAt = completedAt;
+  const dueAt = normalizedScheduleEnd(raw.schedule);
+  if (dueAt) item.dueAt = dueAt;
+  if (projectSimpleName) {
+    item.externalUrl = `https://project.feishu.cn/${encodeURIComponent(projectSimpleName)}`
+      + `/${encodeURIComponent(providerItemType)}/detail/${encodeURIComponent(externalId)}`;
+  }
   return item;
 }
 
@@ -272,6 +313,28 @@ function normalizedDate(value: string | undefined) {
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function normalizedScheduleEnd(value: unknown) {
+  const schedule = typeof value === "string" ? parseJson(value) : value;
+  if (!Array.isArray(schedule) || schedule.length < 2) return undefined;
+  const end = schedule[1];
+  const timestamp = typeof end === "number"
+    ? end
+    : typeof end === "string" && /^\d+$/u.test(end)
+      ? Number(end)
+      : Number.NaN;
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return undefined;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function actionPriority(action: MeegleMyWorkAction) {

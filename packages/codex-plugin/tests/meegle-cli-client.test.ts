@@ -89,6 +89,30 @@ describe("Meegle CLI client", () => {
     ]);
   });
 
+  it("resolves a project key to the canonical URL simple name", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        pagination: { has_more: false, page_num: 1, page_size: 50, total: 1 },
+        projects: [{
+          name: "Example Project",
+          project_key: "PROJ",
+          simple_name: "example-space",
+        }],
+      }),
+      exitCode: 0,
+    });
+
+    await expect(client(runner).getProjectSimpleName("default", "PROJ"))
+      .resolves.toBe("example-space");
+    expect(runner.run.mock.calls[0]![0].args).toEqual([
+      "project", "search",
+      "--project-key", "PROJ",
+      "--profile", "default",
+      "--format", "json",
+    ]);
+  });
+
   it("accepts structured unauthenticated status on exit one", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({
