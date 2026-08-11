@@ -20,6 +20,7 @@ function registration(
     },
     workItems: {
       id,
+      queryMode: "project_scoped",
       listProjectWorkItems: async () => ({
         projectExternalId: "PROJ",
         scopes: [],

@@ -11,7 +11,9 @@ import {
 import { WorkItemService } from "../src/work-items/work-item-service.js";
 import {
   WorkItemProviderError,
-  type WorkItemProvider,
+  type AccountWorkItemQueryResult,
+  type AccountScopedWorkItemProvider,
+  type ProjectScopedWorkItemProvider,
   type WorkItemQueryResult,
 } from "../src/work-items/work-item-provider.js";
 
@@ -51,9 +53,51 @@ function item(
   };
 }
 
-class FakeProvider implements WorkItemProvider {
+class FakeProvider implements ProjectScopedWorkItemProvider {
   readonly id = "tapd";
-  readonly listProjectWorkItems = vi.fn<WorkItemProvider["listProjectWorkItems"]>();
+  readonly queryMode = "project_scoped" as const;
+  readonly listProjectWorkItems = vi.fn<ProjectScopedWorkItemProvider["listProjectWorkItems"]>();
+}
+
+class FakeAccountProvider implements AccountScopedWorkItemProvider {
+  readonly id = "feishu-project";
+  readonly queryMode = "account_scoped" as const;
+  readonly listAccountWorkItems = vi.fn<AccountScopedWorkItemProvider["listAccountWorkItems"]>();
+}
+
+function accountProject(externalId: string): ProjectRef {
+  return {
+    providerId: "feishu-project",
+    externalId,
+    name: `Feishu Project ${externalId}`,
+    selected: true,
+    available: true,
+    source: "discovered",
+    lastVerifiedAt: now.toISOString(),
+  };
+}
+
+function accountItem(externalId: string, projectExternalId = "PROJ"): WorkItem {
+  return {
+    key: `feishu-project:${projectExternalId}:task:${externalId}`,
+    providerId: "feishu-project",
+    externalId,
+    projectExternalId,
+    projectName: `Feishu Project ${projectExternalId}`,
+    kind: "task",
+    providerItemType: "task",
+    title: `Feishu item ${externalId}`,
+    stage: "todo",
+    providerStatus: "started",
+    freshness: "fresh",
+  };
+}
+
+function accountResult(
+  projects: ProjectRef[],
+  scopes: AccountWorkItemQueryResult["scopes"],
+): AccountWorkItemQueryResult {
+  return { projects, scopes };
 }
 
 function result(
@@ -138,6 +182,179 @@ function cachedScope(
 }
 
 describe("work item service", () => {
+  it("synchronizes one account-scoped query without prior project discovery", async () => {
+    const provider = new FakeAccountProvider();
+    provider.listAccountWorkItems.mockResolvedValue(accountResult(
+      [accountProject("PROJ")],
+      [{
+        projectExternalId: "PROJ",
+        providerItemType: "task",
+        kind: "task",
+        outcome: "success",
+        items: [accountItem("10001")],
+      }],
+    ));
+    const service = new WorkItemService(provider, () => now);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "Example User",
+      projects: [],
+      syncSessionKey: "default",
+    });
+
+    expect(provider.listAccountWorkItems).toHaveBeenCalledOnce();
+    expect(provider.listAccountWorkItems).toHaveBeenCalledWith({
+      accountDisplayName: "Example User",
+      syncSessionKey: "default",
+    });
+    expect(snapshot.projects).toEqual([
+      expect.objectContaining({ providerId: "feishu-project", externalId: "PROJ", count: 1 }),
+    ]);
+    expect(snapshot.items[0]).toMatchObject({
+      providerId: "feishu-project",
+      projectExternalId: "PROJ",
+    });
+    expect(snapshot.summary).toEqual({
+      successfulProjects: 1,
+      failedProjects: 0,
+      itemCount: 1,
+    });
+  });
+
+  it("merges account-scoped projects into cache without an input project catalog", async () => {
+    const provider = new FakeAccountProvider();
+    const cache = new FakeCache();
+    const projects = [accountProject("PROJ")];
+    const scopes: AccountWorkItemQueryResult["scopes"] = [{
+      projectExternalId: "PROJ",
+      providerItemType: "task",
+      kind: "task",
+      outcome: "success",
+      items: [accountItem("10001")],
+    }];
+    provider.listAccountWorkItems.mockResolvedValue(accountResult(projects, scopes));
+    cache.mergeScopes.mockResolvedValue({
+      account: { providerId: "feishu-project", accountDisplayName: "Example User" },
+      projects,
+      scopes: [{
+        ...scopes[0]!,
+        freshness: "fresh",
+        lastSuccessfulSyncAt: now.toISOString(),
+      }],
+      items: [accountItem("10001")],
+      lastSuccessfulSyncAt: now.toISOString(),
+    });
+    const service = new WorkItemService(provider, () => now, cache);
+    const account = {
+      providerId: "feishu-project",
+      accountKey: "user-example",
+      accountDisplayName: "Example User",
+    };
+
+    await service.sync({
+      accountDisplayName: "Example User",
+      cacheAccount: account,
+      projects: [],
+      syncSessionKey: "default",
+    });
+
+    expect(cache.mergeScopes).toHaveBeenCalledWith({
+      account,
+      projects,
+      scopes,
+      now,
+    });
+  });
+
+  it("keeps successful account scopes when another project scope fails", async () => {
+    const provider = new FakeAccountProvider();
+    provider.listAccountWorkItems.mockResolvedValue(accountResult(
+      [accountProject("A"), accountProject("B")],
+      [{
+        projectExternalId: "A",
+        providerItemType: "task",
+        kind: "task",
+        outcome: "success",
+        items: [accountItem("A-1", "A")],
+      }, {
+        projectExternalId: "B",
+        providerItemType: "task",
+        kind: "task",
+        outcome: "error",
+        items: [],
+        errorCode: "provider_unavailable",
+      }],
+    ));
+    const service = new WorkItemService(provider, () => now);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "Example User",
+      projects: [],
+    });
+
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.summary).toEqual({
+      successfulProjects: 1,
+      failedProjects: 1,
+      itemCount: 1,
+    });
+    expect(snapshot.freshnessReasonCode).toBe("provider_unavailable");
+  });
+
+  it("rejects an account result with no usable scope", async () => {
+    const provider = new FakeAccountProvider();
+    provider.listAccountWorkItems.mockResolvedValue(accountResult(
+      [accountProject("PROJ")],
+      [{
+        projectExternalId: "PROJ",
+        providerItemType: "task",
+        kind: "task",
+        outcome: "error",
+        items: [],
+        errorCode: "provider_unavailable",
+      }],
+    ));
+    const service = new WorkItemService(provider, () => now);
+
+    await expect(service.sync({
+      accountDisplayName: "Example User",
+      projects: [],
+    })).rejects.toMatchObject({ code: "provider_unavailable" });
+  });
+
+  it("isolates account synchronization by profile but not input project selection", async () => {
+    const provider = new FakeAccountProvider();
+    const releases: Array<(value: AccountWorkItemQueryResult) => void> = [];
+    provider.listAccountWorkItems.mockImplementation(() =>
+      new Promise((resolve) => releases.push(resolve)),
+    );
+    const service = new WorkItemService(provider, () => now);
+    const account = {
+      providerId: "feishu-project",
+      accountKey: "user-example",
+      accountDisplayName: "Example User",
+    };
+    const base = {
+      accountDisplayName: "Example User",
+      cacheAccount: account,
+      syncSessionKey: "profile-a",
+    };
+
+    const first = service.sync({ ...base, projects: [] });
+    const sameProfile = service.sync({ ...base, projects: [accountProject("IGNORED")] });
+    const otherProfile = service.sync({
+      ...base,
+      projects: [],
+      syncSessionKey: "profile-b",
+    });
+
+    expect(sameProfile).toBe(first);
+    expect(otherProfile).not.toBe(first);
+    await vi.waitFor(() => expect(provider.listAccountWorkItems).toHaveBeenCalledTimes(2));
+    releases.forEach((release) => release(accountResult([], [])));
+    await Promise.all([first, sameProfile, otherProfile]);
+  });
+
   it("keeps unfinished items and only trusted completions from the last seven days", async () => {
     const provider = new FakeProvider();
     provider.listProjectWorkItems.mockResolvedValue(result("A", [

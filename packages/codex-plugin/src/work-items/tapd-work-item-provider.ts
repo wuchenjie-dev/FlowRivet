@@ -6,7 +6,7 @@ import type { TapdProjectCredentialResolver } from "../projects/tapd-project-pro
 import {
   WorkItemProviderError,
   type WorkItemErrorCode,
-  type WorkItemProvider,
+  type ProjectScopedWorkItemProvider,
   type WorkItemQueryResult,
 } from "./work-item-provider.js";
 
@@ -24,8 +24,9 @@ const itemQueries: Array<{
   { kind: "defect", path: "/bugs", ownerParameter: "current_owner", wrapper: "Bug", providerItemType: "bug" },
 ];
 
-export class TapdWorkItemProvider implements WorkItemProvider {
+export class TapdWorkItemProvider implements ProjectScopedWorkItemProvider {
   readonly id = "tapd";
+  readonly queryMode = "project_scoped" as const;
 
   private readonly endpoint: string;
   private readonly credentialResolver: TapdProjectCredentialResolver;

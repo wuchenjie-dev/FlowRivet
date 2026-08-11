@@ -19,6 +19,7 @@ export interface WorkItemSyncInput {
   accountDisplayName: string;
   projects: ProjectRef[];
   cacheAccount?: CacheAccount;
+  syncSessionKey?: string;
 }
 
 export interface WorkItemSyncSnapshot {
@@ -56,7 +57,7 @@ export class WorkItemService implements WorkItemSynchronizer {
   ) {}
 
   sync(input: WorkItemSyncInput): Promise<WorkItemSyncSnapshot> {
-    const key = synchronizationKey(this.provider.id, input);
+    const key = synchronizationKey(this.provider, input);
     if (!key) return this.performSync(input);
     const current = this.inFlight.get(key);
     if (current) return current;
@@ -87,6 +88,70 @@ export class WorkItemService implements WorkItemSynchronizer {
   }
 
   private async performSync(input: WorkItemSyncInput): Promise<WorkItemSyncSnapshot> {
+    const attemptedAt = this.clock();
+    const fresh = this.provider.queryMode === "account_scoped"
+      ? await this.fetchAccountScoped(input)
+      : await this.fetchProjectScoped(input);
+    const { projects, scopes, failureCodes, retryAfterValues } = fresh;
+    const { successfulProjects, failedProjects } = fresh;
+    const successfulScopes = scopes.filter((scope) => scope.outcome === "success");
+    const reason = preferredFailureCode(failureCodes);
+    const retryAfterSeconds = reason === "provider_rate_limited"
+      ? maximumRetryAfter(retryAfterValues)
+      : undefined;
+    let cacheWarningCode: WorkItemSyncSnapshot["cacheWarningCode"];
+    let source: CachedSnapshot;
+
+    if (this.cache && input.cacheAccount) {
+      try {
+        source = await this.cache.mergeScopes({
+          account: input.cacheAccount,
+          projects,
+          scopes,
+          now: attemptedAt,
+        });
+      } catch (error) {
+        cacheWarningCode = cacheWarning(error);
+        source = liveSnapshot(input.cacheAccount, projects, successfulScopes, attemptedAt);
+      }
+    } else {
+      if (this.cache) cacheWarningCode = "cache_identity_unavailable";
+      source = liveSnapshot(
+        input.cacheAccount ?? {
+          providerId: this.provider.id,
+          accountKey: "",
+          accountDisplayName: input.accountDisplayName,
+        },
+        projects,
+        successfulScopes,
+        attemptedAt,
+      );
+    }
+
+    const hasUsableScopes = source.scopes.length > 0;
+    if (fresh.requiresUsableScope && !hasUsableScopes) {
+      throw new WorkItemProviderError(reason ?? "work_item_sync_failed", {
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      });
+    }
+
+    return createSnapshot({
+      source,
+      projects,
+      successfulProjects,
+      failedProjects,
+      lastSyncAttemptAt: attemptedAt.toISOString(),
+      cacheWarningCode,
+      freshnessReasonCode: reason,
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    }, attemptedAt);
+  }
+
+  private async fetchProjectScoped(input: WorkItemSyncInput): Promise<FreshSyncResult> {
+    if (this.provider.queryMode !== "project_scoped") {
+      throw new WorkItemProviderError("work_item_sync_failed");
+    }
+    const provider = this.provider;
     const projects = input.projects.filter((project) => project.available);
     const scopes: Array<WorkItemScopeResult & { projectExternalId: string }> = [];
     const failureCodes: WorkItemErrorCode[] = [];
@@ -94,14 +159,13 @@ export class WorkItemService implements WorkItemSynchronizer {
     let successfulProjects = 0;
     let failedProjects = 0;
     let nextIndex = 0;
-    const attemptedAt = this.clock();
 
     const consumeNextProject = async (): Promise<void> => {
       while (nextIndex < projects.length) {
         const project = projects[nextIndex++];
         if (!project) return;
         try {
-          const result = await this.provider.listProjectWorkItems({
+          const result = await provider.listProjectWorkItems({
             projectExternalId: project.externalId,
             projectName: project.name,
             accountDisplayName: input.accountDisplayName,
@@ -144,58 +208,76 @@ export class WorkItemService implements WorkItemSynchronizer {
 
     const workerCount = Math.min(4, projects.length);
     await Promise.all(Array.from({ length: workerCount }, consumeNextProject));
-    const successfulScopes = scopes.filter((scope) => scope.outcome === "success");
-    const reason = preferredFailureCode(failureCodes);
-    const retryAfterSeconds = reason === "provider_rate_limited"
-      ? maximumRetryAfter(retryAfterValues)
-      : undefined;
-    let cacheWarningCode: WorkItemSyncSnapshot["cacheWarningCode"];
-    let source: CachedSnapshot;
+    return {
+      projects,
+      scopes,
+      successfulProjects,
+      failedProjects,
+      failureCodes,
+      retryAfterValues,
+      requiresUsableScope: projects.length > 0,
+    };
+  }
 
-    if (this.cache && input.cacheAccount) {
-      try {
-        source = await this.cache.mergeScopes({
-          account: input.cacheAccount,
-          projects,
-          scopes,
-          now: attemptedAt,
-        });
-      } catch (error) {
-        cacheWarningCode = cacheWarning(error);
-        source = liveSnapshot(input.cacheAccount, projects, successfulScopes, attemptedAt);
-      }
-    } else {
-      if (this.cache) cacheWarningCode = "cache_identity_unavailable";
-      source = liveSnapshot(
-        input.cacheAccount ?? {
-          providerId: this.provider.id,
-          accountKey: "",
-          accountDisplayName: input.accountDisplayName,
-        },
-        projects,
-        successfulScopes,
-        attemptedAt,
-      );
+  private async fetchAccountScoped(input: WorkItemSyncInput): Promise<FreshSyncResult> {
+    if (this.provider.queryMode !== "account_scoped") {
+      throw new WorkItemProviderError("work_item_sync_failed");
     }
-
-    const hasUsableScopes = source.scopes.length > 0;
-    if (projects.length > 0 && !hasUsableScopes) {
-      throw new WorkItemProviderError(reason ?? "work_item_sync_failed", {
-        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    let result;
+    try {
+      result = await this.provider.listAccountWorkItems({
+        accountDisplayName: input.accountDisplayName,
+        ...(input.cacheAccount?.accountKey
+          ? { accountKey: input.cacheAccount.accountKey }
+          : {}),
+        ...(input.cacheAccount?.tenantKey
+          ? { tenantKey: input.cacheAccount.tenantKey }
+          : {}),
+        ...(input.syncSessionKey ? { syncSessionKey: input.syncSessionKey } : {}),
+      });
+    } catch (error) {
+      throw new WorkItemProviderError(providerErrorCode(error), {
+        ...(error instanceof WorkItemProviderError && error.retryAfterSeconds !== undefined
+          ? { retryAfterSeconds: error.retryAfterSeconds }
+          : {}),
       });
     }
 
-    return createSnapshot({
-      source,
+    const projects = result.projects.filter((project) => project.available);
+    const availableProjectIds = new Set(projects.map((project) => project.externalId));
+    const scopes = result.scopes.filter((scope) => availableProjectIds.has(scope.projectExternalId));
+    const failedProjectIds = new Set(scopes
+      .filter((scope) => scope.outcome === "error")
+      .map((scope) => scope.projectExternalId));
+    const successfulProjectIds = new Set(scopes
+      .filter((scope) => scope.outcome === "success")
+      .map((scope) => scope.projectExternalId));
+    for (const projectId of failedProjectIds) successfulProjectIds.delete(projectId);
+    const failedScopes = scopes.filter((scope) => scope.outcome === "error");
+
+    return {
       projects,
-      successfulProjects,
-      failedProjects,
-      lastSyncAttemptAt: attemptedAt.toISOString(),
-      cacheWarningCode,
-      freshnessReasonCode: reason,
-      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-    }, attemptedAt);
+      scopes,
+      successfulProjects: successfulProjectIds.size,
+      failedProjects: failedProjectIds.size,
+      failureCodes: failedScopes.map((scope) => scope.errorCode ?? "work_item_sync_failed"),
+      retryAfterValues: failedScopes
+        .filter((scope) => scope.errorCode === "provider_rate_limited"
+          && scope.retryAfterSeconds !== undefined)
+        .map((scope) => scope.retryAfterSeconds as number),
+      requiresUsableScope: scopes.some((scope) => scope.outcome === "error"),
+    };
   }
+}
+
+interface FreshSyncResult {
+  projects: ProjectRef[];
+  scopes: Array<WorkItemScopeResult & { projectExternalId: string }>;
+  successfulProjects: number;
+  failedProjects: number;
+  failureCodes: WorkItemErrorCode[];
+  retryAfterValues: number[];
+  requiresUsableScope: boolean;
 }
 
 function liveSnapshot(
@@ -297,16 +379,19 @@ function preferredFailureCode(codes: WorkItemErrorCode[]): WorkItemErrorCode | u
   return codes.length > 0 ? "work_item_sync_failed" : undefined;
 }
 
-function synchronizationKey(providerId: string, input: WorkItemSyncInput) {
+function synchronizationKey(provider: WorkItemProvider, input: WorkItemSyncInput) {
   const accountKey = input.cacheAccount?.accountKey;
   if (!accountKey) return undefined;
-  const projectIds = [...new Set(input.projects
-    .filter((project) => project.available)
-    .map((project) => project.externalId))].sort();
+  const projectIds = provider.queryMode === "project_scoped"
+    ? [...new Set(input.projects
+      .filter((project) => project.available)
+      .map((project) => project.externalId))].sort()
+    : [];
   return JSON.stringify([
-    providerId,
+    provider.id,
     accountKey,
     input.cacheAccount?.tenantKey ?? "",
+    input.syncSessionKey ?? "",
     projectIds,
   ]);
 }

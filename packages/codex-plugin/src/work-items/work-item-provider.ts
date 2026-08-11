@@ -1,4 +1,5 @@
 import type { WorkItem, WorkItemKind } from "../contracts/taskboard.js";
+import type { ProjectRef } from "../contracts/projects.js";
 
 export interface WorkItemQueryResult {
   projectExternalId: string;
@@ -14,8 +15,9 @@ export interface WorkItemScopeResult {
   retryAfterSeconds?: number;
 }
 
-export interface WorkItemProvider {
+export interface ProjectScopedWorkItemProvider {
   readonly id: string;
+  readonly queryMode: "project_scoped";
   listProjectWorkItems(input: {
     projectExternalId: string;
     projectName: string;
@@ -24,6 +26,30 @@ export interface WorkItemProvider {
     tenantKey?: string;
   }): Promise<WorkItemQueryResult>;
 }
+
+export interface AccountWorkItemScopeResult extends WorkItemScopeResult {
+  projectExternalId: string;
+}
+
+export interface AccountWorkItemQueryResult {
+  projects: ProjectRef[];
+  scopes: AccountWorkItemScopeResult[];
+}
+
+export interface AccountScopedWorkItemProvider {
+  readonly id: string;
+  readonly queryMode: "account_scoped";
+  listAccountWorkItems(input: {
+    accountDisplayName: string;
+    accountKey?: string;
+    tenantKey?: string;
+    syncSessionKey?: string;
+  }): Promise<AccountWorkItemQueryResult>;
+}
+
+export type WorkItemProvider =
+  | ProjectScopedWorkItemProvider
+  | AccountScopedWorkItemProvider;
 
 export type WorkItemErrorCode =
   | "work_item_sync_failed"
