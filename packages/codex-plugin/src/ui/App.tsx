@@ -537,6 +537,18 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           onClose={() => closeReconnect()}
         />
       ) : null}
+      {isFeishuProject && showBoard && loginTransaction ? (
+        <FeishuProjectLogin
+          connection={connection.provider}
+          transaction={loginTransaction}
+          pending={authPending}
+          error={authError}
+          onStart={() => void startProviderLogin()}
+          onCancel={() => void cancelProviderLogin()}
+          onRecheck={() => void recheckProviderConnection()}
+          dialog
+        />
+      ) : null}
       {notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );

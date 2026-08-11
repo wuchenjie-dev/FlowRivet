@@ -16,6 +16,7 @@ interface FeishuProjectLoginProps {
   onStart: () => void;
   onCancel: () => void;
   onRecheck: () => void;
+  dialog?: boolean;
 }
 
 export function FeishuProjectLogin({
@@ -26,6 +27,7 @@ export function FeishuProjectLogin({
   onStart,
   onCancel,
   onRecheck,
+  dialog = false,
 }: FeishuProjectLoginProps) {
   const [copied, setCopied] = useState(false);
   const cliMissing = connection.state === "cli_missing";
@@ -41,8 +43,8 @@ export function FeishuProjectLogin({
     }
   }
 
-  return (
-    <main className="connection-empty">
+  const content = (
+    <>
       <span className="empty-icon">
         {cliMissing ? <Terminal size={22} aria-hidden="true" /> : <LogIn size={22} aria-hidden="true" />}
       </span>
@@ -88,6 +90,16 @@ export function FeishuProjectLogin({
       )}
       {error ? <p className="login-error" role="alert">{error}</p> : null}
       <span className="sr-only" aria-live="polite">{pending ? "飞书项目连接操作进行中" : ""}</span>
-    </main>
+    </>
   );
+  if (dialog) {
+    return (
+      <dialog open className="reconnect-dialog" aria-label="重新连接飞书项目">
+        <section className="reconnect-panel feishu-reconnect-panel">
+          {content}
+        </section>
+      </dialog>
+    );
+  }
+  return <main className="connection-empty">{content}</main>;
 }

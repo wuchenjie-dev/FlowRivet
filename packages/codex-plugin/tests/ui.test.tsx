@@ -262,6 +262,32 @@ describe("FlowRivet taskboard", () => {
     });
   });
 
+  it("keeps cached Feishu work visible behind the reconnect dialog", async () => {
+    const user = userEvent.setup();
+    const cached = snapshotWithFeishuState("expired");
+    cached.dataFreshness = "offline";
+    cached.freshScopeCount = 0;
+    cached.staleScopeCount = 2;
+    cached.items = cached.items.map((item) => ({ ...item, freshness: "cached" }));
+    const callTool = vi.fn().mockResolvedValue({
+      content: [],
+      structuredContent: {
+        transactionId: "transaction-example",
+        providerId: "feishu-project",
+        verificationUri: "https://open.feishu.cn/device",
+        userCode: "ABCD-EFGH",
+        expiresAt: "2026-08-11T16:00:00.000Z",
+      },
+    });
+    render(<App initialSnapshot={cached} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", { name: "重新连接飞书项目" }));
+
+    expect(await screen.findByRole("dialog", { name: "重新连接飞书项目" })).toBeTruthy();
+    expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+  });
+
   it("shows a bounded local CLI recovery when Feishu CLI is missing", async () => {
     const user = userEvent.setup();
     const callTool = vi.fn().mockResolvedValue({
