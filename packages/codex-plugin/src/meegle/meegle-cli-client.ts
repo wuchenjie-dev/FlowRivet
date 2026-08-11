@@ -198,7 +198,9 @@ export class MeegleCliClient {
       signal,
       allowExitCodes: [0, 1],
     });
-    if ("status" in poll) return { state: "authorized" };
+    if ("status" in poll) return poll.status === "ok"
+      ? { state: "authorized" }
+      : { state: "pending" };
     return poll.error === "expired_token"
       ? { state: "expired" }
       : { state: "pending" };

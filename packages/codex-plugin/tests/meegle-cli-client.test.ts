@@ -219,6 +219,35 @@ describe("Meegle CLI client", () => {
     ]));
   });
 
+  it("accepts the CLI 1.0.19 status-shaped pending response", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          client_id: "client-example",
+          device_code: "device-example",
+          expires_in: 600,
+          interval: 5,
+          user_code: "USER-CODE",
+          verification_uri: "https://open.feishu.cn/device",
+          verification_uri_complete: "https://open.feishu.cn/device?code=example",
+        }),
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ status: "authorization_pending" }),
+        exitCode: 0,
+      });
+    const meegle = client(runner);
+    const signal = new AbortController().signal;
+    const attempt = await meegle.initializeDeviceLogin(
+      "profile-a", "project.feishu.cn", signal,
+    );
+
+    await expect(meegle.pollDeviceLogin("profile-a", attempt, signal))
+      .resolves.toEqual({ state: "pending" });
+  });
+
   it("rejects unsafe opaque device values before constructing a poll command", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValueOnce({

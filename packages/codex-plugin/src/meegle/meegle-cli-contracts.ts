@@ -57,7 +57,10 @@ export const meegleDeviceInitSchema = z.object({
 
 export const meegleDevicePollSchema = z.union([
   z.object({ error: z.enum(["authorization_pending", "expired_token"]) }).strict(),
-  z.object({ status: z.literal("ok"), message: z.string().optional() }).strict(),
+  z.object({
+    status: z.enum(["ok", "authorization_pending"]),
+    message: z.string().optional(),
+  }).strict(),
 ]);
 
 export type MeegleAuthStatus = z.infer<typeof meegleAuthStatusSchema>;
