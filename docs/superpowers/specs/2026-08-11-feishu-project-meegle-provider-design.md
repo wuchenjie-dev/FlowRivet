@@ -155,44 +155,54 @@ Windows 必须兼容原生可执行文件和 npm 生成的 `.cmd` shim。若需�
 
 ## 8. 安装与认证状态机
 
-FlowRivet 不读取、保存、传输或记录 Meegle Token。凭据生命周期完全归官方 CLI 和系统钥匙串管理。
+FlowRivet 不读取、保存、传输或记录 Meegle Token。凭据生命周期完全归官方 CLI 和系统钥匙串管理。账号连接状态与一次授权会话是两个独立合同：前者只回答“当前账号能否使用”，后者只回答“本次授权进行到哪里”。
 
-状态机：
+账号连接状态：
 
 ```text
 checking
   -> cli_missing
   -> disconnected
-  -> authorizing
   -> connected
   -> expired
   -> unavailable
 ```
 
-行为：
+`ProviderConnection` 不再包含 `authorizing`。行为：
 
 - `cli_missing`：展示 `npx -y @lark-project/meegle@latest install`，提供复制按钮和“重新检测”。页面不自动执行全局安装。
-- `disconnected`：提供“连接飞书项目”，后台发起官方用户授权流程。
-- `authorizing`：展示官方授权地址和验证码，允许取消；不得显示或记录访问 Token。
+- `disconnected`：提供“连接飞书项目”，发起独立的 `ProviderLoginSession`。
 - `connected`：先读取当前 Profile，再调用 `meegle user me --profile <captured-profile> --format json` 取得稳定账号标识和显示名，只把非敏感身份元数据交给通用合同。
 - `expired`：保留缓存并引导重新授权。
 - `unavailable`：网络或服务端异常，保留凭据与缓存，不错误地要求重新登录。
 
-非 TTY Companion 优先使用官方设备码流程：
+授权会话状态：
 
 ```text
-meegle auth login --device-code --host project.feishu.cn
+starting -> waiting -> verifying -> succeeded
+    |          |           |
+    +----------+-----------+-> failed | expired | cancelled
 ```
 
-已验证 `1.0.19` 的设备码授权提供稳定两阶段 JSON 合同：`phase init` 返回授权 URL、用户码、设备码和轮询间隔，`phase poll --once` 返回等待、成功或过期状态。页面直接渲染授权 URL 与用户码，并按服务端间隔轮询；若未来版本不再满足 Schema，FlowRivet 不解析自由文本，而是降级为展示可复制命令，并周期性执行：
+新增进程级 `ProviderLoginCoordinator`，按 Provider/Profile 管理会话；Provider 只提供认证 Driver，Meegle Driver 负责官方设备码两阶段协议。每个 Provider/Profile 同时最多一个活动会话，重复开始幂等复用。授权会话安全快照包含：
 
 ```text
-meegle auth status --format json
+sessionId, providerId, state,
+startedAt, updatedAt, expiresAt,
+browserLaunch,
+error?: { code, retryable, recoveryAction, requestId },
+manualFallback?: { verificationUri, userCode }
 ```
 
-一旦状态成功即进入 `connected`。授权进程退出、取消或超时不删除 CLI 已有凭据。
+`manualFallback` 只在系统浏览器启动失败且会话仍有效时返回；正常流程不在看板显示验证码。完整授权 URL 已包含用户码，用户只需在飞书页面点击一次授权。
 
-授权地址和验证码只允许存在于当前授权事务的内存和临时 UI 状态中，不写入本地配置、缓存、日志或分析事件。每个 Provider/Profile 同时最多一个授权事务；重复开始返回同一事务状态。切换看板 Provider 不自动取消授权，用户可以返回飞书项目连接面板查看状态或显式取消；授权进行中不得执行断开。
+非 TTY Companion 使用已验证的官方两阶段 JSON 合同：`phase init` 返回完整授权 URL、用户码、设备码和轮询间隔，`phase poll --once` 返回等待、成功或过期状态。Coordinator 调用注入的 `SystemBrowserLauncher` 打开系统默认浏览器，并由 Meegle Driver 按服务端间隔轮询。浏览器启动器不接受 MCP 调用方传入 URL，只能打开 Driver 内部生成、通过域名允许列表校验的 HTTPS 地址。Windows、macOS 和 Linux 各自使用固定可执行文件与参数数组，不拼接 shell 命令。
+
+页面每 1.5 秒读取授权会话安全快照。等待超过 15 秒只更新提示，不提前终止事务，也不显示“检查授权结果”按钮。用户刷新看板、关闭面板或重新打开时，通过 `get_provider_login` 接回 Companion 内存中的同一会话；关闭面板不取消授权。Companion 重启后不恢复临时会话，而是先重新检查 CLI：若凭据已落地则直接进入 `connected`，否则开始新会话。
+
+设备码轮询成功后进入 `verifying`，必须再执行 `auth status` 和 `user me` 才能进入 `succeeded` 与 `connected`。身份验证阶段允许有限重试；网络或服务端异常保留 CLI 凭据，并引导“重新检查连接”，不得要求重新授权。授权成功与首次任务同步分离：同步失败时仍显示已连接，并在看板内提供缓存或重试。
+
+活动会话最多保留 5 分钟。成功、失败、取消或过期后立即终止相关 CLI 子进程并清除授权 URL、用户码、设备码和 client ID；不含敏感信息的终态快照保留 10 分钟用于页面恢复，随后自动删除。授权进程退出、取消或超时不删除 CLI 已有凭据。
 
 “断开飞书项目”调用官方 `meegle auth logout`，会改变当前 CLI Profile，必须经过用户确认。断开后只清除 `feishu-project` 活跃缓存和非敏感目录，不影响 TAPD。
 
@@ -266,9 +276,13 @@ interface WorkItem {
 
 连接菜单首版只展示飞书项目。Provider 列表和活动选择合同继续保留，以便以后新增其他项目管理系统时无需修改看板合同。
 
-切换时页面展示目标 Provider 的连接状态；未连接时不显示误导性空看板。飞书项目连接面板包含 CLI 状态、当前 Profile、账号显示名、安装/升级指引、连接、重新检测和断开操作。只有当前事务的授权地址、验证码和过期时间可以进入临时 React 状态；访问 Token、CLI 原始输出和钥匙串位置不得进入 React 状态或浏览器持久化。
+切换时页面展示目标 Provider 的连接状态；未连接时不显示误导性空看板。飞书项目连接面板包含 CLI 状态、当前 Profile、账号显示名、安装/升级指引、连接、重新检测和断开操作。React 只持有授权会话安全快照；访问 Token、设备码、client ID、CLI 原始输出和钥匙串位置不得进入 React 状态或浏览器持久化。
 
-Provider 选择、复制安装命令、连接、取消和重新检测必须支持键盘操作并具有可读名称。连接状态变化使用非打断式 live region；授权地址与验证码既可复制也可被辅助技术读取。切换 Provider 后焦点进入目标 Provider 的状态标题；错误提示不得只依赖颜色区分。
+未连接时主操作只有“连接飞书项目”。点击后依次展示“正在准备安全授权会话”“请在浏览器中完成飞书授权”“正在确认账号”；系统浏览器自动打开。等待超过 15 秒显示“仍在等待飞书确认”，保留“重新打开授权页”和“取消”，但不要求用户手动检查。成功后自动关闭授权面板并加载看板；首次同步失败独立展示，不回退登录状态。
+
+失败或过期必须退出活动等待态、清除旧授权数据、显示稳定错误原因和唯一恢复动作。浏览器启动失败时会话继续等待，并显示临时手动链接和备用验证码；拒绝或过期显示“重新授权”；网络或身份验证异常显示“重新检查连接”；CLI 缺失或版本过低显示安装或升级指引。关闭授权面板后页头显示“飞书授权中”，重新打开可接回进度。
+
+Provider 选择、复制安装命令、连接、取消、重新打开授权页和重新检测必须支持键盘操作并具有可读名称。连接及授权会话状态变化使用非打断式 live region；临时手动链接和备用验证码必须可复制并可被辅助技术读取。切换 Provider 后焦点进入目标 Provider 的状态标题；错误提示不得只依赖颜色区分。
 
 现有 Provider 中立工具继续使用：
 
@@ -282,9 +296,11 @@ Provider 选择、复制安装命令、连接、取消和重新检测必须支�
 - `list_providers`：返回可用 Provider 及非敏感连接状态。
 - `get_active_provider`：读取当前 Provider。
 - `set_active_provider`：校验并保存选择，不隐式断开旧 Provider。
-- `get_provider_connection`：读取指定 Provider 的连接状态和非敏感身份。
-- `start_provider_login`：开始或复用授权事务，返回临时授权指引。
-- `cancel_provider_login`：取消当前授权事务，不删除既有凭据。
+- `get_provider_connection`：读取指定 Provider 的账号连接状态和非敏感身份，不承载授权进行态。
+- `start_provider_login`：开始或复用授权会话，并尝试打开系统默认浏览器；返回会话安全快照。
+- `get_provider_login`：读取当前 Provider/Profile 的活动或最近终态会话；不存在时返回空结果。
+- `reopen_provider_login`：重新打开活动会话的授权页；只接受会话 ID，不接受 URL。
+- `cancel_provider_login`：取消匹配的活动会话，不删除既有凭据。
 - `disconnect_provider`：确认后调用 Provider 断开能力并清除该 Provider 活跃缓存。
 
 不新增 TAPD 兼容或迁移工具。通用认证工具只接受已注册的 `providerId`，不得接受任意命令、可执行文件、Profile、host 或 CLI 参数。
@@ -300,6 +316,11 @@ Provider 选择、复制安装命令、连接、取消和重新检测必须支�
 | `provider_cli_missing` | 未找到 `meegle` |
 | `provider_cli_unsupported` | CLI 版本不兼容 |
 | `provider_capability_unsupported` | 当前 Provider 不支持所请求能力 |
+| `provider_browser_launch_failed` | 系统浏览器无法打开，需使用临时手动入口 |
+| `provider_login_denied` | 用户拒绝本次授权 |
+| `provider_login_expired` | 设备授权会话已过期 |
+| `provider_login_cancelled` | 用户取消本次授权 |
+| `provider_identity_validation_failed` | 授权后无法确认稳定账号身份 |
 | `provider_not_connected` | 当前 Profile 未登录 |
 | `provider_unauthorized` | Token 失效或服务端拒绝 |
 | `provider_unavailable` | 网络或飞书项目服务不可用 |
@@ -308,15 +329,17 @@ Provider 选择、复制安装命令、连接、取消和重新检测必须支�
 | `provider_contract_invalid` | JSON 或字段结构不符合合同 |
 | `work_item_sync_failed` | 无可用实时或缓存 scope |
 
-CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` 分类，禁止依赖本地化 stderr 的模糊字符串匹配。若官方 CLI 没有结构化错误，未知失败统一降级为 `provider_unavailable` 或 `work_item_sync_failed`，不得误报未登录。
+每个 MCP 工具调用生成并返回 `requestId`；每个授权会话生成非敏感 `correlationId`，用于串联状态迁移日志。错误快照包含稳定错误码、是否可重试、唯一恢复动作和最近一次 `requestId`。CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` 分类，禁止依赖本地化 stderr 的模糊字符串匹配。若官方 CLI 没有结构化错误，未知失败统一降级为 `provider_unavailable` 或 `work_item_sync_failed`，不得误报未登录。
 
-日志只允许：`requestId`、工具名、Provider ID、CLI 版本、命令类别、结果、稳定错误码、耗时、页数、工作项数量和缓存新鲜度。禁止记录命令完整参数、环境变量、PATH、Token、授权地址、验证码、Profile 内容、用户、项目、工作项、标题、URL、stdout 或 stderr 原文。
+日志只允许：`requestId`、会话 `correlationId`、工具名、Provider ID、CLI 版本、命令类别、状态迁移、结果、稳定错误码、重试次数、耗时、页数、工作项数量和缓存新鲜度。禁止记录命令完整参数、环境变量、PATH、Token、client ID、设备码、授权地址、验证码、Profile 内容、用户、项目、工作项、标题、URL、stdout 或 stderr 原文。
 
 ### 12.1 主要威胁与约束
 
 1. PATH 劫持或恶意可执行文件冒充 `meegle`：执行前解析固定绝对路径、验证版本合同，运行期间不重新按 PATH 查找；MCP 输入不得覆盖路径。
 2. CLI 输出携带恶意或超大内容：限制 stdout/stderr，使用 Schema 和字段长度校验，标题只作为 React 文本渲染，外链执行域名允许列表。
 3. Profile 或账号在同步中切换导致跨账号缓存污染：捕获并显式传入 Profile，使用稳定账号/租户键隔离缓存，同步前后复核身份，变化时丢弃结果。
+4. 外部浏览器启动被滥用：启动器不暴露任意 URL 参数，只接受认证 Driver 产生且通过 Provider 域名允许列表校验的 HTTPS 地址；平台命令使用固定可执行文件和参数数组。
+5. 临时授权数据残留：仅活动会话在内存持有完整授权 URL、用户码、设备码和 client ID；进入任一终态立即清除，禁止写入磁盘、日志、分析事件或错误对象。
 
 ## 13. 测试策略
 
@@ -326,6 +349,9 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 - Windows 可执行文件/`.cmd`、Linux/macOS 路径与参数数组合同。
 - JSON Schema 成功、未知字段、缺字段、无效 JSON 和超大响应。
 - `auth status` 的已连接、未登录、失效和服务不可用分类。
+- 授权会话全部合法状态迁移、非法迁移拒绝、重复开始幂等、5 分钟超时和 10 分钟终态清理。
+- 设备授权成功、拒绝、过期、取消、浏览器启动失败、身份验证失败和网络异常分类及唯一恢复动作。
+- Windows、macOS、Linux 系统浏览器启动器的固定命令、参数数组、HTTPS 与域名允许列表合同。
 - 三种 action 的完整分页、空页、重复页、部分失败和去重。
 - 完成项 7 天边界、缺少可信完成时间和无效日期。
 - 类型、状态、项目、URL 和稳定键归一化。
@@ -339,7 +365,11 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 
 - 新用户默认展示飞书项目连接面板。
 - 未安装展示安装命令；重新检测可恢复。
-- 未登录、授权中、已连接、失效和离线状态可区分。
+- 未登录、授权会话各阶段、已连接、失效和离线状态可区分。
+- 一键授权不显示“检查授权结果”；15 秒后只更新等待提示，授权成功后自动进入看板。
+- 刷新、关闭和重新打开页面可接回当前会话；终态清除旧验证码并展示唯一恢复动作。
+- 系统浏览器启动失败时显示临时手动入口；正常流程不显示验证码。
+- 授权成功但首次任务同步失败时仍显示 `connected`，并提供同步重试或缓存数据。
 - Provider 切换保留各自缓存和连接状态。
 - 全部项目自动出现在侧栏，侧栏只筛选、不控制同步。
 - 只读卡片不可拖动，详情链接通过允许列表校验。
@@ -349,12 +379,13 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 ### 13.3 真实 E2E
 
 1. 在 Windows 安装官方 CLI，并设置 `project.feishu.cn`。
-2. 从 FlowRivet 发起或按页面指引完成用户 OAuth。
-3. `auth status` 和 `user me` 成功，FlowRivet 不出现 Token。
-4. 同步 `this_week`、`overdue`、`done` 全部页面。
-5. 将归一化任务 ID 数量与三条 CLI 原始命令脱敏核对。
-6. 验证跨项目侧栏、重复项合并和最近 7 天完成过滤。
-7. 模拟断网、Token 失效和 CLI 升级不兼容，验证缓存与错误状态。
+2. 确认 CLI 未登录，从 FlowRivet 点击一次“连接飞书项目”，验证系统默认浏览器自动打开。
+3. 授权等待期间刷新看板，验证接回同一会话且不出现手动检查按钮。
+4. 在飞书页面点击一次授权；页面显示成功后验证 `auth status` 和 `user me` 成功。
+5. 不执行任何手动检查，验证 FlowRivet 在 2 秒内进入 `connected` 并自动加载看板。
+6. 同步 `this_week`、`overdue`、`done` 全部页面，将归一化任务 ID 数量与三条 CLI 原始命令脱敏核对。
+7. 验证跨项目侧栏、重复项合并和最近 7 天完成过滤。
+8. 模拟首次任务同步失败，验证仍保持 `connected`；模拟断网、Token 失效和 CLI 升级不兼容，验证缓存与错误状态。
 
 真实验收记录不得保存 stdout、用户、项目、工作项或授权信息。
 
@@ -372,7 +403,10 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 
 - 新用户默认飞书项目，不读取或迁移旧 TAPD 凭据。
 - CLI 未安装、未登录、已连接、失效和离线状态正确区分。
-- 用户可以按看板流程完成授权，FlowRivet 不保存或输出 Token。
+- 用户只需点击一次连接和一次飞书授权即可进入看板；无需输入验证码或点击“检查授权结果”。
+- 页面刷新、关闭和重新打开不会丢失 Companion 运行期间的授权状态；Companion 重启后按 CLI 实际登录状态恢复。
+- 所有授权终态在 2 秒内反映到 UI，并提供准确且唯一的恢复动作。
+- FlowRivet 不保存或输出 Token、client ID、设备码、授权地址或验证码；授权临时数据进入终态后立即清除。
 - 三种 action 完整分页、稳定去重，并严格保留最近 7 天完成项。
 - 看板结果与官方 CLI 在脱敏任务 ID 数量上核对一致。
 - 自动聚合全部项目，不要求选择；项目侧栏筛选正确。
