@@ -1,0 +1,222 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  CommandRunnerError,
+  type CommandRunInput,
+  type CommandRunResult,
+} from "../src/meegle/command-runner.js";
+import {
+  MeegleCliClient,
+  MeegleCliError,
+  type MeegleCommandRunner,
+} from "../src/meegle/meegle-cli-client.js";
+
+class FakeRunner implements MeegleCommandRunner {
+  readonly run = vi.fn<(input: CommandRunInput) => Promise<CommandRunResult>>();
+}
+
+function client(runner: FakeRunner, sleep = async () => undefined) {
+  return new MeegleCliClient({
+    runner,
+    executableResolver: async () => "C:\\tools\\meegle.exe",
+    sleep,
+  });
+}
+
+describe("Meegle CLI client", () => {
+  it("validates the minimum version and parses the bounded text profile", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({ stdout: "meegle version 1.0.19\n", exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: "default\n", exitCode: 0 });
+    const meegle = client(runner);
+
+    await expect(meegle.getVersion()).resolves.toBe("1.0.19");
+    await expect(meegle.getCurrentProfile()).resolves.toBe("default");
+    expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
+      ["--version"],
+      ["config", "profile", "current", "--format", "json"],
+    ]);
+  });
+
+  it("rejects unsupported versions and malformed multiline profiles", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({ stdout: "1.0.18", exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: "default\nother", exitCode: 0 });
+    const meegle = client(runner);
+
+    await expect(meegle.getVersion()).rejects.toMatchObject({ code: "provider_cli_unsupported" });
+    await expect(meegle.getCurrentProfile()).rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it("runs status, identity, logout, and paged work commands with a pinned profile", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ authenticated: true, expires_in_minutes: 119, host: "project.feishu.cn" }),
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          avatar_url: "https://example.invalid/avatar.png",
+          email: "user@example.invalid",
+          name_cn: "Example User",
+          name_en: "Example User",
+          user_key: "user_example",
+        }),
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({ stdout: "{}", exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ list: null, total: 0 }), exitCode: 0 });
+    const meegle = client(runner);
+
+    await expect(meegle.getAuthStatus("default")).resolves.toMatchObject({ authenticated: true });
+    await expect(meegle.getCurrentUser("default")).resolves.toMatchObject({ user_key: "user_example" });
+    await expect(meegle.logout("default")).resolves.toBeUndefined();
+    await expect(meegle.getMyWorkPage("default", "this_week", 1)).resolves.toEqual({
+      list: null,
+      total: 0,
+    });
+    expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
+      ["auth", "status", "--profile", "default", "--format", "json"],
+      ["user", "me", "--profile", "default", "--format", "json"],
+      ["auth", "logout", "--profile", "default", "--format", "json"],
+      ["mywork", "todo", "--action", "this_week", "--page-num", "1", "--profile", "default", "--format", "json"],
+    ]);
+  });
+
+  it("accepts structured unauthenticated status on exit one", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        authenticated: false,
+        host: "project.feishu.cn",
+        reason: "no local token",
+      }),
+      exitCode: 1,
+    });
+
+    await expect(client(runner).getAuthStatus()).resolves.toMatchObject({
+      authenticated: false,
+      reason: "no local token",
+    });
+    expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({ allowExitCodes: [0, 1] }));
+  });
+
+  it("rejects invalid JSON and invalid response schemas", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({ stdout: "not-json", exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ list: [], total: -1 }), exitCode: 0 });
+    const meegle = client(runner);
+
+    await expect(meegle.getAuthStatus()).rejects.toMatchObject({ code: "provider_invalid_response" });
+    await expect(meegle.getMyWorkPage("default", "done", 1))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it("accepts present but empty state keys emitted by the official CLI", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        list: [{
+          finish_time: { finish_time: "2026-08-10T08:30:00+08:00" },
+          node_info: { node_name: "Done", node_state_key: "node_done" },
+          project_key: "PROJ",
+          project_name: "Example Project",
+          schedule: null,
+          state_info: { end_state_key_name: "", start_state_key_name: "" },
+          work_item_info: {
+            work_item_id: 10001,
+            work_item_name: "Example item",
+            work_item_type_key: "task",
+          },
+        }],
+        total: 1,
+      }),
+      exitCode: 0,
+    });
+
+    await expect(client(runner).getMyWorkPage("default", "done", 1))
+      .resolves.toMatchObject({ total: 1 });
+  });
+
+  it("runs the structured device login phases and emits only validated events", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          client_id: "client-example",
+          device_code: "device-example",
+          expires_in: 600,
+          interval: 5,
+          user_code: "USER-CODE",
+          verification_uri: "https://open.feishu.cn/device",
+          verification_uri_complete: "https://open.feishu.cn/device?code=example",
+        }),
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ error: "authorization_pending" }),
+        exitCode: 1,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ status: "ok", message: "authorized" }),
+        exitCode: 0,
+      });
+    const events: unknown[] = [];
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(client(runner, sleep).startDeviceLogin(
+      "project.feishu.cn",
+      new AbortController().signal,
+      (event) => events.push(event),
+    )).resolves.toBeUndefined();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "verification",
+        userCode: "USER-CODE",
+        verificationUri: "https://open.feishu.cn/device",
+      }),
+      { type: "authorized" },
+    ]);
+    expect(sleep).toHaveBeenCalledWith(5_000, expect.any(AbortSignal));
+    expect(runner.run.mock.calls[1]![0].args).toContain("device-example");
+  });
+
+  it("rejects unsafe opaque device values before constructing a poll command", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        client_id: "client-example",
+        device_code: 'device"&example',
+        expires_in: 600,
+        interval: 5,
+        user_code: "USER-CODE",
+        verification_uri: "https://open.feishu.cn/device",
+        verification_uri_complete: "https://open.feishu.cn/device?code=example",
+      }),
+      exitCode: 0,
+    });
+
+    await expect(client(runner).startDeviceLogin(
+      "project.feishu.cn",
+      new AbortController().signal,
+      () => undefined,
+    )).rejects.toMatchObject({ code: "provider_invalid_response" });
+    expect(runner.run).toHaveBeenCalledOnce();
+  });
+
+  it("maps runner failures to stable content-free errors", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockRejectedValue(new CommandRunnerError("provider_command_failed", {
+      exitCode: 2,
+    }));
+
+    const error = await client(runner).getCurrentUser("default")
+      .catch((caught) => caught as MeegleCliError);
+    expect(error.code).toBe("provider_unavailable");
+    expect(error.message).toBe("provider_unavailable");
+  });
+});
