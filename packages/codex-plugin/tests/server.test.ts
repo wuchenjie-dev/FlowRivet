@@ -22,7 +22,10 @@ import {
   createTaskboardMcpServer,
   TASKBOARD_RESOURCE_URI,
 } from "../src/server/app.js";
-import { createTaskboardHttpServer } from "../src/server/http.js";
+import {
+  assertLoopbackHost,
+  createTaskboardHttpServer,
+} from "../src/server/http.js";
 import type { WorkItemDetailReader } from "../src/work-items/work-item-detail-service.js";
 import { WorkItemDetailProviderError } from "../src/work-items/work-item-detail-provider.js";
 import type { WorkItemSynchronizer } from "../src/work-items/work-item-service.js";
@@ -1237,6 +1240,15 @@ describe("taskboard MCP app", () => {
 });
 
 describe("taskboard HTTP server", () => {
+  it("allows loopback bindings and rejects remote bindings", () => {
+    for (const host of ["localhost", "127.0.0.1", "::1"]) {
+      expect(() => assertLoopbackHost(host)).not.toThrow();
+    }
+    for (const host of ["0.0.0.0", "10.0.0.8", "flowrivet.internal"]) {
+      expect(() => assertLoopbackHost(host)).toThrow("FLOWRIVET_MCP_HOST");
+    }
+  });
+
   it("serves health checks and rejects unknown routes", async () => {
     const server = createTaskboardHttpServer({
       uiBundlePath: await createBundle(),
@@ -1281,6 +1293,30 @@ describe("taskboard HTTP server", () => {
       expect(response.headers.get("access-control-allow-origin")).toBe(
         "http://localhost:43120",
       );
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("rejects non-loopback MCP origins", async () => {
+    const server = createTaskboardHttpServer({
+      uiBundlePath: await createBundle(),
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a TCP server address");
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+        method: "OPTIONS",
+        headers: { origin: "https://remote.example" },
+      });
+      expect(response.status).toBe(403);
+      await expect(response.text()).resolves.toBe("Origin is not allowed");
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

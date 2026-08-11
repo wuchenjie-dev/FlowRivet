@@ -7,10 +7,23 @@ import { createTaskboardRuntime } from "./taskboard-runtime.js";
 
 const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
 
+export function isLoopbackHost(host: string) {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/gu, "");
+  return normalized === "127.0.0.1"
+    || normalized === "localhost"
+    || normalized === "::1";
+}
+
+export function assertLoopbackHost(host: string) {
+  if (!isLoopbackHost(host)) {
+    throw new Error("FLOWRIVET_MCP_HOST must be a loopback host");
+  }
+}
+
 function isLoopbackOrigin(origin: string) {
   try {
     const url = new URL(origin);
-    return url.hostname === "127.0.0.1" || url.hostname === "localhost";
+    return isLoopbackHost(url.hostname);
   } catch {
     return false;
   }
