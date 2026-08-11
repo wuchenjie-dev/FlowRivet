@@ -184,21 +184,21 @@ starting -> waiting -> verifying -> succeeded
     +----------+-----------+-> failed | expired | cancelled
 ```
 
-新增进程级 `ProviderLoginCoordinator`，按 Provider/Profile 管理会话；Provider 只提供认证 Driver，Meegle Driver 负责官方设备码两阶段协议。每个 Provider/Profile 同时最多一个活动会话，重复开始幂等复用。授权会话安全快照包含：
+新增进程级 `ProviderLoginCoordinator`，按 Provider 管理会话；Provider 只提供认证 Driver，Meegle Driver 负责官方设备码两阶段协议。当前 UI 只操作 Meegle CLI 的当前 Profile，因此每个 Provider 同时最多一个活动会话；会话启动时捕获 Profile，init、poll、状态与身份命令都显式使用该 Profile。重复开始幂等复用；活动期间检测到当前 Profile 改变时，会话进入 `failed`，不得把凭据或身份归到新 Profile。授权会话安全快照包含：
 
 ```text
 sessionId, providerId, state,
 startedAt, updatedAt, expiresAt,
-browserLaunch,
+browserLaunch: opened | manual_required,
 error?: { code, retryable, recoveryAction, requestId },
 manualFallback?: { verificationUri, userCode }
 ```
 
-`manualFallback` 只在系统浏览器启动失败且会话仍有效时返回；正常流程不在看板显示验证码。完整授权 URL 已包含用户码，用户只需在飞书页面点击一次授权。
+`manualFallback` 只在系统浏览器启动失败且会话仍有效时返回；此时 `provider_browser_launch_failed` 是可恢复告警，会话保持 `waiting`，不是授权终态。正常流程不在看板显示验证码。完整授权 URL 已包含用户码，用户只需在飞书页面点击一次授权。开始新会话时替换同一 Provider 已保留的旧终态快照。
 
 非 TTY Companion 使用已验证的官方两阶段 JSON 合同：`phase init` 返回完整授权 URL、用户码、设备码和轮询间隔，`phase poll --once` 返回等待、成功或过期状态。Coordinator 调用注入的 `SystemBrowserLauncher` 打开系统默认浏览器，并由 Meegle Driver 按服务端间隔轮询。浏览器启动器不接受 MCP 调用方传入 URL，只能打开 Driver 内部生成、通过域名允许列表校验的 HTTPS 地址。Windows、macOS 和 Linux 各自使用固定可执行文件与参数数组，不拼接 shell 命令。
 
-页面每 1.5 秒读取授权会话安全快照。等待超过 15 秒只更新提示，不提前终止事务，也不显示“检查授权结果”按钮。用户刷新看板、关闭面板或重新打开时，通过 `get_provider_login` 接回 Companion 内存中的同一会话；关闭面板不取消授权。Companion 重启后不恢复临时会话，而是先重新检查 CLI：若凭据已落地则直接进入 `connected`，否则开始新会话。
+页面每 1.5 秒读取授权会话安全快照。等待超过 15 秒只更新提示，不提前终止事务，也不显示“检查授权结果”按钮。用户刷新看板、关闭面板或重新打开时，通过 `get_provider_login` 按当前 Provider 接回 Companion 内存中的唯一活动或最近终态会话；关闭面板不取消授权。Companion 重启后不恢复临时会话，而是先重新检查 CLI：若凭据已落地则直接进入 `connected`，否则开始新会话。
 
 设备码轮询成功后进入 `verifying`，必须再执行 `auth status` 和 `user me` 才能进入 `succeeded` 与 `connected`。身份验证阶段允许有限重试；网络或服务端异常保留 CLI 凭据，并引导“重新检查连接”，不得要求重新授权。授权成功与首次任务同步分离：同步失败时仍显示已连接，并在看板内提供缓存或重试。
 
@@ -280,7 +280,7 @@ interface WorkItem {
 
 未连接时主操作只有“连接飞书项目”。点击后依次展示“正在准备安全授权会话”“请在浏览器中完成飞书授权”“正在确认账号”；系统浏览器自动打开。等待超过 15 秒显示“仍在等待飞书确认”，保留“重新打开授权页”和“取消”，但不要求用户手动检查。成功后自动关闭授权面板并加载看板；首次同步失败独立展示，不回退登录状态。
 
-失败或过期必须退出活动等待态、清除旧授权数据、显示稳定错误原因和唯一恢复动作。浏览器启动失败时会话继续等待，并显示临时手动链接和备用验证码；拒绝或过期显示“重新授权”；网络或身份验证异常显示“重新检查连接”；CLI 缺失或版本过低显示安装或升级指引。关闭授权面板后页头显示“飞书授权中”，重新打开可接回进度。
+失败或过期必须退出活动等待态、清除旧授权数据、显示稳定错误原因和唯一恢复动作。浏览器启动失败时会话继续等待，并显示临时手动链接和备用验证码；CLI 能提供结构化拒绝状态时显示“用户拒绝”，否则未知终态归为一般授权失败；拒绝、一般失败或过期均显示“重新授权”。网络或身份验证异常显示“重新检查连接”；CLI 缺失或版本过低显示安装或升级指引。有缓存看板的重新授权对话框允许关闭，页头继续显示“飞书授权中”；首次连接的全页空状态没有可关闭面板。重新打开可接回进度。
 
 Provider 选择、复制安装命令、连接、取消、重新打开授权页和重新检测必须支持键盘操作并具有可读名称。连接及授权会话状态变化使用非打断式 live region；临时手动链接和备用验证码必须可复制并可被辅助技术读取。切换 Provider 后焦点进入目标 Provider 的状态标题；错误提示不得只依赖颜色区分。
 
@@ -298,7 +298,7 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 - `set_active_provider`：校验并保存选择，不隐式断开旧 Provider。
 - `get_provider_connection`：读取指定 Provider 的账号连接状态和非敏感身份，不承载授权进行态。
 - `start_provider_login`：开始或复用授权会话，并尝试打开系统默认浏览器；返回会话安全快照。
-- `get_provider_login`：读取当前 Provider/Profile 的活动或最近终态会话；不存在时返回空结果。
+- `get_provider_login`：读取当前 Provider 的唯一活动或最近终态会话；不存在时返回空结果。
 - `reopen_provider_login`：重新打开活动会话的授权页；只接受会话 ID，不接受 URL。
 - `cancel_provider_login`：取消匹配的活动会话，不删除既有凭据。
 - `disconnect_provider`：确认后调用 Provider 断开能力并清除该 Provider 活跃缓存。
@@ -317,7 +317,8 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 | `provider_cli_unsupported` | CLI 版本不兼容 |
 | `provider_capability_unsupported` | 当前 Provider 不支持所请求能力 |
 | `provider_browser_launch_failed` | 系统浏览器无法打开，需使用临时手动入口 |
-| `provider_login_denied` | 用户拒绝本次授权 |
+| `provider_login_denied` | CLI 提供结构化拒绝状态时，用户拒绝本次授权 |
+| `provider_login_failed` | 无法进一步分类的一般授权失败 |
 | `provider_login_expired` | 设备授权会话已过期 |
 | `provider_login_cancelled` | 用户取消本次授权 |
 | `provider_identity_validation_failed` | 授权后无法确认稳定账号身份 |
@@ -329,7 +330,7 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 | `provider_contract_invalid` | JSON 或字段结构不符合合同 |
 | `work_item_sync_failed` | 无可用实时或缓存 scope |
 
-每个 MCP 工具调用生成并返回 `requestId`；每个授权会话生成非敏感 `correlationId`，用于串联状态迁移日志。错误快照包含稳定错误码、是否可重试、唯一恢复动作和最近一次 `requestId`。CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` 分类，禁止依赖本地化 stderr 的模糊字符串匹配。若官方 CLI 没有结构化错误，未知失败统一降级为 `provider_unavailable` 或 `work_item_sync_failed`，不得误报未登录。
+每个授权 MCP 工具调用生成 `requestId`，授权工具结果合同显式返回该字段；不为本次改造无关的工具批量改变响应 Schema。每个授权会话生成非敏感 `correlationId`，用于串联状态迁移日志。错误快照包含稳定错误码、是否可重试、唯一恢复动作和最近一次 `requestId`。CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` 分类，禁止依赖本地化 stderr 的模糊字符串匹配。只有经过探针验证的结构化状态可以映射 `provider_login_denied`；未知授权终态映射 `provider_login_failed`，其他未知失败统一降级为 `provider_unavailable` 或 `work_item_sync_failed`，不得误报未登录。
 
 日志只允许：`requestId`、会话 `correlationId`、工具名、Provider ID、CLI 版本、命令类别、状态迁移、结果、稳定错误码、重试次数、耗时、页数、工作项数量和缓存新鲜度。禁止记录命令完整参数、环境变量、PATH、Token、client ID、设备码、授权地址、验证码、Profile 内容、用户、项目、工作项、标题、URL、stdout 或 stderr 原文。
 
@@ -340,6 +341,7 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 3. Profile 或账号在同步中切换导致跨账号缓存污染：捕获并显式传入 Profile，使用稳定账号/租户键隔离缓存，同步前后复核身份，变化时丢弃结果。
 4. 外部浏览器启动被滥用：启动器不暴露任意 URL 参数，只接受认证 Driver 产生且通过 Provider 域名允许列表校验的 HTTPS 地址；平台命令使用固定可执行文件和参数数组。
 5. 临时授权数据残留：仅活动会话在内存持有完整授权 URL、用户码、设备码和 client ID；进入任一终态立即清除，禁止写入磁盘、日志、分析事件或错误对象。
+6. 本地 MCP 被远程调用后触发浏览器或授权副作用：含授权副作用的 Companion 只允许绑定回环地址；若配置为非回环地址则启动失败，直到未来实现独立的客户端认证与授权机制。HTTP 层继续拒绝非回环 Origin，授权工具不得放宽该限制。
 
 ## 13. 测试策略
 
@@ -382,7 +384,7 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 2. 确认 CLI 未登录，从 FlowRivet 点击一次“连接飞书项目”，验证系统默认浏览器自动打开。
 3. 授权等待期间刷新看板，验证接回同一会话且不出现手动检查按钮。
 4. 在飞书页面点击一次授权；页面显示成功后验证 `auth status` 和 `user me` 成功。
-5. 不执行任何手动检查，验证 FlowRivet 在 2 秒内进入 `connected` 并自动加载看板。
+5. 不执行任何手动检查，验证 FlowRivet 在 CLI 返回成功后 2 秒内进入 `connected` 并自动加载看板；从飞书页面成功到 CLI 检测成功的允许时间为服务端轮询间隔加单次命令耗时。
 6. 同步 `this_week`、`overdue`、`done` 全部页面，将归一化任务 ID 数量与三条 CLI 原始命令脱敏核对。
 7. 验证跨项目侧栏、重复项合并和最近 7 天完成过滤。
 8. 模拟首次任务同步失败，验证仍保持 `connected`；模拟断网、Token 失效和 CLI 升级不兼容，验证缓存与错误状态。
@@ -405,8 +407,8 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 - CLI 未安装、未登录、已连接、失效和离线状态正确区分。
 - 用户只需点击一次连接和一次飞书授权即可进入看板；无需输入验证码或点击“检查授权结果”。
 - 页面刷新、关闭和重新打开不会丢失 Companion 运行期间的授权状态；Companion 重启后按 CLI 实际登录状态恢复。
-- 所有授权终态在 2 秒内反映到 UI，并提供准确且唯一的恢复动作。
-- FlowRivet 不保存或输出 Token、client ID、设备码、授权地址或验证码；授权临时数据进入终态后立即清除。
+- Coordinator 记录授权终态后 2 秒内反映到 UI，并提供准确且唯一的恢复动作；外部授权成功的检测时间不短于 CLI 服务端轮询间隔。
+- FlowRivet 不持久化或记录 Token、client ID、设备码、授权地址或验证码；仅系统浏览器启动失败时向当前临时 UI 返回授权地址与备用验证码，进入终态后立即清除。
 - 三种 action 完整分页、稳定去重，并严格保留最近 7 天完成项。
 - 看板结果与官方 CLI 在脱敏任务 ID 数量上核对一致。
 - 自动聚合全部项目，不要求选择；项目侧栏筛选正确。
