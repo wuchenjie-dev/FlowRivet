@@ -110,7 +110,7 @@
 - [ ] Run the focused tests and confirm failures.
 - [ ] Implement platform adapters using argument arrays and no shell interpolation.
 - [ ] Stop a managed Companion only when registry PID, process start time, and health identity all match.
-- [ ] Adopt the old FlowRivet Companion only under the design's exact checks and explicit consent; otherwise return `legacy_companion_confirmation_required`.
+- [ ] Adopt the old FlowRivet Companion only under the design's exact checks and explicit consent; otherwise return `companion_legacy_confirmation_required`.
 - [ ] Start the built Companion detached with an explicit instance-file path, poll health to a bounded deadline, and fail the update if identity validation does not succeed.
 - [ ] Re-run focused tests and `npm run typecheck`.
 - [ ] Commit: `feat(plugin): safely restart local companion`
@@ -125,8 +125,8 @@
 - Modify: `README.md`
 - Modify: `docs/poc.md`
 
-- [ ] Add failing orchestration tests for the exact order: recover transaction, optionally pull/re-exec, build, stop verified Companion, install plugin, restore manifest, start Companion, verify health, report Codex restart instructions.
-- [ ] Add failure tests proving the old Companion remains available until the build succeeds, the manifest always restores, startup failures are surfaced, and JSON output stays machine-readable.
+- [ ] Add failing orchestration tests for the exact order: recover transaction, optionally pull/re-exec, build, install plugin, restore manifest, stop verified Companion, start Companion, verify health, report Codex restart instructions.
+- [ ] Add failure tests proving the old Companion remains available until both the build and plugin installation succeed, the manifest always restores, startup failures are surfaced, and JSON output stays machine-readable.
 - [ ] Run `npm test -- tests/plugin-update-service.test.ts tests/cli.test.ts` and confirm failures.
 - [ ] Compose the updater adapters behind `createPluginUpdateService` and keep side effects injectable.
 - [ ] Add `npm run plugin:update` as a minimal bootstrap build followed by the same `flowrivet plugin update` code path.
