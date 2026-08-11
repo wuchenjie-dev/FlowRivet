@@ -124,11 +124,12 @@ interface ProviderRegistration {
 
 迁移规则：
 
-1. 配置不存在时返回 `feishu-project`。
-2. 已保存且仍在注册表中的 Provider 保持不变。
-3. 已保存 Provider 不再可用时回退 `feishu-project`，并返回非阻塞配置警告。
-4. 用户切换成功后原子保存选择。
-5. 切换不退出另一 Provider，也不删除其凭据、缓存或项目目录。
+1. 配置不存在且本机没有旧版 TAPD 凭据时返回 `feishu-project`。
+2. 配置不存在但本机存在旧版 TAPD 凭据时，一次性迁移为 `tapd` 并原子写入选择；凭据即使已过期也表示该用户此前明确使用 TAPD，连接状态由 TAPD Adapter 另行判断。
+3. 已保存且仍在注册表中的 Provider 保持不变。
+4. 已保存 Provider 不再可用时回退 `feishu-project`，并返回非阻塞配置警告。
+5. 用户切换成功后原子保存选择。
+6. 切换不退出另一 Provider，也不删除其凭据、缓存或项目目录。
 
 项目目录、工作项缓存、最后同步时间和同步单飞继续按 `providerId` 隔离。切换后先读取目标 Provider 的可用缓存，再发起实时同步。全局自动刷新频率仍按现有规格跨 Provider 共用。
 
