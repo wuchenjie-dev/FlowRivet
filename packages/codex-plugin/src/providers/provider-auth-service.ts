@@ -8,4 +8,13 @@ export interface ProviderAuthService {
   startLogin?(): Promise<ProviderLoginTransaction>;
   cancelLogin?(transactionId: string): Promise<ProviderConnection>;
   disconnect?(): Promise<ProviderConnection>;
+  getSessionIdentity?(): ProviderSessionIdentity | undefined;
+}
+
+export interface ProviderSessionIdentity {
+  profileName?: string;
+  accountKey: string;
+  tenantKey?: string;
+  accountDisplayName: string;
+  tenantDisplayName?: string;
 }

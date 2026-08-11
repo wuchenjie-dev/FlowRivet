@@ -44,6 +44,10 @@ export class ProviderRegistry {
     return this.registrations.has(id);
   }
 
+  ids(): string[] {
+    return [...this.registrations.keys()];
+  }
+
   get(id: string): ProviderRegistration {
     const registration = this.registrations.get(id);
     if (!registration) throw new ProviderRegistryError("provider_not_registered");

@@ -26,6 +26,10 @@ import { createTaskboardHttpServer } from "../src/server/http.js";
 import type { WorkItemDetailReader } from "../src/work-items/work-item-detail-service.js";
 import { WorkItemDetailProviderError } from "../src/work-items/work-item-detail-provider.js";
 import type { WorkItemSynchronizer } from "../src/work-items/work-item-service.js";
+import { ProviderRegistry } from "../src/providers/provider-registry.js";
+import type { ActiveProviderStore } from "../src/providers/active-provider-store.js";
+import type { ProviderConnection } from "../src/contracts/providers.js";
+import type { RuntimeServices } from "../src/server/runtime-services.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -153,10 +157,13 @@ function project(externalId: string, selected = true) {
   };
 }
 
-function synchronizer(projects: ProjectCatalogResult["projects"] = []) {
+function synchronizer(
+  projects: ProjectCatalogResult["projects"] = [],
+  providerId = "tapd",
+) {
   const items = projects.map((entry, index) => ({
-    key: `tapd:${entry.externalId}:task:${index + 1}`,
-    providerId: "tapd",
+    key: `${providerId}:${entry.externalId}:task:${index + 1}`,
+    providerId,
     externalId: String(index + 1),
     projectExternalId: entry.externalId,
     projectName: entry.name,
@@ -212,6 +219,155 @@ function detailReader(overrides: Partial<WorkItemDetail> = {}) {
 }
 
 describe("taskboard MCP app", () => {
+  it("exposes provider-neutral tools and opens an account-scoped Feishu board", async () => {
+    let connectionState: ProviderConnection["state"] = "connected";
+    const providerConnection: ProviderConnection = {
+      providerId: "feishu-project",
+      displayName: "飞书项目",
+      state: "connected",
+      accountDisplayName: "Example User",
+      profileName: "default",
+    };
+    const auth = {
+      getConnection: vi.fn(async () => ({ ...providerConnection, state: connectionState })),
+      getSessionIdentity: vi.fn(() => ({
+        profileName: "default",
+        accountKey: "user_example",
+        accountDisplayName: "Example User",
+      })),
+      startLogin: vi.fn(async () => ({
+        transactionId: "transaction-example",
+        providerId: "feishu-project",
+        verificationUri: "https://open.feishu.cn/device",
+        userCode: "USER-CODE",
+        expiresAt: "2026-08-11T00:05:00.000Z",
+      })),
+      cancelLogin: vi.fn(async () => ({ ...providerConnection, state: "disconnected" as const })),
+      disconnect: vi.fn(async () => ({ ...providerConnection, state: "disconnected" as const })),
+    };
+    const workItems = {
+      id: "feishu-project",
+      queryMode: "account_scoped" as const,
+      listAccountWorkItems: vi.fn(),
+    };
+    const registry = new ProviderRegistry([{
+      id: "feishu-project",
+      displayName: "飞书项目",
+      loginMode: "device_code",
+      auth,
+      workItems,
+    }]);
+    const activeProviderStore: ActiveProviderStore = {
+      load: vi.fn(async () => ({ version: 1, activeProviderId: "feishu-project" })),
+      save: vi.fn(async () => undefined),
+    };
+    const synced = synchronizer([{
+      providerId: "feishu-project",
+      externalId: "PROJ",
+      name: "Example Project",
+      selected: true,
+      available: true,
+      source: "discovered",
+      lastVerifiedAt: "2026-08-11T00:00:00.000Z",
+    }], "feishu-project");
+    vi.mocked(synced.service.loadCached).mockResolvedValue(synced.result);
+    const runtimeServices = {
+      registry,
+      activeProviderStore,
+      workItemServices: new Map([["feishu-project", synced.service]]),
+    } as RuntimeServices;
+    const server = createTaskboardMcpServer({
+      uiBundlePath: await createBundle(),
+      runtimeServices,
+    });
+    const client = new Client({ name: "flowrivet-provider-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const { tools } = await client.listTools();
+      const names = tools.map((tool) => tool.name);
+      expect(names).toEqual(expect.arrayContaining([
+        "list_providers",
+        "get_active_provider",
+        "set_active_provider",
+        "get_provider_connection",
+        "start_provider_login",
+        "cancel_provider_login",
+        "disconnect_provider",
+      ]));
+      expect(names).not.toEqual(expect.arrayContaining([
+        "get_connection_status",
+        "login_with_tapd_token",
+        "disconnect_tapd",
+      ]));
+
+      const board = await client.callTool({ name: "open_my_taskboard", arguments: {} });
+      expect(board.structuredContent).toMatchObject({
+        connection: { provider: { providerId: "feishu-project", state: "connected" } },
+        projects: [expect.objectContaining({ externalId: "PROJ" })],
+        items: [expect.objectContaining({ providerId: "feishu-project" })],
+      });
+      expect(synced.service.sync).toHaveBeenCalledWith({
+        accountDisplayName: "Example User",
+        projects: [],
+        syncSessionKey: "default",
+        cacheAccount: {
+          providerId: "feishu-project",
+          accountKey: "user_example",
+          accountDisplayName: "Example User",
+        },
+      });
+
+      connectionState = "disconnected";
+      const cachedBoard = await client.callTool({ name: "open_my_taskboard", arguments: {} });
+      expect(cachedBoard.structuredContent).toMatchObject({
+        connection: { provider: { providerId: "feishu-project", state: "disconnected" } },
+        projects: [expect.objectContaining({ externalId: "PROJ" })],
+      });
+      expect(synced.service.sync).toHaveBeenCalledOnce();
+      expect(synced.service.loadCached).toHaveBeenCalledWith("feishu-project");
+      connectionState = "connected";
+
+      await expect(client.callTool({ name: "list_providers", arguments: {} }))
+        .resolves.toMatchObject({
+          structuredContent: { providers: [expect.objectContaining({ providerId: "feishu-project" })] },
+        });
+      await expect(client.callTool({ name: "get_active_provider", arguments: {} }))
+        .resolves.toMatchObject({ structuredContent: { activeProviderId: "feishu-project" } });
+      const invalidSelection = await client.callTool({
+        name: "set_active_provider",
+        arguments: { providerId: "not-registered" },
+      });
+      expect(invalidSelection.isError).toBe(true);
+      expect(activeProviderStore.save).not.toHaveBeenCalled();
+      await client.callTool({
+        name: "set_active_provider",
+        arguments: { providerId: "feishu-project" },
+      });
+      expect(activeProviderStore.save).toHaveBeenCalledWith({
+        version: 1,
+        activeProviderId: "feishu-project",
+      });
+      await expect(client.callTool({ name: "get_provider_connection", arguments: {} }))
+        .resolves.toMatchObject({ structuredContent: { state: "connected" } });
+      await expect(client.callTool({ name: "start_provider_login", arguments: {} }))
+        .resolves.toMatchObject({ structuredContent: { transactionId: "transaction-example" } });
+      await client.callTool({
+        name: "cancel_provider_login",
+        arguments: { transactionId: "transaction-example" },
+      });
+      expect(auth.cancelLogin).toHaveBeenCalledWith("transaction-example");
+      await client.callTool({ name: "disconnect_provider", arguments: {} });
+      expect(auth.disconnect).toHaveBeenCalledOnce();
+      expect(synced.service.clearCached).toHaveBeenCalledWith("feishu-project");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("lists the render and demo tools with UI metadata only on render", async () => {
     const connection = await connectClient(await createBundle());
 

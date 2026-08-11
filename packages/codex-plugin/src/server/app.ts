@@ -9,6 +9,13 @@ import {
 } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  activeProviderSchema,
+  providerConnectionSchema,
+  providerDescriptorSchema,
+  providerLoginTransactionSchema,
+} from "../contracts/providers.js";
+import type { RuntimeServices } from "./runtime-services.js";
 
 import { createCredentialStore } from "../auth/credential-store.js";
 import {
@@ -100,6 +107,7 @@ export interface TaskboardMcpServerOptions {
   workItemDetailLogger?: WorkItemDetailOperationLogger;
   taskboardPreferences?: TaskboardPreferencesReaderWriter;
   taskboardPreferencesLogger?: TaskboardPreferencesOperationLogger;
+  runtimeServices?: RuntimeServices;
 }
 
 export interface TaskboardPreferencesReaderWriter {
@@ -126,6 +134,7 @@ export function createTaskboardMcpServer(
   options: TaskboardMcpServerOptions = {},
 ) {
   const uiBundlePath = options.uiBundlePath ?? DEFAULT_UI_BUNDLE_PATH;
+  const runtimeServices = options.runtimeServices;
   const now = options.now ?? (() => new Date());
   const credentialStore = createCredentialStore();
   const identityClient = new TapdIdentityClient();
@@ -163,7 +172,7 @@ export function createTaskboardMcpServer(
 
   registerAppResource(
     server,
-    "FlowRivet 我的 TAPD 待办看板",
+    "FlowRivet 我的待办看板",
     TASKBOARD_RESOURCE_URI,
     { description: "FlowRivet 待办看板 React UI" },
     async () => {
@@ -191,21 +200,25 @@ export function createTaskboardMcpServer(
     },
   );
 
+  const snapshotBuilder = runtimeServices ? buildProviderTaskboardSnapshot : buildTaskboardSnapshot;
   registerWorkItemTool(server, workItemLogger, "open_my_taskboard", {
-    title: "打开我的 TAPD 待办看板",
-    description: "发现全部可访问项目并打开真实只读待办看板。",
+    title: "打开我的待办看板",
+    description: "打开当前项目管理系统中的真实只读待办看板。",
     resourceUri: TASKBOARD_RESOURCE_URI,
-    run: buildTaskboardSnapshot,
+    run: snapshotBuilder,
+    providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
   registerWorkItemTool(server, workItemLogger, "list_my_work_items", {
     title: "列出我的工作项",
     description: "读取当前用户在全部可访问项目中的真实工作项。",
-    run: buildTaskboardSnapshot,
+    run: snapshotBuilder,
+    providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
   registerWorkItemTool(server, workItemLogger, "refresh_my_work_items", {
     title: "刷新我的工作项",
     description: "重新发现项目并刷新真实只读工作项。",
-    run: buildTaskboardSnapshot,
+    run: snapshotBuilder,
+    providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
 
   registerTaskboardPreferencesTool(
@@ -231,7 +244,7 @@ export function createTaskboardMcpServer(
     },
   );
 
-  registerAppTool(
+  if (!runtimeServices) registerAppTool(
     server,
     "get_work_item_detail",
     {
@@ -376,7 +389,95 @@ export function createTaskboardMcpServer(
     });
   }
 
-  registerAppTool(
+  async function buildProviderTaskboardSnapshot() {
+    if (!runtimeServices) throw new Error("provider_runtime_unavailable");
+    const syncAttemptAt = now().toISOString();
+    const providerIds = runtimeServices.registry.ids();
+    const active = await runtimeServices.activeProviderStore.load({
+      registeredProviderIds: providerIds,
+    });
+    const registration = runtimeServices.registry.get(active.activeProviderId);
+    const connection = await registration.auth.getConnection();
+    const synchronizer = runtimeServices.workItemServices.get(registration.id);
+    if (!synchronizer) throw new Error("provider_runtime_unavailable");
+    let synchronized: WorkItemSyncSnapshot | undefined;
+
+    if (connection.state === "connected") {
+      const identity = registration.auth.getSessionIdentity?.();
+      try {
+        synchronized = await synchronizer.sync({
+          accountDisplayName: identity?.accountDisplayName
+            ?? connection.accountDisplayName
+            ?? "",
+          projects: [],
+          ...(identity?.profileName ? { syncSessionKey: identity.profileName } : {}),
+          ...(identity?.accountKey ? {
+            cacheAccount: {
+              providerId: registration.id,
+              accountKey: identity.accountKey,
+              ...(identity.tenantKey ? { tenantKey: identity.tenantKey } : {}),
+              accountDisplayName: identity.accountDisplayName,
+              ...(identity.tenantDisplayName
+                ? { tenantDisplayName: identity.tenantDisplayName }
+                : {}),
+            },
+          } : {}),
+        });
+      } catch (error) {
+        synchronized = await synchronizer.loadCached(registration.id);
+        if (!synchronized) throw error;
+      }
+    } else {
+      try {
+        synchronized = await synchronizer.loadCached(registration.id);
+      } catch (error) {
+        synchronized = {
+          ...emptyWorkItemSnapshot(syncAttemptAt),
+          ...(error instanceof WorkItemCacheError && error.code !== "cache_clear_failed"
+            ? { cacheWarningCode: error.code }
+            : { cacheWarningCode: "cache_read_failed" as const }),
+        };
+      }
+    }
+    synchronized ??= emptyWorkItemSnapshot(syncAttemptAt);
+    const projects = synchronized.projects.map(({ count: _count, ...project }) => project);
+    const freshnessReasonCode = connection.state === "expired"
+      ? "provider_unauthorized" as const
+      : connection.state === "unavailable"
+        ? "provider_unavailable" as const
+        : synchronized.freshnessReasonCode;
+    return taskboardSnapshotSchema.parse({
+      connection: { provider: connection, gitlab: "not_configured" },
+      projectCatalog: {
+        provider: connection,
+        projects,
+        stale: synchronized.dataFreshness === "offline",
+      },
+      projects: synchronized.projects,
+      items: synchronized.items,
+      readOnly: true,
+      syncSummary: synchronized.summary,
+      stages: canonicalStages,
+      dataFreshness: synchronized.dataFreshness,
+      freshScopeCount: synchronized.freshScopeCount,
+      staleScopeCount: synchronized.staleScopeCount,
+      ...(synchronized.lastSuccessfulSyncAt
+        ? { lastSuccessfulSyncAt: synchronized.lastSuccessfulSyncAt }
+        : {}),
+      lastSyncAttemptAt: synchronized.lastSyncAttemptAt,
+      ...(synchronized.cacheWarningCode
+        ? { cacheWarningCode: synchronized.cacheWarningCode }
+        : {}),
+      ...(freshnessReasonCode ? { freshnessReasonCode } : {}),
+      ...(freshnessReasonCode === "provider_rate_limited"
+        && synchronized.retryAfterSeconds !== undefined
+        ? { retryAfterSeconds: synchronized.retryAfterSeconds }
+        : {}),
+      lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
+    });
+  }
+
+  if (!runtimeServices) registerAppTool(
     server,
     "get_connection_status",
     {
@@ -390,7 +491,7 @@ export function createTaskboardMcpServer(
     async () => authToolResult(await authService.getConnectionStatus()),
   );
 
-  registerAppTool(
+  if (!runtimeServices) registerAppTool(
     server,
     "login_with_tapd_token",
     {
@@ -429,7 +530,7 @@ export function createTaskboardMcpServer(
     },
   );
 
-  registerAppTool(
+  if (!runtimeServices) registerAppTool(
     server,
     "disconnect_tapd",
     {
@@ -452,14 +553,14 @@ export function createTaskboardMcpServer(
     },
   );
 
-  registerProjectTool(server, projectLogger, projectCatalog, "discover_projects", {
+  if (!runtimeServices) registerProjectTool(server, projectLogger, projectCatalog, "discover_projects", {
     title: "发现项目",
     description: "从当前项目管理系统发现可访问项目。",
     inputSchema: { providerId: z.string().min(1) },
     run: (catalog) => catalog.discover(),
   });
 
-  registerProjectTool(server, projectLogger, projectCatalog, "save_project_selection", {
+  if (!runtimeServices) registerProjectTool(server, projectLogger, projectCatalog, "save_project_selection", {
     title: "保存项目选择",
     description: "保存当前账号要纳入看板的项目。",
     inputSchema: {
@@ -469,7 +570,7 @@ export function createTaskboardMcpServer(
     run: (catalog, input) => catalog.saveSelection(input.externalIds as string[]),
   });
 
-  registerProjectTool(server, projectLogger, projectCatalog, "add_project", {
+  if (!runtimeServices) registerProjectTool(server, projectLogger, projectCatalog, "add_project", {
     title: "手工添加项目",
     description: "通过项目 ID 或 URL 验证并添加一个项目。",
     inputSchema: {
@@ -478,6 +579,105 @@ export function createTaskboardMcpServer(
     },
     run: (catalog, input) => catalog.addProject(input.input as string),
   });
+
+  if (runtimeServices) {
+    const activeProviderSchemaWithWarning = activeProviderSchema.extend({
+      warningCode: z.literal("active_provider_unavailable").optional(),
+    });
+    const activeProvider = () => runtimeServices.activeProviderStore.load({
+      registeredProviderIds: runtimeServices.registry.ids(),
+    });
+    registerAppTool(server, "list_providers", {
+      title: "列出项目管理系统",
+      description: "列出本地已注册项目管理系统及非敏感连接状态。",
+      inputSchema: {},
+      outputSchema: { providers: z.array(providerDescriptorSchema) },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: {},
+    }, async () => ({
+      structuredContent: { providers: await runtimeServices.registry.list() },
+      content: [{ type: "text" as const, text: "项目管理系统列表已加载。" }],
+    }));
+    registerAppTool(server, "get_active_provider", {
+      title: "读取当前项目管理系统",
+      description: "读取当前看板使用的项目管理系统。",
+      inputSchema: {},
+      outputSchema: activeProviderSchemaWithWarning.shape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: {},
+    }, async () => {
+      const result = await activeProvider();
+      return { structuredContent: result, content: [{ type: "text" as const, text: "当前项目管理系统已加载。" }] };
+    });
+    registerAppTool(server, "set_active_provider", {
+      title: "切换项目管理系统",
+      description: "切换当前看板使用的已注册项目管理系统。",
+      inputSchema: { providerId: z.string().min(1) },
+      outputSchema: activeProviderSchema.shape,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+      _meta: {},
+    }, async ({ providerId }) => {
+      runtimeServices.registry.get(providerId);
+      const selection = activeProviderSchema.parse({ version: 1, activeProviderId: providerId });
+      await runtimeServices.activeProviderStore.save(selection);
+      return { structuredContent: selection, content: [{ type: "text" as const, text: "项目管理系统已切换。" }] };
+    });
+    registerAppTool(server, "get_provider_connection", {
+      title: "检查项目管理系统连接",
+      description: "检查当前项目管理系统的非敏感连接状态。",
+      inputSchema: {},
+      outputSchema: providerConnectionSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: {},
+    }, async () => {
+      const active = await activeProvider();
+      const result = await runtimeServices.registry.get(active.activeProviderId).auth.getConnection();
+      return { structuredContent: result, content: [{ type: "text" as const, text: "连接状态已更新。" }] };
+    });
+    registerAppTool(server, "start_provider_login", {
+      title: "连接项目管理系统",
+      description: "启动当前项目管理系统的用户授权流程。",
+      inputSchema: {},
+      outputSchema: providerLoginTransactionSchema.shape,
+      annotations: { readOnlyHint: false, openWorldHint: true },
+      _meta: {},
+    }, async () => {
+      const active = await activeProvider();
+      const auth = runtimeServices.registry.get(active.activeProviderId).auth;
+      if (!auth.startLogin) throw new Error("provider_capability_unsupported");
+      const result = await auth.startLogin();
+      return { structuredContent: result, content: [{ type: "text" as const, text: "授权流程已启动。" }] };
+    });
+    registerAppTool(server, "cancel_provider_login", {
+      title: "取消项目管理系统授权",
+      description: "取消当前内存中的用户授权流程。",
+      inputSchema: { transactionId: z.string().min(1) },
+      outputSchema: providerConnectionSchema.shape,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+      _meta: {},
+    }, async ({ transactionId }) => {
+      const active = await activeProvider();
+      const auth = runtimeServices.registry.get(active.activeProviderId).auth;
+      if (!auth.cancelLogin) throw new Error("provider_capability_unsupported");
+      const result = await auth.cancelLogin(transactionId);
+      return { structuredContent: result, content: [{ type: "text" as const, text: "授权流程已取消。" }] };
+    });
+    registerAppTool(server, "disconnect_provider", {
+      title: "断开项目管理系统",
+      description: "断开当前项目管理系统并清除其活跃缓存。",
+      inputSchema: {},
+      outputSchema: providerConnectionSchema.shape,
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      _meta: {},
+    }, async () => {
+      const active = await activeProvider();
+      const registration = runtimeServices.registry.get(active.activeProviderId);
+      if (!registration.auth.disconnect) throw new Error("provider_capability_unsupported");
+      const result = await registration.auth.disconnect();
+      await runtimeServices.workItemServices.get(registration.id)?.clearCached(registration.id);
+      return { structuredContent: result, content: [{ type: "text" as const, text: "项目管理系统已断开。" }] };
+    });
+  }
 
   registerAppTool(
     server,
@@ -628,6 +828,7 @@ function registerWorkItemTool(
     description: string;
     resourceUri?: string;
     run: () => Promise<unknown>;
+    providerIdOnError?: string;
   },
 ) {
   registerAppTool(server, tool, {
@@ -669,7 +870,7 @@ function registerWorkItemTool(
       logger.completed({
         requestId,
         tool,
-        providerId: "tapd",
+        providerId: options.providerIdOnError ?? "unknown",
         outcome: "error",
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
         successfulProjects: 0,
