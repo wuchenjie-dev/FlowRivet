@@ -19,7 +19,8 @@
     "test:e2e": "vitest run --passWithNoTests tests/e2e",
     "typecheck": "npm run typecheck:legacy && npm run typecheck --workspaces",
     "typecheck:legacy": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/src/cli.js"
+    "start": "node dist/src/cli.js",
+    "plugin:update": "npm run build:legacy && node dist/src/cli.js plugin update"
   },
   "dependencies": {
     "zod": "^4.0.0"

@@ -38,7 +38,7 @@ npm start --workspace @flowrivet/codex-plugin
 Invoke-RestMethod http://127.0.0.1:43120/health
 ```
 
-预期 `status` 为 `ok`。Companion 不应监听公网地址。
+预期 `status` 为 `ok`，并同时返回 `product`、`pid` 和 `instanceId`。Companion 不应监听公网地址。
 
 ## 注册本地插件
 
@@ -66,7 +66,19 @@ New-Item -ItemType Junction -Path $generatedPlugin -Target $repo
 & $codexCli plugin add flowrivet@flowrivet-local
 ```
 
-源码更新后刷新 cachebuster、重新执行 `plugin add flowrivet@flowrivet-local`，并新建 Codex 任务。已有任务不会重新加载 Skill 和 MCP 工具。
+首次注册完成后，不再手工刷新 cachebuster 或重复执行 `plugin add`。源码更新后在仓库根目录运行：
+
+```powershell
+npm run plugin:update
+```
+
+该入口先构建最小 CLI，再调用与 `flowrivet plugin update` 相同的更新服务。默认使用当前 checkout；只有显式增加 `--pull` 才会检查干净工作区并执行 `git pull --ff-only`。首次接管没有实例文件的旧版 Companion 时，交互终端会要求确认；无 TTY 或 `--json` 模式使用：
+
+```powershell
+npm run plugin:update -- --adopt-legacy-companion --json
+```
+
+成功结果包含插件版本、marketplace、Companion PID、实例 ID 和 health 地址，不包含命令输出、业务数据或凭据。更新完成后必须重启 Codex 并新建任务；已有任务不会重新加载 Skill 和 MCP 工具。
 
 ## 验收流程
 
@@ -126,5 +138,8 @@ npm run test:e2e --workspace @flowrivet/codex-plugin
 - 看板显示离线缓存：当前连接或同步不可用；缓存未超过 7 天时仍可浏览并重新连接飞书项目。
 - 工作项为空：先用 `meegle auth status --format json` 验证当前 Profile，再确认飞书项目中工作项确实分配给当前账号。
 - 工具列表没有 `start_provider_login`：重新构建、刷新插件 cachebuster、安装插件并新建 Codex 任务。
+- 源码更新后页面仍是旧版：在源码根目录运行 `npm run plugin:update`，成功后重启 Codex 并新建任务；单纯刷新页面不会更新插件缓存。
+- `plugin_manifest_recovery_conflict`：当前 manifest 与遗留事务的原始、临时哈希都不一致。保留 FlowRivet 用户配置目录中的 `plugin-updates` 备份和日志，先确认手工修改来源，不要直接删除证据或覆盖源码。
+- `companion_legacy_confirmation_required`：首次迁移旧 Companion 需要在交互终端确认，或为自动化命令显式增加 `--adopt-legacy-companion`。
 - `/health` 不可达：确认端口、构建产物和启动目录。
 - 插件页显示“无法加载插件”：远程插件目录与本地 FlowRivet 是两条链路，以 `plugin list` 的 `installed, enabled` 和本地 MCP 调用为准。

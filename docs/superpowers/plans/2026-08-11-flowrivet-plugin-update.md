@@ -123,16 +123,16 @@
 - Modify: `src/cli.ts`
 - Modify: `package.json`
 - Modify: `README.md`
-- Modify: `docs/poc.md`
+- Modify: `poc.md`
 
-- [ ] Add failing orchestration tests for the exact order: recover transaction, optionally pull/re-exec, build, install plugin, restore manifest, stop verified Companion, start Companion, verify health, report Codex restart instructions.
-- [ ] Add failure tests proving the old Companion remains available until both the build and plugin installation succeed, the manifest always restores, startup failures are surfaced, and JSON output stays machine-readable.
-- [ ] Run `npm test -- tests/plugin-update-service.test.ts tests/cli.test.ts` and confirm failures.
-- [ ] Compose the updater adapters behind `createPluginUpdateService` and keep side effects injectable.
-- [ ] Add `npm run plugin:update` as a minimal bootstrap build followed by the same `flowrivet plugin update` code path.
-- [ ] Document normal, `--pull`, JSON, legacy-adoption, recovery-conflict, and "restart Codex then open a new task" workflows in Chinese-facing project docs.
-- [ ] Re-run focused tests, `npm run typecheck`, and `npm run build`.
-- [ ] Commit: `feat(plugin): deliver one-command local updates`
+- [x] Add failing orchestration tests for the exact order: recover transaction, optionally pull/re-exec, build, install plugin, restore manifest, stop verified Companion, start Companion, verify health, report Codex restart instructions.
+- [x] Add failure tests proving the old Companion remains available until both the build and plugin installation succeed, the manifest always restores, startup failures are surfaced, and JSON output stays machine-readable.
+- [x] Run `npm test -- tests/plugin-update-service.test.ts tests/cli.test.ts` and confirm failures.
+- [x] Compose the updater adapters behind `createPluginUpdateService` and keep side effects injectable.
+- [x] Add `npm run plugin:update` as a minimal bootstrap build followed by the same `flowrivet plugin update` code path.
+- [x] Document normal, `--pull`, JSON, legacy-adoption, recovery-conflict, and "restart Codex then open a new task" workflows in Chinese-facing project docs.
+- [x] Re-run focused tests, `npm run typecheck`, and `npm run build`.
+- [x] Commit: `feat(plugin): deliver one-command local updates`
 
 ## Task 8: Review, harden, and perform real local acceptance
 

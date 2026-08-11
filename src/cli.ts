@@ -28,6 +28,7 @@ import {
   type PluginUpdateResult,
   type PluginUpdateService,
 } from "./plugin-update/contracts.js";
+import { createDefaultPluginUpdateService } from "./plugin-update/plugin-update-service.js";
 
 export interface CliDependencies {
   createDoctorProbe(config: FlowRivetConfig): DoctorProbe;
@@ -113,12 +114,7 @@ const defaultDependencies: CliDependencies = {
       workspaceId: config.sourceWorkspaceId,
       personalToken: config.personalToken,
     }),
-  updatePlugin: async () => {
-    throw new PluginUpdateError(
-      "plugin_updater_unavailable",
-      "当前构建尚未包含本地插件更新服务",
-    );
-  },
+  updatePlugin: createDefaultPluginUpdateService(),
 };
 
 export async function runCli(

@@ -28,6 +28,29 @@ meegle auth login --device-code
 meegle auth status --format json
 ```
 
+### 更新本地 Codex 插件
+
+源码修改完成后，在当前 FlowRivet 仓库根目录运行：
+
+```powershell
+npm run plugin:update
+```
+
+该命令会构建当前 checkout、使用 Codex 官方 cachebuster helper 重新安装当前已启用的本地 FlowRivet 插件、安全重启 Companion，并验证实例身份和 `/health`。它默认不会执行 Git 拉取；需要先 fast-forward 到 upstream 时显式运行：
+
+```powershell
+npm run plugin:update -- --pull
+```
+
+`--pull` 只接受干净工作区和已配置 upstream。首次从旧版 Companion 迁移时，交互终端会要求确认；CI、脚本或 `--json` 模式必须显式增加 `--adopt-legacy-companion`。也可以在已经构建或安装了 `flowrivet` 命令时运行等价入口：
+
+```powershell
+flowrivet plugin update
+flowrivet plugin update --json
+```
+
+更新成功后仍需重启 Codex，并新建任务；刷新旧任务不会重新加载插件 Skill 和 MCP 配置。若返回 `plugin_manifest_recovery_conflict`，不要删除事务文件或覆盖 manifest，应先检查 FlowRivet 用户配置目录中的备份和事务日志，确认冲突来源后再处理。
+
 ## 环境要求
 
 - Node.js 22 或更高版本。
