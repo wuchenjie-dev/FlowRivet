@@ -245,7 +245,8 @@ export class WorkItemService implements WorkItemSynchronizer {
 
     const projects = result.projects.filter((project) => project.available);
     const availableProjectIds = new Set(projects.map((project) => project.externalId));
-    const scopes = result.scopes.filter((scope) => availableProjectIds.has(scope.projectExternalId));
+    const scopes = result.scopes.filter((scope) => scope.outcome === "error"
+      || availableProjectIds.has(scope.projectExternalId));
     const failedProjectIds = new Set(scopes
       .filter((scope) => scope.outcome === "error")
       .map((scope) => scope.projectExternalId));

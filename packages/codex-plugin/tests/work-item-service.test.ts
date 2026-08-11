@@ -304,7 +304,7 @@ describe("work item service", () => {
   it("rejects an account result with no usable scope", async () => {
     const provider = new FakeAccountProvider();
     provider.listAccountWorkItems.mockResolvedValue(accountResult(
-      [accountProject("PROJ")],
+      [],
       [{
         projectExternalId: "PROJ",
         providerItemType: "task",
