@@ -1,0 +1,12 @@
+interface:
+  display_name: "我的待办看板"
+  short_description: "在 Codex 中打开 FlowRivet 飞书项目待办"
+  default_prompt: "使用 $my-work-taskboard 打开我的待办看板。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "flowrivet"
+      description: "FlowRivet 本地 Companion"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:43120/mcp"

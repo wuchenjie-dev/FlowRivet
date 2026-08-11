@@ -1,49 +1,48 @@
-# Codex 看板本地运行手册
+# Codex 飞书项目看板本地运行手册
 
 ## 范围
 
-本手册用于在 Windows Codex 中注册并验收 FlowRivet Phase 1C 插件。Companion 使用本机安全保存的 TAPD 个人 Token，通过 TAPD OpenAPI 自动发现全部可访问项目，并聚合精确分配给当前用户的真实工作项。看板只读，不依赖第三方 TAPD CLI 或 MCP，也不需要配置飞书或 GitLab 凭据。
+FlowRivet 在 Codex 中提供“我的待办”只读看板，默认从飞书项目读取当前账号的真实工作项。Companion 只监听本机回环地址，通过用户本机的 Meegle CLI 会话访问飞书项目。官方飞书项目 MCP 不是必需依赖，终端用户也不需要向 FlowRivet 提交密码或访问凭据。
 
 ## 准入标准
 
-- Windows Codex 已安装并可打开插件页。
-- Node.js 22.5 或更高版本（本地缓存使用 `node:sqlite`）。
-- 当前用户可以写入本地 marketplace 目录。
-- 本机端口 `43120` 未被其他程序占用。
-- 当前 TAPD 用户具有个人 Token 及目标项目的读取权限。
+- Windows、Linux 或 macOS 已安装 Node.js 22.5 或更高版本。
+- Codex 可以安装本地插件，本机端口 `43120` 未被占用。
+- 当前飞书账号有权访问目标飞书项目空间和工作项。
+- 当前用户可以安装飞书项目 CLI，并允许 CLI 使用系统钥匙串或等价的操作系统安全存储。
 
-## 构建与校验
+## 安装飞书项目 CLI
 
-在 FlowRivet 仓库根目录执行：
+```powershell
+npx -y @lark-project/meegle@latest install
+meegle config set host project.feishu.cn
+meegle auth login --device-code
+meegle auth status --format json
+```
+
+设备授权在飞书页面完成。CLI 登录资料留在 CLI 与系统钥匙串中，不写入 FlowRivet 仓库、插件配置或 Codex 对话。也可以跳过命令行登录，在看板中点击“连接飞书项目”，按页面显示的 URL 和临时验证码完成授权。
+
+## 构建与启动 Companion
+
+在仓库根目录运行：
 
 ```powershell
 npm install
 npm run build --workspace @flowrivet/codex-plugin
-& .\scripts\validate-plugin.ps1 -PluginCreatorRoot "$env:USERPROFILE\.codex\skills\.system\plugin-creator"
-```
-
-构建产物为 `packages/codex-plugin/dist/ui/taskboard.html`。
-
-## 启动 Companion
-
-保持一个终端运行：
-
-```powershell
 npm start --workspace @flowrivet/codex-plugin
 ```
 
-在另一个终端检查：
+另开终端检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:43120/health
 ```
 
-预期返回 `status` 为 `ok`。Companion 只监听本机回环地址，不应暴露到公网。
+预期 `status` 为 `ok`。Companion 不应监听公网地址。
 
-## 创建和更新本地插件
+## 注册本地插件
 
-首次使用时通过 `plugin-creator` 建立本地 marketplace，并将插件目录联接到 FlowRivet 仓库：
-下面的 `$codexCli` 调用等价于 `codex plugin marketplace add` 和 `codex plugin add`，用于兼容桌面应用内置 CLI。
+下面使用 Codex 桌面应用内置 CLI；它等价于 `codex plugin marketplace add` 和 `codex plugin add`。API Key 模式下远程插件目录可能不可用，但不影响本地 marketplace。
 
 ```powershell
 $repo = (Resolve-Path .).Path
@@ -67,88 +66,36 @@ New-Item -ItemType Junction -Path $generatedPlugin -Target $repo
 & $codexCli plugin add flowrivet@flowrivet-local
 ```
 
-每次更新源码后必须刷新版本标识并重新安装：
+源码更新后刷新 cachebuster、重新执行 `plugin add flowrivet@flowrivet-local`，并新建 Codex 任务。已有任务不会重新加载 Skill 和 MCP 工具。
 
-```powershell
-python "$pluginCreator\scripts\update_plugin_cachebuster.py" $repo
-& $codexCli plugin add flowrivet@flowrivet-local
-& $codexCli plugin list
-```
+## 验收流程
 
-FlowRivet 必须显示为 `installed, enabled`。安装后新建 Codex 任务；已有任务不会重新加载 Skill 和 MCP 工具。Windows 的 PATH 可能指向旧 CLI，因此优先使用桌面应用内置的 `.plugin-appserver\codex.exe`。
+1. 确认 Companion 正在 `43120` 运行。
+2. 新建 Codex 任务，输入“打开我的待办看板”或“打开我的飞书项目待办”。
+3. CLI 缺失时，页面展示安装命令；安装后点击“重新检查飞书项目连接”。
+4. 未登录或授权失效时，点击“连接飞书项目”或“重新连接飞书项目”，在飞书页面完成设备授权。
+5. 授权成功后看板自动调用 `open_my_taskboard`，刷新按钮调用 `refresh_my_work_items`。
+6. 看板应显示当前账号的真实工作项、“只读”标识和飞书项目数据来源，不应出现 Demo 数据、Token 输入框、管理项目或拖拽反馈。
+7. 点击飞书工作项卡片应使用 `noopener,noreferrer` 打开经过校验的 HTTPS 原记录链接。
+8. 账号菜单可以断开飞书项目；断开后清除该 Provider 的活跃缓存并返回登录页。
 
-## Codex 验收
+## 缓存与自动刷新
 
-1. 确认新版 Companion 正在 `43120` 运行。
-2. 新建 Codex 任务，并输入 `打开我的 TAPD 待办看板`。
-3. 未连接时，在页面密码框输入个人 Token；不要在对话、命令参数、配置或日志中粘贴 Token。
-4. 登录后应直接进入看板，自动发现全部可访问项目，无需选择项目。
-5. 看板应显示真实工作项及“只读”标识，不应出现“Demo 数据”“管理项目”或拖拽反馈。
-6. 点击刷新应调用 `refresh_my_work_items`，重新读取需求、任务和缺陷。
-7. 单项目失败时保留其他结果并显示警告；全部失败时显示重试错误，不伪装成空成功。
-8. 点击工作项卡片应打开右侧详情抽屉；桌面端不遮住整张看板，移动端使用全屏详情。
-9. 详情应展示可用的类型、状态、处理人、创建/更新时间、截止时间和描述；上游缺失的可选字段允许不显示。
-10. 详情中的“在 TAPD 中打开”应使用 HTTPS 链接打开原始记录；看板本身不改变 TAPD 状态。
-11. 关闭按钮、`Escape`、遮罩点击均可关闭详情，关闭后焦点回到原卡片；详情失败时可在抽屉内重试。
-12. 部分范围同步失败时，看板保留失败范围的缓存卡片，并明确显示“部分数据来自缓存”和范围数。
-13. Token 失效或网络不可用时，只要存在未过期缓存，看板仍可浏览，并显示离线状态、最后成功同步时间和“重新连接 TAPD”入口。
-14. 离线缓存卡片可以打开，但详情仍实时向 TAPD 读取；离线失败时提示“重新连接后加载详情”。
-15. 在账号菜单中设置自动刷新：默认 60 秒，可选不自动刷新、5 秒、10 秒、30 秒、60 秒或自定义 5～3600 秒。
+- 摘要缓存路径为 Windows `%LOCALAPPDATA%\FlowRivet\flowrivet.db`、macOS `~/Library/Application Support/FlowRivet/flowrivet.db`、Linux `$XDG_CONFIG_HOME/flowrivet/flowrivet.db`。
+- 缓存按 Provider 和稳定账号隔离，只保存看板摘要；不保存登录资料、描述、评论、附件、上游响应正文或业务 URL。
+- 每个范围从最后成功同步起保留 7 天，恰好 7 天仍有效，超过 7 天才自动删除。
+- 刷新偏好保存在 `taskboard-preferences.json`。默认 60 秒，可选择不自动刷新、5 秒、10 秒、30 秒、60 秒或自定义 5～3600 秒。
+- 页面隐藏时暂停刷新；偏好读取失败时当前会话按不自动刷新处理。多个看板只在 Provider、账号和同步范围一致时合并请求。
+- 上游限流时遵循 `Retry-After`；授权失效时暂停自动刷新，完成重新连接飞书项目后恢复。
 
-固定任务是 Codex 原生任务，不是插件注册的自定义侧边栏菜单。更新插件后应新建任务，再将新任务固定到侧边栏。
+## 安全与日志
 
-## 数据与安全边界
+- 不在对话、命令参数、仓库、日志或环境文件中传递飞书密码或 CLI 登录资料。
+- Companion 只注册只读看板工具与 Provider 连接工具，不调用飞书项目写接口。
+- 日志只记录 requestId、工具、Provider、结果、耗时和聚合计数，不记录身份、项目、工作项、URL、验证码、命令参数、stdout 或 stderr。
+- 飞书工作项没有详情能力时直接打开 HTTPS 原记录，不调用其他 Provider 的详情工具。
 
-- Token 由 Windows DPAPI `CurrentUser` 加密保存在 `%LOCALAPPDATA%\FlowRivet\tapd-token.json`，不会写入仓库。
-- 工作项摘要缓存使用本机 SQLite，路径分别为：Windows `%LOCALAPPDATA%\FlowRivet\flowrivet.db`、macOS `~/Library/Application Support/FlowRivet/flowrivet.db`、Linux `$XDG_CONFIG_HOME/flowrivet/flowrivet.db`（未设置时为 `~/.config/flowrivet/flowrivet.db`）。
-- 缓存按 Provider、稳定账号、租户、项目和工作项类型隔离。每个范围从最后一次成功同步起保留 7 天；恰好 7 天仍有效，超过 7 天才自动删除。一个范围成功同步不会延长其他失败范围的有效期。
-- 缓存只保存看板所需的工作项摘要和脱敏命名空间，不保存 Token、账号原始标识、描述、评论、附件或上游响应正文。工作项详情始终实时读取，不做持久化。
-- 切换账号前先清除旧账号缓存和项目选择，再提交新 Token；任一步清理失败都保留旧 Token 并返回稳定错误。断开 TAPD 时同样先清缓存和项目选择，成功后才删除 Token。
-- Companion 只使用读取接口查询参与项目、需求、任务和缺陷；看板没有 TAPD 写工具。
-- 工作项核心模型保持 Provider 中立，TAPD 响应包装只存在于 TAPD Adapter。
-- 详情读取必须再次校验项目属于当前 Token 的可访问项目，并校验需求、任务或缺陷的处理人精确匹配当前用户。
-- 描述只保留段落、列表、强调、代码和 HTTPS 链接等安全标签；输入超过 256 KiB 时降级为截断的纯文本，不渲染脚本、图片或内联样式。
-- 日志只记录 requestId、工具名、Provider、工作项类型、结果、耗时及聚合计数，不记录 Token、身份、项目名、项目 ID、工作项标题、工作项 ID、URL、描述或响应正文。
-- 自动发现的新项目直接纳入同步；历史不可访问项目不参与同步。
-- 未完成工作项全部保留；已完成项仅保留最近 7 天且具有可信完成时间的记录。
-
-## 自动刷新
-
-- 刷新偏好由 Companion 持久化到 `taskboard-preferences.json`，路径分别为：Windows `%LOCALAPPDATA%\FlowRivet\taskboard-preferences.json`、macOS `~/Library/Application Support/FlowRivet/taskboard-preferences.json`、Linux `$XDG_CONFIG_HOME/flowrivet/taskboard-preferences.json`（未设置时为 `~/.config/flowrivet/taskboard-preferences.json`）。偏好不绑定 TAPD，后续接入其他项目管理 Provider 时继续复用。
-- 每个看板打开后读取一次偏好。默认 60 秒；选择“不自动刷新”时不会建立定时器；自定义间隔只能是 5～3600 秒的整数。保存失败时继续使用修改前的频率，偏好读取失败时本次会话按“不自动刷新”处理。
-- 页面隐藏时暂停计时和网络请求。重新可见时按隐藏前剩余时间继续；如果原定时间已经过去，则立即刷新一次。手动刷新成功后，从完成时刻重新计算下一次自动刷新。
-- 同一看板内，手动刷新与自动刷新共享一个进行中的请求，不会并发重复请求。多个看板同时打开时，只有 Provider、稳定账号、租户和项目集合完全相同的请求才会在 Companion 中合并；不同身份或项目严格隔离。
-- TAPD 返回限流时遵循 `Retry-After`，多个项目限流取最长等待时间；响应缺少或无法解析时默认等待 60 秒。冷却期内禁止自动刷新，手动刷新仍允许用户主动重试，并以最新响应重新计算冷却时间。
-- Token 失效时暂停自动刷新并进入重新连接流程；重新连接成功后恢复计时。断开连接、离线缓存或没有打开看板时不会在后台持续轮询。
-
-## 真实只读验收
-
-验收输出只记录连接结果、只读标识、项目数量、工作项数量、成功项目数、失败项目数和稳定错误码。不得复制任何上游业务明细。
-
-### 2026-08-07 验收记录
-
-| 检查项 | 结果 |
-| --- | --- |
-| OpenAPI 请求成功 | `true` |
-| 自动项目发现成功 | `true` |
-| 真实工作项读取成功 | `true` |
-| 看板只读 | `true` |
-| TAPD 写操作 | `false` |
-
-### 2026-08-10 详情读取验收记录
-
-| 检查项 | 结果 |
-| --- | --- |
-| 真实详情读取成功 | `true` |
-| 项目访问校验成功 | `true` |
-| 工作项类型映射成功 | `true` |
-| 状态字段存在 | `true` |
-| 处理人字段存在 | `true` |
-| HTTPS 原记录链接存在 | `true` |
-| 描述字段存在 | `false`（该记录上游未填写，属于合法空值） |
-| TAPD 写操作 | `false` |
-
-## 自动化回归
+## 自动化验证
 
 ```powershell
 npm test
@@ -157,53 +104,14 @@ npm run build
 npm run test:e2e --workspace @flowrivet/codex-plugin
 ```
 
-浏览器测试覆盖桌面和移动端、Token 登录、连接失效、自动项目、真实刷新、部分失败、全部失败、混合/离线缓存、重连焦点恢复、离线详情失败、详情抽屉、自动刷新偏好、定时触发、自定义校验、移动端设置布局、会话内详情缓存、并发响应保护、关闭与重试，以及键盘可达性。
+历史 TAPD 缓存探针仍可通过 `npm run probe:cache --workspace @flowrivet/codex-plugin` 单独验证；成功结果只包含 `requiredFieldsPresent` 等脱敏聚合字段。本次飞书项目默认路径不依赖该探针。
 
-### 真实缓存重启探针
+## 常见问题
 
-准入标准：本机具有有效的 `TAPD_TOKEN`，且目标项目至少有一个工作项类型可读；Node.js 版本不低于 22.5；命令从仓库根目录执行。探针只调用 TAPD 读取接口，并且只允许在系统临时目录创建显式指定的数据库。
-
-Windows PowerShell：
-
-```powershell
-$env:TAPD_TOKEN = [Environment]::GetEnvironmentVariable("TAPD_TOKEN", "User")
-$probeDb = Join-Path ([IO.Path]::GetTempPath()) ("flowrivet-probe-{0}.db" -f [guid]::NewGuid())
-npm run --silent probe:cache --workspace @flowrivet/codex-plugin -- --db $probeDb
-Remove-Item Env:TAPD_TOKEN -ErrorAction SilentlyContinue
-```
-
-Linux/macOS：
-
-```bash
-probe_db="$(mktemp -u "${TMPDIR:-/tmp}/flowrivet-probe-XXXXXX.db")"
-npm run --silent probe:cache --workspace @flowrivet/codex-plugin -- --db "$probe_db"
-unset TAPD_TOKEN
-```
-
-准出标准：进程退出码为 `0`，且只输出以下脱敏结果；探针会在成功或失败后删除数据库及 SQLite 辅助文件。
-
-```json
-{"ok":true,"cacheHit":true,"dataFreshness":"offline","scopeCount":2,"requiredFieldsPresent":true}
-```
-
-其中 `scopeCount` 是本次至少一个成功同步且被完整恢复的类型范围数，会随项目启用的模块和 Token 权限变化；例如同时开放三个类型时为 `3`。该结果证明第一次实例完成真实只读同步后，第二个全新 Store/Service 实例能从同一临时数据库恢复全部成功范围。失败时只输出 `errorCode`，不输出 Token、路径、身份、项目、工作项或响应内容。
-
-## 常见失败
-
-- 页面出现“Demo 数据”：`43120` 仍是旧 Companion。停止旧进程，从当前仓库重新构建并启动。
-- 工具列表没有 `refresh_my_work_items`：插件缓存未更新。刷新 cachebuster，重新执行 `plugin add flowrivet@flowrivet-local`，并新建任务。
-- `43120` 被占用：先确认占用者是否为旧 FlowRivet，再停止旧实例并启动当前构建。
-- `/health` 不可达：检查构建是否成功以及启动命令的工作目录。
-- Token 无效或权限不足：在 TAPD 个人设置确认 Token 状态和读取权限，不要通过聊天发送 Token。
-- 看板显示“离线缓存”：当前连接或同步不可用，但本地仍有 7 天内的工作项摘要。可以继续浏览卡片；恢复连接后点击“重新连接 TAPD”并刷新。
-- 离线时没有看板数据：当前账号没有可用缓存，或对应范围最后成功同步已超过 7 天；重新连接并完成一次成功同步。
-- 断开或切换账号返回 `cache_clear_failed`：本地缓存未能安全删除，因此 Token 保持不变。检查 `%LOCALAPPDATA%\FlowRivet`（或对应平台目录）的写权限后重试，不要手工覆盖 Token 文件。
-- 项目或工作项不符合预期：先比较项目数量和工作项数量，不在日志中打印业务明细；确认 TAPD 记录的处理人与当前 Token 身份精确一致。
-- 详情显示“无权访问”：当前项目或工作项不在 Token 的授权范围，或处理人已变化；刷新看板后重试。
-- 详情显示“不存在”：工作项可能已删除、迁移或不再对当前用户可见；刷新看板以移除旧卡片。
-- 详情显示“暂时不可用”或“数据格式异常”：保留抽屉并点击重试；若持续失败，通过 requestId 对照 Companion 脱敏日志排查。
-- 自动刷新没有触发：确认账号菜单未选择“不自动刷新”、页面处于可见状态且 Token 有效；若刚发生限流，应等待界面显示的 `Retry-After` 冷却结束。
-- 自动刷新设置重启后丢失：检查当前平台 FlowRivet 配置目录的写权限及 `taskboard-preferences.json`；偏好读取失败会使当前会话暂停自动刷新。
-- 插件页显示“无法加载插件”：API Key 登录模式下，远程插件目录可能返回 401。以本地 `plugin list` 的 `installed, enabled` 状态和 MCP 实际调用为准。
-
-Codex 远程插件目录与本地 FlowRivet 是两条链路；远程目录异常不代表本地 Companion 不可用。
+- `cli_missing`：运行安装命令并重新检查；不要改为手工粘贴登录资料。
+- 授权页面过期：取消当前授权，重新点击连接生成新的临时验证码。
+- 看板显示离线缓存：当前连接或同步不可用；缓存未超过 7 天时仍可浏览并重新连接飞书项目。
+- 工作项为空：先用 `meegle auth status --format json` 验证当前 Profile，再确认飞书项目中工作项确实分配给当前账号。
+- 工具列表没有 `start_provider_login`：重新构建、刷新插件 cachebuster、安装插件并新建 Codex 任务。
+- `/health` 不可达：确认端口、构建产物和启动目录。
+- 插件页显示“无法加载插件”：远程插件目录与本地 FlowRivet 是两条链路，以 `plugin list` 的 `installed, enabled` 和本地 MCP 调用为准。

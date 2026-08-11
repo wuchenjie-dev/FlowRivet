@@ -1,7 +1,7 @@
 {
   "name": "flowrivet",
-  "version": "0.1.0+codex.20260810043342",
-  "description": "Connect Codex with TAPD, Feishu, and GitLab for governed delivery workflows.",
+  "version": "0.1.0+codex.20260811073536",
+  "description": "Open personal Feishu Project work in a local Codex taskboard.",
   "author": {
     "name": "wuchenjie-dev",
     "url": "https://github.com/wuchenjie-dev"
@@ -11,8 +11,8 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "keywords": [
-    "tapd",
-    "feishu",
+    "feishu-project",
+    "meegle",
     "gitlab",
     "workflow",
     "codex"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "FlowRivet",
     "shortDescription": "Govern product-to-delivery workflows.",
-    "longDescription": "FlowRivet checks TAPD workflow gates and connects product requirements with Feishu collaboration and GitLab delivery evidence.",
+    "longDescription": "FlowRivet opens a read-only taskboard for work assigned to the current Feishu Project account through a local Companion and user-owned CLI session.",
     "developerName": "wuchenjie-dev",
     "category": "Productivity",
     "capabilities": [
@@ -28,9 +28,10 @@
       "Read"
     ],
     "defaultPrompt": [
-      "\u6253\u5f00\u6211\u7684 TAPD \u5f85\u529e\u770b\u677f\u3002",
+      "\u6253\u5f00\u6211\u7684\u5f85\u529e\u770b\u677f\u3002",
+      "\u6253\u5f00\u6211\u7684\u98de\u4e66\u9879\u76ee\u5f85\u529e\u3002",
       "\u68c0\u67e5 FlowRivet \u672c\u5730 Companion \u662f\u5426\u53ef\u7528\u3002",
-      "\u5237\u65b0\u6211\u7684 TAPD \u5f85\u529e\u5e76\u663e\u793a\u53ea\u8bfb\u540c\u6b65\u7ed3\u679c\u3002"
+      "\u5237\u65b0\u6211\u7684\u5f85\u529e\u5e76\u663e\u793a\u53ea\u8bfb\u540c\u6b65\u7ed3\u679c\u3002"
     ]
   }
 }

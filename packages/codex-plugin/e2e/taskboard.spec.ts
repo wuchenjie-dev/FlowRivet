@@ -4,6 +4,14 @@ function boardFrame(page: Page) {
   return page.frameLocator('iframe[title="FlowRivet MCP App"]');
 }
 
+test.beforeEach(async ({ context }) => {
+  await context.route("https://project.feishu.cn/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "text/html",
+    body: "<!doctype html><title>Feishu Project test target</title>",
+  }));
+});
+
 test("desktop renders four columns without page overflow", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
@@ -39,12 +47,15 @@ test("compact viewport keeps controls separate and board scrollable", async ({ p
   expect(refresh && account && refresh.x + refresh.width <= account.x).toBe(true);
 });
 
-test("disconnected scenario shows token login without empty columns", async ({ page }) => {
+test("disconnected scenario starts Feishu device authorization without a token", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=disconnected");
   const board = boardFrame(page);
 
-  await expect(board.getByLabel("TAPD Token")).toHaveAttribute("type", "password");
-  await expect(board.getByRole("button", { name: "连接 TAPD" })).toBeVisible();
+  await expect(board.getByLabel(/Token/)).toHaveCount(0);
+  await board.getByRole("button", { name: "连接飞书项目" }).click();
+  await expect(board.getByLabel("飞书授权验证码")).toHaveText("DEMO-CODE");
+  await expect(board.getByRole("link", { name: "打开飞书授权页面" }))
+    .toHaveAttribute("rel", "noreferrer");
   await expect(board.locator(".task-column")).toHaveCount(0);
 });
 
@@ -52,21 +63,32 @@ test("expired scenario requires login again and hides stale data", async ({ page
   await page.goto("/src/ui/demo-harness.html?scenario=expired");
   const board = boardFrame(page);
 
-  await expect(board.getByRole("button", { name: "重新连接 TAPD" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "连接飞书项目" })).toBeVisible();
   await expect(board.locator(".work-card")).toHaveCount(0);
 });
 
-test("token login opens the board and clears the secret input", async ({ page }) => {
+test("device authorization opens the Feishu board", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=disconnected");
   const board = boardFrame(page);
-  const token = board.getByLabel("TAPD Token");
 
-  await token.fill("e2e-placeholder-token");
-  await board.getByRole("button", { name: "连接 TAPD" }).click();
+  await board.getByRole("button", { name: "连接飞书项目" }).click();
+  await board.getByRole("button", { name: "检查授权结果" }).click();
 
   await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible();
-  await expect(token).toHaveCount(0);
   await expect(board.locator(".task-column")).toHaveCount(4);
+  await expect(board.getByText("数据来自 飞书项目")).toBeVisible();
+});
+
+test("missing CLI gives an install command without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=cli_missing");
+  const board = boardFrame(page);
+
+  await expect(board.getByText("npx -y @lark-project/meegle@latest install")).toBeVisible();
+  await expect(board.getByRole("button", { name: "重新检查飞书项目连接" })).toBeVisible();
+  expect(await board.locator("html").evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
 });
 
 test("disconnect removes board data and returns to login", async ({ page }) => {
@@ -74,9 +96,9 @@ test("disconnect removes board data and returns to login", async ({ page }) => {
   const board = boardFrame(page);
 
   await board.getByRole("button", { name: "打开连接菜单" }).click();
-  await board.getByRole("button", { name: "断开 TAPD" }).click();
+  await board.getByRole("button", { name: "断开飞书项目" }).click();
 
-  await expect(board.getByRole("button", { name: "连接 TAPD" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "连接飞书项目" })).toBeVisible();
   await expect(board.locator(".work-card")).toHaveCount(0);
 });
 
@@ -107,7 +129,7 @@ test("cards are read-only and pointer movement cannot change counts", async ({ p
   await expect(board.getByText(/看板位置已更新/)).toHaveCount(0);
 });
 
-test("keyboard reaches controls and opens a work item detail", async ({ page }) => {
+test("keyboard reaches controls and opens a Feishu work item URL", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
@@ -122,61 +144,26 @@ test("keyboard reaches controls and opens a work item detail", async ({ page }) 
   });
   await workItemButton.focus();
   await expect(workItemButton).toBeFocused();
+  const popupPromise = page.context().waitForEvent("page");
   await page.keyboard.press("Enter");
-  await expect(board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" })).toBeVisible();
-  await expect(board.getByRole("button", { name: "关闭详情" })).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect.poll(() => board.getByRole("dialog").evaluate(
-    (dialog) => dialog.contains(dialog.ownerDocument.activeElement),
-  )).toBe(true);
-  await page.keyboard.press("Tab");
-  await expect(board.getByRole("button", { name: "关闭详情" })).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(board.getByRole("dialog")).toHaveCount(0);
-  await expect(workItemButton).toBeFocused();
+  const popup = await popupPromise;
+  expect(popup.url()).toMatch(/^https:\/\/project\.feishu\.cn\/demo\/work_item\/1/);
+  await popup.close();
 });
 
-test("desktop detail drawer renders live fields with bounded overlay geometry", async ({ page }) => {
+test("desktop Feishu cards open outside the read-only board", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
+  const popupPromise = page.context().waitForEvent("page");
   await board.getByRole("button", {
     name: "打开工作项：统一检索结果的排序与筛选体验",
   }).click();
-  const dialog = board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("产品经理")).toBeVisible();
-  await expect(dialog.getByText("稳定排序")).toBeVisible();
-  const externalLink = dialog.getByRole("link", { name: "在 TAPD 中打开" });
-  await expect(externalLink).toHaveAttribute("target", "_blank");
-  await expect(externalLink).toHaveAttribute("rel", "noreferrer");
-  await expect(dialog.locator("script, iframe, img, form")).toHaveCount(0);
-
-  const panelBox = await dialog.locator(".detail-panel").boundingBox();
-  expect(panelBox?.width).toBe(520);
-  expect(panelBox?.height).toBe(900);
-  expect(panelBox?.x).toBe(920);
-
-  await page.mouse.click(120, 450);
-  await expect(dialog).toHaveCount(0);
-});
-
-test("mobile detail layer fills the viewport without horizontal overflow", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/src/ui/demo-harness.html?scenario=connected");
-  const board = boardFrame(page);
-
-  await board.getByRole("button", {
-    name: "打开工作项：统一检索结果的排序与筛选体验",
-  }).click();
-  const dialog = board.getByRole("dialog", { name: "统一检索结果的排序与筛选体验" });
-  await expect(dialog).toBeVisible();
-  const panelBox = await dialog.locator(".detail-panel").boundingBox();
-  expect(panelBox?.width).toBe(390);
-  expect(panelBox?.height).toBe(844);
-  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await expect(dialog.getByRole("button", { name: "关闭详情" })).toBeVisible();
+  const popup = await popupPromise;
+  expect(popup.url()).toContain("project.feishu.cn/demo/work_item/1");
+  await expect(board.getByRole("dialog")).toHaveCount(0);
+  await popup.close();
 });
 
 test("opens all accessible projects without a selection step", async ({ page }) => {
@@ -246,21 +233,18 @@ test("mixed snapshot identifies cached scopes and cards", async ({ page }) => {
   )).toBe(true);
 });
 
-test("offline snapshot stays browsable and reconnect restores focus", async ({ page }) => {
+test("offline snapshot stays browsable while Feishu reconnects", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/src/ui/demo-harness.html?scenario=offline");
   const board = boardFrame(page);
-  const reconnect = board.getByRole("button", { name: "重新连接 TAPD" });
+  const reconnect = board.getByRole("button", { name: "重新连接飞书项目" });
 
   await expect(board.getByRole("region", { name: "工作项看板" })).toBeVisible();
   await expect(board.getByRole("status")).toContainText("正在显示离线缓存");
   await expect(board.locator(".cache-badge")).toHaveCount(7);
   await reconnect.click();
-  await expect(board.getByRole("dialog", { name: "重新连接 TAPD" })).toBeVisible();
-  await expect(board.getByLabel("TAPD Token")).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(board.getByRole("dialog", { name: "重新连接 TAPD" })).toHaveCount(0);
-  await expect(reconnect).toBeFocused();
+  await expect(board.getByRole("dialog", { name: "重新连接飞书项目" })).toBeVisible();
+  await expect(board.getByLabel("飞书授权验证码")).toHaveText("DEMO-CODE");
   await expect(board.locator(".work-card")).toHaveCount(7);
 });
 
@@ -269,24 +253,27 @@ test("offline status and reconnect dialog do not overflow mobile", async ({ page
   await page.goto("/src/ui/demo-harness.html?scenario=offline");
   const board = boardFrame(page);
 
-  await expect(board.getByRole("button", { name: "重新连接 TAPD" })).toBeVisible();
+  await expect(board.getByRole("button", { name: "重新连接飞书项目" })).toBeVisible();
   expect(await board.locator("html").evaluate(
     (element) => element.scrollWidth <= element.clientWidth,
   )).toBe(true);
-  await board.getByRole("button", { name: "重新连接 TAPD" }).click();
-  const dialog = board.getByRole("dialog", { name: "重新连接 TAPD" });
+  await board.getByRole("button", { name: "重新连接飞书项目" }).click();
+  const dialog = board.getByRole("dialog", { name: "重新连接飞书项目" });
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test("cached card detail failure asks the user to reconnect", async ({ page }) => {
+test("cached Feishu cards still open their validated provider URL", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=offline-detail-error");
   const board = boardFrame(page);
 
+  const popupPromise = page.context().waitForEvent("page");
   await board.getByRole("button", {
     name: "打开缓存工作项：统一检索结果的排序与筛选体验",
   }).click();
-  await expect(board.getByText("重新连接后加载详情")).toBeVisible();
+  const popup = await popupPromise;
+  expect(popup.url()).toContain("project.feishu.cn/demo/work_item/1");
+  await popup.close();
 });
 
 test("auto-refresh presets persist for the open Harness page", async ({ page }) => {

@@ -17,7 +17,16 @@ FlowRivet 自身可以托管在 GitHub，但受管业务项目的代码事实源
 
 ## Codex 待办看板
 
-Phase 1C 已提供可注册到 Codex 的“我的 TAPD 待办”只读看板。Companion 使用本机安全保存的个人 Token 自动发现可访问项目，聚合精确分配给当前用户的需求、任务和缺陷；点击任意工作项会打开详情抽屉，展示状态、处理人、时间及经过安全清洗的描述，并可跳转到 TAPD 原记录。安装、启动和验收步骤见 [Codex 看板本地运行手册](./docs/operations/codex-plugin-demo.md)，交互边界见 [看板设计规格](./docs/superpowers/specs/2026-08-06-tapd-my-work-taskboard-design.md)和[工作项详情抽屉规格](./docs/superpowers/specs/2026-08-10-work-item-detail-drawer-design.md)。
+Codex 插件当前默认接入飞书项目。FlowRivet 通过本机飞书项目 CLI 读取当前账号的个人待办，使用设备授权完成登录，不要求用户向插件提交密码或访问凭据。看板保持只读，工作项卡片通过经过校验的 HTTPS 链接打开飞书项目原记录。安装、启动和验收步骤见 [Codex 看板本地运行手册](./docs/operations/codex-plugin-demo.md)，Provider 设计见 [飞书项目接入规格](./docs/superpowers/specs/2026-08-11-feishu-project-meegle-provider-design.md)；历史 TAPD 交互边界仍记录在 [TAPD 看板设计规格](./docs/superpowers/specs/2026-08-06-tapd-my-work-taskboard-design.md)。
+
+飞书项目 CLI 使用官方包安装，并由 CLI 与系统钥匙串管理用户会话：
+
+```powershell
+npx -y @lark-project/meegle@latest install
+meegle config set host project.feishu.cn
+meegle auth login --device-code
+meegle auth status --format json
+```
 
 ## 环境要求
 
