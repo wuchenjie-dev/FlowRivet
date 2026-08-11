@@ -70,13 +70,13 @@
 - Create: `tests/plugin-update-git-updater.test.ts`
 - Modify: `src/plugin-update/contracts.ts`
 
-- [ ] Add failing tests for default no-pull behavior, dirty worktree refusal, missing upstream refusal, `git pull --ff-only`, pull failure, and the one-time re-exec guard.
-- [ ] Run `npm test -- tests/plugin-update-git-updater.test.ts` and confirm failures.
-- [ ] Implement clean-worktree and upstream checks before `--pull`.
-- [ ] After a successful pull, rebuild the minimal root CLI and re-exec `plugin update` once with an internal environment guard so newly pulled updater logic runs the transaction.
-- [ ] Preserve user flags and prevent recursive re-execution.
-- [ ] Re-run focused tests and `npm run typecheck`.
-- [ ] Commit: `feat(plugin): support guarded source updates`
+- [x] Add failing tests for default no-pull behavior, dirty worktree refusal, missing upstream refusal, `git pull --ff-only`, pull failure, and the one-time re-exec guard.
+- [x] Run `npm test -- tests/plugin-update-git-updater.test.ts` and confirm failures.
+- [x] Implement clean-worktree and upstream checks before `--pull`.
+- [x] After a successful pull, rebuild the minimal root CLI and re-exec `plugin update` once with an internal environment guard so newly pulled updater logic runs the transaction.
+- [x] Preserve user flags and prevent recursive re-execution.
+- [x] Re-run focused tests and `npm run typecheck`.
+- [x] Commit: `feat(plugin): support guarded source updates`
 
 ## Task 5: Give Companion a verifiable instance identity
 
