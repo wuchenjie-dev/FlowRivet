@@ -9,10 +9,14 @@ import {
 
 export const demoTaskboardSnapshot = taskboardSnapshotSchema.parse({
   connection: {
-    tapd: "connected",
+    provider: {
+      providerId: "tapd",
+      displayName: "TAPD",
+      state: "connected",
+      accountDisplayName: "吴晨杰",
+      tenantDisplayName: "FlowRivet 演示企业",
+    },
     gitlab: "not_configured",
-    userName: "吴晨杰",
-    companyName: "FlowRivet 演示企业",
   },
   projectCatalog: {
     provider: {

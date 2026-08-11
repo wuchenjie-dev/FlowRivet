@@ -752,7 +752,9 @@ describe("taskboard MCP app", () => {
       });
 
       expect(openResult.structuredContent).toMatchObject({
-        connection: { tapd: "connected" },
+        connection: {
+          provider: { providerId: "tapd", state: "connected" },
+        },
         projectCatalog: { projects: [], stale: false },
         projects: [],
         items: [],
@@ -778,7 +780,9 @@ describe("taskboard MCP app", () => {
         arguments: {},
       });
       expect(result.structuredContent).toMatchObject({
-        connection: { tapd: "disconnected" },
+        connection: {
+          provider: { providerId: "tapd", state: "disconnected" },
+        },
         projects: [],
         items: [],
       });
@@ -809,7 +813,9 @@ describe("taskboard MCP app", () => {
         arguments: {},
       });
       expect(result.structuredContent).toMatchObject({
-        connection: { tapd: "expired" },
+        connection: {
+          provider: { providerId: "tapd", state: "expired" },
+        },
         dataFreshness: "offline",
         freshScopeCount: 0,
         staleScopeCount: 1,

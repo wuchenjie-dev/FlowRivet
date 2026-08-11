@@ -15,10 +15,13 @@ interface AppHeaderProps {
 }
 
 const statusCopy = {
-  connected: "TAPD 已连接",
-  connecting: "TAPD 连接中",
-  disconnected: "TAPD 未登录",
-  expired: "TAPD 需重新登录",
+  checking: "检查中",
+  cli_missing: "未安装",
+  connected: "已连接",
+  authorizing: "授权中",
+  disconnected: "未登录",
+  expired: "需重新登录",
+  unavailable: "暂不可用",
 } as const;
 
 export function AppHeader({
@@ -47,8 +50,8 @@ export function AppHeader({
         </div>
       </div>
       <div className="header-actions">
-        <span className={`status-dot status-dot--${connection.tapd}`}>
-          {statusCopy[connection.tapd]}
+        <span className={`status-dot status-dot--${connection.provider.state}`}>
+          {connection.provider.displayName} {statusCopy[connection.provider.state]}
         </span>
         <span className="sync-time">最后同步 {syncedAt}</span>
         {showFullscreen ? (
@@ -81,11 +84,11 @@ export function AppHeader({
           aria-expanded={menuOpen}
         >
           <span className="avatar" aria-hidden="true">
-            {connection.userName?.slice(0, 1) ?? "?"}
+            {connection.provider.accountDisplayName?.slice(0, 1) ?? "?"}
           </span>
           <span className="account-copy">
-            <strong>{connection.userName ?? "未登录"}</strong>
-            <small>{connection.companyName ?? "连接 TAPD"}</small>
+            <strong>{connection.provider.accountDisplayName ?? "未登录"}</strong>
+            <small>{connection.provider.tenantDisplayName ?? `连接${connection.provider.displayName}`}</small>
           </span>
           <ChevronDown size={14} aria-hidden="true" />
         </button>

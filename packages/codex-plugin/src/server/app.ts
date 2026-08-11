@@ -372,7 +372,7 @@ export function createTaskboardMcpServer(
         ? { retryAfterSeconds: synchronized.retryAfterSeconds }
         : {}),
       lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
-      connection: { ...auth.connection, gitlab: "not_configured" },
+      connection: { provider: catalog.provider, gitlab: "not_configured" },
     });
   }
 
@@ -645,7 +645,7 @@ function registerWorkItemTool(
       logger.completed({
         requestId,
         tool,
-        providerId: "tapd",
+        providerId: snapshot.connection.provider.providerId,
         outcome: snapshot.syncSummary.failedProjects > 0 ? "partial" : "success",
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
         ...snapshot.syncSummary,
@@ -660,9 +660,9 @@ function registerWorkItemTool(
           type: "text" as const,
           text: snapshot.dataFreshness === "offline"
             ? `FlowRivet 已加载 ${snapshot.syncSummary.itemCount} 个缓存工作项。`
-            : snapshot.connection.tapd === "connected"
+            : snapshot.connection.provider.state === "connected"
             ? `FlowRivet 看板已同步 ${snapshot.syncSummary.itemCount} 个工作项。`
-            : "FlowRivet 看板已打开，请先连接 TAPD。",
+            : `FlowRivet 看板已打开，请先连接${snapshot.connection.provider.displayName}。`,
         }],
       };
     } catch (error) {

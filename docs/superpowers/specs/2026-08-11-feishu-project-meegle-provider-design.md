@@ -2,7 +2,7 @@
 
 ## 1. 背景
 
-FlowRivet 已通过 Provider 中立的项目、工作项、缓存和看板合同接入 TAPD。下一阶段接入飞书项目管理系统，让用户在 Codex 看板中读取当前飞书项目账号的个人待办，并在 TAPD 与飞书项目之间切换。
+FlowRivet 已具备 Provider 中立的项目、工作项、缓存和看板基础。下一阶段接入飞书项目管理系统，让用户在 Codex 看板中读取当前飞书项目账号的个人待办；首版暂不处理 TAPD 兼容和切换。
 
 飞书项目现已提供官方 Meegle CLI。CLI 使用用户 OAuth 身份、在系统钥匙串中管理凭据，并提供适合 Agent 消费的 JSON 输出。首版直接复用该 CLI，不实现飞书项目 OpenAPI 客户端，也不把飞书项目官方 MCP 加入 FlowRivet 运行链路。
 
@@ -17,15 +17,15 @@ FlowRivet 已通过 Provider 中立的项目、工作项、缓存和看板合同
 - 新增 `feishu-project` Provider，通过官方 `meegle` CLI 读取当前用户的个人任务。
 - 聚合本周待办、已逾期和最近 7 天完成项。
 - 自动展示 CLI 返回的全部可访问项目，不要求用户先选择项目。
-- 在连接菜单中切换 TAPD 与飞书项目；同一时刻看板只展示当前 Provider。
-- 新安装或没有保存选择时默认使用飞书项目，保留已有用户明确选择的 TAPD。
+- 首版运行时只注册飞书项目；Provider 抽象保留以后接入其他项目管理系统的能力。
+- 没有保存选择时默认使用飞书项目，不探测或迁移旧 TAPD 凭据。
 - 从看板引导安装 CLI，并在已安装但未登录时发起用户 OAuth。
 - 保持工作项、缓存、项目侧栏、刷新和 UI 合同 Provider 中立。
 - Windows 完成真实只读 E2E；Linux 和 macOS 具备自动化命令与路径合同。
 
 ## 3. 非目标
 
-- 在同一个看板中聚合 TAPD 与飞书项目数据。
+- 在同一个看板中聚合多个项目管理系统的数据。
 - 在 FlowRivet 内实现飞书项目 OpenAPI、远程 MCP Client 或 OAuth Token 管理。
 - 自动安装全局软件，或静默修改用户的 npm 配置。
 - 管理 Meegle CLI Profile；首版只使用 CLI 当前激活的 Profile。
@@ -40,9 +40,9 @@ FlowRivet 已通过 Provider 中立的项目、工作项、缓存和看板合同
 | --- | --- |
 | 接入通道 | 只使用官方 Meegle CLI |
 | 官方 MCP | 首版不注册、不依赖 |
-| Provider 展示 | TAPD 与飞书项目单选切换 |
+| Provider 展示 | 首版只展示飞书项目，保留通用 Provider 合同 |
 | 默认 Provider | 新用户默认 `feishu-project` |
-| 既有用户迁移 | 保留已明确保存的 Provider 选择 |
+| 既有用户迁移 | 首版不处理 TAPD 兼容迁移 |
 | 安装体验 | 检测 CLI；缺失时展示官方安装命令 |
 | 登录体验 | 从看板发起 OAuth，FlowRivet 不保存 Token |
 | Profile | 只使用 Meegle CLI 当前 Profile |
@@ -58,16 +58,15 @@ Codex 看板 / MCP 工具
           v
 ProviderRegistry + ActiveProviderStore
           |
-          +-------------------+
-          |                   |
-          v                   v
- TapdProvider        FeishuProjectProvider
-                              |
-                              v
-                       MeegleCliClient
-                              |
-                              v
-                 官方 meegle CLI + 系统钥匙串
+          |
+          v
+FeishuProjectProvider
+          |
+          v
+  MeegleCliClient
+          |
+          v
+官方 meegle CLI + 系统钥匙串
 ```
 
 `ProviderRegistry` 负责按 ID 取得工作项、认证及可选的项目和详情能力。通用服务不得导入 Meegle 响应类型或执行 CLI。`FeishuProjectProvider` 只负责把飞书项目语义归一化；`MeegleCliClient` 只负责发现可执行文件、运行命令、限制资源、解析 JSON 和映射进程级错误。
@@ -92,7 +91,7 @@ interface AccountScopedWorkItemProvider {
 }
 ```
 
-`AccountWorkItemQueryResult` 返回带 `projectExternalId` 的 scopes 和从工作项聚合得到的项目。`WorkItemService` 只重构“如何取得 fresh scopes”这一段；后续缓存合并、最近完成过滤、排序、新鲜度、错误优先级和单飞保持共用。TAPD 继续使用 `project_scoped`，飞书项目使用 `account_scoped`。
+`AccountWorkItemQueryResult` 返回带 `projectExternalId` 的 scopes 和从工作项聚合得到的项目。`WorkItemService` 只重构“如何取得 fresh scopes”这一段；后续缓存合并、最近完成过滤、排序、新鲜度、错误优先级和单飞保持共用。飞书项目使用 `account_scoped`；现有 TAPD Provider 只为保持代码库可编译做必要的接口适配，不进入首版运行时注册和验收范围。
 
 `ProviderRegistry`、认证服务、活动授权进程和 `WorkItemSynchronizer` 都是 Companion 进程级实例，再注入每个请求级 MCP Server。否则当前每次 HTTP 请求创建 Server 的生命周期会导致设备码授权无法跨轮询请求保持或取消。
 
@@ -102,7 +101,7 @@ interface AccountScopedWorkItemProvider {
 
 ```ts
 interface ProviderRegistration {
-  id: "tapd" | "feishu-project" | string;
+  id: "feishu-project" | string;
   displayName: string;
   auth: ProviderAuthService;
   projects?: ProjectManagementProvider;
@@ -111,7 +110,7 @@ interface ProviderRegistration {
 }
 ```
 
-项目发现是可选能力。TAPD 继续通过 `ProjectManagementProvider` 发现项目；飞书项目不注册该能力，项目侧栏由账号级工作项结果生成。项目目录工具遇到不支持该能力的 Provider 时返回 `provider_capability_unsupported`，看板打开流程不得把项目发现作为飞书项目同步的前置条件。
+项目发现是可选能力。飞书项目不注册该能力，项目侧栏由账号级工作项结果生成。项目目录工具遇到不支持该能力的 Provider 时返回 `provider_capability_unsupported`，看板打开流程不得把项目发现作为飞书项目同步的前置条件。
 
 当前 Provider 保存到不含凭据的本地配置：
 
@@ -122,14 +121,12 @@ interface ProviderRegistration {
 }
 ```
 
-迁移规则：
+选择规则：
 
-1. 配置不存在且本机没有旧版 TAPD 凭据时返回 `feishu-project`。
-2. 配置不存在但本机存在旧版 TAPD 凭据时，一次性迁移为 `tapd` 并原子写入选择；凭据即使已过期也表示该用户此前明确使用 TAPD，连接状态由 TAPD Adapter 另行判断。
-3. 已保存且仍在注册表中的 Provider 保持不变。
-4. 已保存 Provider 不再可用时回退 `feishu-project`，并返回非阻塞配置警告。
-5. 用户切换成功后原子保存选择。
-6. 切换不退出另一 Provider，也不删除其凭据、缓存或项目目录。
+1. 配置不存在时写入并返回 `feishu-project`，不读取旧 TAPD 凭据。
+2. 已保存且仍在注册表中的 Provider 保持不变。
+3. 已保存 Provider 不再可用时回退 `feishu-project`，并返回非阻塞配置警告。
+4. 用户切换成功后原子保存选择，为以后注册其他 Provider 预留能力。
 
 项目目录、工作项缓存、最后同步时间和同步单飞继续按 `providerId` 隔离。切换后先读取目标 Provider 的可用缓存，再发起实时同步。全局自动刷新频率仍按现有规格跨 Provider 共用。
 
@@ -267,10 +264,7 @@ interface WorkItem {
 
 ## 11. UI 与工具行为
 
-连接菜单增加 Provider 选择项：
-
-- 飞书项目，默认。
-- TAPD。
+连接菜单首版只展示飞书项目。Provider 列表和活动选择合同继续保留，以便以后新增其他项目管理系统时无需修改看板合同。
 
 切换时页面展示目标 Provider 的连接状态；未连接时不显示误导性空看板。飞书项目连接面板包含 CLI 状态、当前 Profile、账号显示名、安装/升级指引、连接、重新检测和断开操作。只有当前事务的授权地址、验证码和过期时间可以进入临时 React 状态；访问 Token、CLI 原始输出和钥匙串位置不得进入 React 状态或浏览器持久化。
 
@@ -293,7 +287,7 @@ Provider 选择、复制安装命令、连接、取消和重新检测必须支�
 - `cancel_provider_login`：取消当前授权事务，不删除既有凭据。
 - `disconnect_provider`：确认后调用 Provider 断开能力并清除该 Provider 活跃缓存。
 
-TAPD 专属兼容工具暂时保留，但 UI 不再直接依赖其命名。通用认证工具只接受已注册的 `providerId`，不得接受任意命令、可执行文件、Profile、host 或 CLI 参数。
+不新增 TAPD 兼容或迁移工具。通用认证工具只接受已注册的 `providerId`，不得接受任意命令、可执行文件、Profile、host 或 CLI 参数。
 
 只读阶段不注册移动、更新、评论或流程流转工具。卡片不可拖动。飞书项目未提供详情 Adapter 时，仅在工作项含通过允许列表校验的原链接时允许打开；没有链接时保持卡片只读，不得猜测 URL、调用 TAPD 详情服务或显示错误抽屉。
 
@@ -335,8 +329,8 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 - 三种 action 的完整分页、空页、重复页、部分失败和去重。
 - 完成项 7 天边界、缺少可信完成时间和无效日期。
 - 类型、状态、项目、URL 和稳定键归一化。
-- Provider Registry 默认值、既有选择迁移、无效选择回退和原子保存失败。
-- TAPD 与飞书项目缓存、账号身份和同步单飞隔离。
+- Provider Registry 默认值、无效选择回退和原子保存失败。
+- 不同 Provider 的缓存、账号身份和同步单飞隔离合同。
 - 日志和 MCP 结果不包含凭据或业务内容。
 
 测试使用假 CLI Runner 和脱敏合成 Fixture，不调用真实账号。
@@ -344,7 +338,6 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 ### 13.2 组件与浏览器测试
 
 - 新用户默认展示飞书项目连接面板。
-- 已保存 TAPD 的用户升级后仍展示 TAPD。
 - 未安装展示安装命令；重新检测可恢复。
 - 未登录、授权中、已连接、失效和离线状态可区分。
 - Provider 切换保留各自缓存和连接状态。
@@ -361,8 +354,7 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 4. 同步 `this_week`、`overdue`、`done` 全部页面。
 5. 将归一化任务 ID 数量与三条 CLI 原始命令脱敏核对。
 6. 验证跨项目侧栏、重复项合并和最近 7 天完成过滤。
-7. 切换到 TAPD 再切回飞书项目，两边数据和连接互不覆盖。
-8. 模拟断网、Token 失效和 CLI 升级不兼容，验证缓存与错误状态。
+7. 模拟断网、Token 失效和 CLI 升级不兼容，验证缓存与错误状态。
 
 真实验收记录不得保存 stdout、用户、项目、工作项或授权信息。
 
@@ -378,13 +370,13 @@ CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` �
 
 ### 14.2 准出
 
-- 新用户默认飞书项目，已有明确 Provider 选择不被覆盖。
+- 新用户默认飞书项目，不读取或迁移旧 TAPD 凭据。
 - CLI 未安装、未登录、已连接、失效和离线状态正确区分。
 - 用户可以按看板流程完成授权，FlowRivet 不保存或输出 Token。
 - 三种 action 完整分页、稳定去重，并严格保留最近 7 天完成项。
 - 看板结果与官方 CLI 在脱敏任务 ID 数量上核对一致。
 - 自动聚合全部项目，不要求选择；项目侧栏筛选正确。
-- TAPD 与飞书项目的连接、缓存、身份和同步互不污染。
+- Provider 隔离合同通过，首版运行时只注册飞书项目。
 - 无效或截断 CLI 输出不会覆盖最近成功缓存。
 - 单元、合同、类型检查、生产构建和浏览器 E2E 通过。
 - Windows 真实只读 E2E 通过；Linux/macOS 跨平台合同通过。

@@ -57,13 +57,16 @@ function createBridge(
 }
 
 function snapshotWithTapdState(
-  tapd: TaskboardSnapshot["connection"]["tapd"],
+  state: TaskboardSnapshot["connection"]["provider"]["state"],
 ): TaskboardSnapshot {
   return {
     ...demoTaskboardSnapshot,
     connection: {
       ...demoTaskboardSnapshot.connection,
-      tapd,
+      provider: {
+        ...demoTaskboardSnapshot.connection.provider,
+        state,
+      },
     },
   };
 }
@@ -315,7 +318,13 @@ describe("FlowRivet taskboard", () => {
   it("names mixed data scope counts and marks cached cards without color alone", () => {
     render(<App initialSnapshot={{
       ...offlineSnapshot(),
-      connection: { ...demoTaskboardSnapshot.connection, tapd: "connected" },
+      connection: {
+        ...demoTaskboardSnapshot.connection,
+        provider: {
+          ...demoTaskboardSnapshot.connection.provider,
+          state: "connected",
+        },
+      },
       dataFreshness: "mixed",
       freshScopeCount: 1,
       staleScopeCount: 2,

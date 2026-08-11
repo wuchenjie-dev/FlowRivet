@@ -65,7 +65,10 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
       ...demoTaskboardSnapshot,
       connection: {
         ...demoTaskboardSnapshot.connection,
-        tapd: "expired",
+        provider: {
+          ...demoTaskboardSnapshot.connection.provider,
+          state: "expired",
+        },
       },
       projectCatalog: {
         ...demoTaskboardSnapshot.projectCatalog,
@@ -86,9 +89,13 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
     ...demoTaskboardSnapshot,
     connection: {
       ...demoTaskboardSnapshot.connection,
-      tapd: scenario,
-      userName: scenario === "disconnected" ? undefined : demoTaskboardSnapshot.connection.userName,
-      companyName: scenario === "disconnected" ? undefined : demoTaskboardSnapshot.connection.companyName,
+      provider: {
+        ...demoTaskboardSnapshot.connection.provider,
+        state: scenario,
+        ...(scenario === "disconnected"
+          ? { accountDisplayName: undefined, tenantDisplayName: undefined }
+          : {}),
+      },
     },
   };
 }
@@ -195,8 +202,8 @@ function DemoHarness() {
               ok: true,
               connection: {
                 tapd: "connected",
-                userName: connectedSnapshot.connection.userName,
-                companyName: connectedSnapshot.connection.companyName,
+                userName: connectedSnapshot.connection.provider.accountDisplayName,
+                companyName: connectedSnapshot.connection.provider.tenantDisplayName,
               },
             }
           : toolName === "open_my_taskboard" || toolName === "refresh_my_work_items"

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { projectCatalogSchema, projectRefSchema } from "./projects.js";
+import { providerConnectionSchema } from "./providers.js";
 
 export const canonicalStages = [
   "todo",
@@ -10,13 +11,6 @@ export const canonicalStages = [
 ] as const;
 
 export const workItemKinds = ["requirement", "task", "defect", "other"] as const;
-
-export const connectionStates = [
-  "disconnected",
-  "connecting",
-  "connected",
-  "expired",
-] as const;
 
 export const workItemSchema = z.object({
   key: z.string(),
@@ -33,16 +27,14 @@ export const workItemSchema = z.object({
   priority: z.string().optional(),
   dueAt: z.string().optional(),
   completedAt: z.string().optional(),
-  externalUrl: z.string(),
-});
+  externalUrl: z.string().optional(),
+}).strict();
 
 export const taskboardSnapshotSchema = z.object({
   connection: z.object({
-    tapd: z.enum(connectionStates),
+    provider: providerConnectionSchema,
     gitlab: z.literal("not_configured"),
-    userName: z.string().optional(),
-    companyName: z.string().optional(),
-  }),
+  }).strict(),
   projectCatalog: projectCatalogSchema,
   projects: z.array(projectRefSchema.extend({
     count: z.number().int().nonnegative(),
@@ -80,7 +72,7 @@ export const taskboardSnapshotSchema = z.object({
   ]).optional(),
   retryAfterSeconds: z.number().int().min(1).max(86400).optional(),
   lastSyncedAt: z.string(),
-}).superRefine((snapshot, context) => {
+}).strict().superRefine((snapshot, context) => {
   if (snapshot.retryAfterSeconds !== undefined
     && snapshot.freshnessReasonCode !== "provider_rate_limited") {
     context.addIssue({

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { authResultSchema } from "../src/contracts/auth.js";
+import {
+  activeProviderSchema,
+  providerConnectionSchema,
+  providerLoginTransactionSchema,
+} from "../src/contracts/providers.js";
 import { projectCatalogSchema } from "../src/contracts/projects.js";
 import { taskboardPreferencesSchema } from "../src/contracts/taskboard-preferences.js";
 import {
@@ -45,13 +50,79 @@ describe("taskboard demo contract", () => {
     };
 
     expect(taskboardSnapshotSchema.parse(snapshot)).toMatchObject({
-      connection: { tapd: "connected", gitlab: "not_configured" },
+      connection: {
+        provider: {
+          providerId: "tapd",
+          displayName: "TAPD",
+          state: "connected",
+        },
+        gitlab: "not_configured",
+      },
       stages: ["todo", "in_progress", "in_review", "done"],
       readOnly: true,
       syncSummary: { successfulProjects: 2, failedProjects: 0, itemCount: 7 },
     });
     expect(taskboardSnapshotSchema.safeParse({ ...snapshot, readOnly: false }).success)
       .toBe(false);
+  });
+
+  it("validates provider selection, connection, and ephemeral login contracts", () => {
+    expect(activeProviderSchema.parse({
+      version: 1,
+      activeProviderId: "feishu-project",
+    })).toEqual({ version: 1, activeProviderId: "feishu-project" });
+    expect(providerConnectionSchema.parse({
+      providerId: "feishu-project",
+      displayName: "飞书项目",
+      state: "cli_missing",
+    })).toEqual({
+      providerId: "feishu-project",
+      displayName: "飞书项目",
+      state: "cli_missing",
+    });
+    expect(providerLoginTransactionSchema.parse({
+      transactionId: "login-1",
+      providerId: "feishu-project",
+      verificationUri: "https://project.feishu.cn/b/auth/mcp",
+      userCode: "EXAMPLE-CODE",
+      expiresAt: "2026-08-11T12:00:00.000Z",
+    })).toMatchObject({ transactionId: "login-1", userCode: "EXAMPLE-CODE" });
+  });
+
+  it("rejects provider secrets and login internals outside the ephemeral transaction", () => {
+    const connection = {
+      providerId: "feishu-project",
+      displayName: "飞书项目",
+      state: "connected",
+    } as const;
+    const forbidden = {
+      token: "secret",
+      clientSecret: "secret",
+      executablePath: "C:\\tools\\meegle.exe",
+      cliArgs: ["auth", "login"],
+      verificationUri: "https://project.feishu.cn/b/auth/mcp",
+      deviceCode: "secret-device-code",
+    };
+
+    for (const [key, value] of Object.entries(forbidden)) {
+      expect(providerConnectionSchema.safeParse({ ...connection, [key]: value }).success)
+        .toBe(false);
+      expect(taskboardSnapshotSchema.safeParse({
+        ...demoTaskboardSnapshot,
+        [key]: value,
+      }).success).toBe(false);
+      expect(workItemSchema.safeParse({
+        ...demoTaskboardSnapshot.items[0],
+        [key]: value,
+      }).success).toBe(false);
+    }
+    expect(taskboardSnapshotSchema.safeParse({
+      ...demoTaskboardSnapshot,
+      connection: {
+        ...demoTaskboardSnapshot.connection,
+        tapd: "connected",
+      },
+    }).success).toBe(false);
   });
 
   it("covers every work item kind across multiple projects", () => {
@@ -88,7 +159,6 @@ describe("taskboard demo contract", () => {
       providerStatus: "planning",
       freshness: "cached",
       completedAt: "2026-08-07T00:00:00.000Z",
-      externalUrl: "https://www.tapd.cn/50396062/prong/stories/view/10001",
     });
 
     expect(item).toMatchObject({

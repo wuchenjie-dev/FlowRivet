@@ -58,7 +58,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
-  const tapdState = connection.tapd;
+  const tapdState = connection.provider.state;
 
   const refreshCoordinator = useAutoRefresh({
     enabled: tapdState === "connected",
@@ -226,7 +226,19 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       const result = await bridge.callTool("login_with_tapd_token", { token });
       const parsed = authResultSchema.safeParse(result.structuredContent);
       if (!parsed.success) throw new Error("invalid auth result");
-      setConnection((current) => ({ ...current, ...parsed.data.connection }));
+      setConnection((current) => ({
+        ...current,
+        provider: {
+          ...current.provider,
+          state: parsed.data.connection.tapd,
+          ...(parsed.data.connection.userName
+            ? { accountDisplayName: parsed.data.connection.userName }
+            : {}),
+          ...(parsed.data.connection.companyName
+            ? { tenantDisplayName: parsed.data.connection.companyName }
+            : {}),
+        },
+      }));
       if (!parsed.data.ok) {
         setAuthError(authErrorCopy(parsed.data.errorCode));
         return;
@@ -252,7 +264,14 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       const result = await bridge.callTool("disconnect_tapd", {});
       const parsed = authResultSchema.safeParse(result.structuredContent);
       if (!parsed.success || !parsed.data.ok) throw new Error("disconnect failed");
-      setConnection((current) => ({ ...current, ...parsed.data.connection }));
+      setConnection((current) => ({
+        ...current,
+        provider: {
+          providerId: current.provider.providerId,
+          displayName: current.provider.displayName,
+          state: parsed.data.connection.tapd,
+        },
+      }));
       setProjects([]);
       setProjectCatalog((current) => ({ ...current, projects: [], stale: false }));
       setItems([]);

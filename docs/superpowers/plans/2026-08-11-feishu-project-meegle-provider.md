@@ -52,7 +52,6 @@ Existing files with focused changes:
 - `packages/codex-plugin/src/ui/demo-harness.tsx`: provider-neutral demo tool responses.
 - `packages/codex-plugin/src/ui/styles.css`: compact provider/auth states with existing visual language.
 - `skills/my-work-taskboard/SKILL.md`: provider-neutral FlowRivet routing for Feishu Project and TAPD.
-- `skills/my-tapd-taskboard/SKILL.md`: retain an explicit TAPD compatibility route for this release.
 - `docs/operations/codex-plugin-demo.md`: Meegle installation, login, switch, and acceptance steps.
 
 ---
@@ -141,13 +140,14 @@ docs(meegle): record verified CLI contracts
 - Create: `packages/codex-plugin/src/providers/provider-registry.ts`
 - Create: `packages/codex-plugin/src/providers/active-provider-store.ts`
 - Create: `packages/codex-plugin/src/providers/json-active-provider-store.ts`
+- Create: `packages/codex-plugin/src/providers/provider-auth-service.ts`
 - Create: `packages/codex-plugin/tests/provider-registry.test.ts`
 - Create: `packages/codex-plugin/tests/active-provider-store.test.ts`
 - Modify: `packages/codex-plugin/src/contracts/projects.ts`
 - Modify: `packages/codex-plugin/src/contracts/taskboard.ts`
 - Modify: `packages/codex-plugin/tests/contracts.test.ts`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Cover:
 
@@ -161,9 +161,9 @@ expect(providerConnectionSchema.parse({
 })).toBeTruthy();
 ```
 
-Also assert that taskboard snapshots contain `connection.provider`, not `connection.tapd`, and reject credentials, executable paths, CLI arguments, tokens, authorization URLs, and device codes outside the ephemeral login-result schema. Add migration cases: no active-provider file plus no legacy TAPD credential defaults to Feishu; no file plus an existing encrypted TAPD credential writes and returns TAPD; subsequent reads honor the saved value even if the legacy credential later disappears.
+Also assert that taskboard snapshots contain `connection.provider`, not `connection.tapd`, and reject credentials, executable paths, CLI arguments, tokens, authorization URLs, and device codes outside the ephemeral login-result schema. Assert that a missing active-provider file writes and returns Feishu without inspecting legacy TAPD credentials.
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [x] **Step 2: Run the focused tests and verify failure**
 
 Run:
 
@@ -173,7 +173,7 @@ npm test --workspace @flowrivet/codex-plugin -- contracts.test.ts provider-regis
 
 Expected: FAIL because provider contracts and stores do not exist.
 
-- [ ] **Step 3: Implement the provider-neutral schemas and registry**
+- [x] **Step 3: Implement the provider-neutral schemas and registry**
 
 Use these core shapes:
 
@@ -195,11 +195,11 @@ export interface ProviderRegistration {
 
 `ProviderRegistry.get(id)` throws `provider_not_registered`; `list()` returns only non-sensitive descriptors and connection states.
 
-- [ ] **Step 4: Implement atomic active-provider persistence**
+- [x] **Step 4: Implement atomic active-provider persistence**
 
-Follow `JsonTaskboardPreferencesStore`: resolve the existing FlowRivet config directory, write a temporary file, and atomically rename. Let the runtime migration service supply an optional legacy default: missing file plus existing TAPD credential writes `tapd`; missing file without that signal writes `feishu-project`. Preserve any registered saved choice and return a warning plus Feishu fallback for unknown IDs. Do not overwrite malformed files.
+Follow `JsonTaskboardPreferencesStore`: resolve the existing FlowRivet config directory, write a temporary file, and atomically rename. A missing file writes `feishu-project` without inspecting TAPD credentials. Preserve any registered saved choice and return a warning plus Feishu fallback for unknown IDs. Do not overwrite malformed files.
 
-- [ ] **Step 5: Run tests and typecheck**
+- [x] **Step 5: Run tests and typecheck**
 
 Run:
 
@@ -210,7 +210,7 @@ npm run typecheck --workspace @flowrivet/codex-plugin
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit:
 
@@ -361,11 +361,9 @@ feat(meegle): add a bounded CLI client
 ### Task 5: Add Meegle Connection And Login Transactions
 
 **Files:**
-- Create: `packages/codex-plugin/src/providers/provider-auth-service.ts`
+- Modify: `packages/codex-plugin/src/providers/provider-auth-service.ts`
 - Create: `packages/codex-plugin/src/meegle/meegle-auth-service.ts`
 - Create: `packages/codex-plugin/tests/meegle-auth-service.test.ts`
-- Modify: `packages/codex-plugin/src/auth/tapd-auth-service.ts`
-- Modify: `packages/codex-plugin/tests/tapd-auth-service.test.ts`
 
 - [ ] **Step 1: Write failing authentication-state tests**
 
@@ -376,7 +374,7 @@ Cover CLI missing, no local token, rejected token, server unreachable, connected
 Run:
 
 ```powershell
-npm test --workspace @flowrivet/codex-plugin -- meegle-auth-service.test.ts tapd-auth-service.test.ts
+npm test --workspace @flowrivet/codex-plugin -- meegle-auth-service.test.ts
 ```
 
 Expected: FAIL because generic auth and Meegle service are absent.
@@ -389,16 +387,12 @@ Call version, current Profile, auth status, then user identity. Return `cli_miss
 
 If Task 1 proved stable structured login events, return ephemeral `{ transactionId, verificationUri, userCode, expiresAt }`; otherwise return `{ transactionId, manualCommand, expiresAt }` and poll `auth status`. Do not expose raw CLI output. Reuse a current transaction, support explicit cancel, and retain successful CLI credentials because the official CLI owns them.
 
-- [ ] **Step 5: Adapt TAPD to the provider auth read/disconnect subset**
-
-Keep `login_with_tapd_token` as a compatibility write path. Add an adapter or methods so the registry can read TAPD connection and disconnect it through the same provider capability without making a generic tool accept arbitrary credentials.
-
-- [ ] **Step 6: Run tests and commit**
+- [ ] **Step 5: Run tests and commit**
 
 Run:
 
 ```powershell
-npm test --workspace @flowrivet/codex-plugin -- meegle-auth-service.test.ts tapd-auth-service.test.ts
+npm test --workspace @flowrivet/codex-plugin -- meegle-auth-service.test.ts
 npm run typecheck --workspace @flowrivet/codex-plugin
 ```
 
@@ -487,7 +481,7 @@ feat(meegle): sync personal project work
 
 - [ ] **Step 1: Write failing runtime-lifetime and tool-contract tests**
 
-Assert that repeated HTTP request servers share one registry, active store, Meegle auth transaction manager, TAPD synchronizer, and Meegle synchronizer. Assert the tool list contains `list_providers`, `get_active_provider`, `set_active_provider`, `get_provider_connection`, `start_provider_login`, `cancel_provider_login`, and `disconnect_provider`, while TAPD compatibility tools remain.
+Assert that repeated HTTP request servers share one registry, active store, Meegle auth transaction manager, and Meegle synchronizer. Assert the tool list contains `list_providers`, `get_active_provider`, `set_active_provider`, `get_provider_connection`, `start_provider_login`, `cancel_provider_login`, and `disconnect_provider`; do not add TAPD compatibility tools.
 
 - [ ] **Step 2: Verify RED**
 
@@ -507,7 +501,7 @@ Move default credential stores, provider adapters, catalogs, synchronizers, pref
 
 For `project_scoped` TAPD: retain discovery then sync. For `account_scoped` Feishu: skip project discovery, call account sync, and derive `projectCatalog.projects` from synchronized projects. On disconnected/error states, load only the active provider cache. Never fall through to TAPD auth, project catalog, or detail service for Feishu.
 
-- [ ] **Step 5: Register provider-neutral tools and compatibility aliases**
+- [ ] **Step 5: Register provider-neutral tools**
 
 Validate registered IDs, reject arbitrary executable/Profile/host/args, keep login transaction instructions ephemeral, and clear only the disconnected provider cache. Rename resource/tool titles from “我的 TAPD 待办” to “我的待办” while preserving tool names `open_my_taskboard`, `list_my_work_items`, and `refresh_my_work_items`.
 
@@ -598,8 +592,6 @@ feat(taskboard): switch between Feishu Project and TAPD
 **Files:**
 - Create: `skills/my-work-taskboard/SKILL.md`
 - Create: `skills/my-work-taskboard/agents/openai.yaml`
-- Modify: `skills/my-tapd-taskboard/SKILL.md`
-- Modify: `skills/my-tapd-taskboard/agents/openai.yaml`
 - Modify: `.codex-plugin/plugin.json` only if display metadata is TAPD-specific
 - Modify: `docs/operations/codex-plugin-demo.md`
 - Modify: `packages/codex-plugin/e2e/taskboard.spec.ts`
@@ -613,7 +605,7 @@ Assert the skill routes generic “打开我的待办看板” and explicit 飞�
 
 - [ ] **Step 2: Update user-facing routing and operations docs**
 
-Create the provider-neutral `my-work-taskboard` skill and keep `my-tapd-taskboard` as a deprecated but valid explicit TAPD compatibility skill; directory names and frontmatter names must continue to match. Document:
+Create the provider-neutral `my-work-taskboard` skill for the Feishu Project flow. Leave the existing TAPD skill untouched and outside this release. Document:
 
 ```powershell
 npx -y @lark-project/meegle@latest install
