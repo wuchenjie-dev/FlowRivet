@@ -25,8 +25,11 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("飞书项目");
     expect(guide).toContain("npx -y @lark-project/meegle@latest install");
     expect(guide).toContain("meegle config set host project.feishu.cn");
-    expect(guide).toContain("meegle auth login --device-code");
+    expect(guide).toContain("CLI 版本不低于 `1.0.19`");
     expect(guide).toContain("meegle auth status --format json");
+    expect(guide).toContain("系统默认浏览器");
+    expect(guide).toContain("不需要复制验证码或手动检查授权结果");
+    expect(guide).toContain("Companion 重启不会恢复内存中的临时授权会话");
     expect(guide).toContain("官方飞书项目 MCP");
     expect(guide).toContain("不是必需");
     expect(guide).toContain("系统钥匙串");
