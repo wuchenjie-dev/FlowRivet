@@ -15,11 +15,16 @@ class FakeRunner implements MeegleCommandRunner {
   readonly run = vi.fn<(input: CommandRunInput) => Promise<CommandRunResult>>();
 }
 
-function client(runner: FakeRunner, sleep = async () => undefined) {
+function client(
+  runner: FakeRunner,
+  sleep = async () => undefined,
+  clock = () => new Date("2026-08-11T00:00:00.000Z"),
+) {
   return new MeegleCliClient({
     runner,
     executableResolver: async () => "C:\\tools\\meegle.exe",
     sleep,
+    clock,
   });
 }
 
@@ -183,6 +188,80 @@ describe("Meegle CLI client", () => {
     ]);
     expect(sleep).toHaveBeenCalledWith(5_000, expect.any(AbortSignal));
     expect(runner.run.mock.calls[1]![0].args).toContain("device-example");
+  });
+
+  it("initializes a device login for an explicit profile", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        client_id: "client-example",
+        device_code: "device-example",
+        expires_in: 600,
+        interval: 5,
+        user_code: "USER-CODE",
+        verification_uri: "https://open.feishu.cn/device",
+        verification_uri_complete: "https://open.feishu.cn/device?code=example",
+      }),
+      exitCode: 0,
+    });
+
+    const attempt = await client(runner).initializeDeviceLogin(
+      "profile-a",
+      "project.feishu.cn",
+      new AbortController().signal,
+    );
+
+    expect(attempt).toMatchObject({
+      profileName: "profile-a",
+      intervalMs: 5_000,
+      expiresAt: "2026-08-11T00:10:00.000Z",
+      userCode: "USER-CODE",
+    });
+    expect(runner.run.mock.calls[0]![0].args).toEqual([
+      "auth", "login", "--device-code",
+      "--host", "project.feishu.cn",
+      "--phase", "init",
+      "--profile", "profile-a",
+      "--format", "json",
+    ]);
+  });
+
+  it("polls a device login once with the captured profile", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          client_id: "client-example",
+          device_code: "device-example",
+          expires_in: 600,
+          interval: 5,
+          user_code: "USER-CODE",
+          verification_uri: "https://open.feishu.cn/device",
+          verification_uri_complete: "https://open.feishu.cn/device?code=example",
+        }),
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ error: "authorization_pending" }),
+        exitCode: 1,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ status: "ok", message: "authorized" }),
+        exitCode: 0,
+      });
+    const meegle = client(runner);
+    const signal = new AbortController().signal;
+    const attempt = await meegle.initializeDeviceLogin(
+      "profile-a", "project.feishu.cn", signal,
+    );
+
+    await expect(meegle.pollDeviceLogin("profile-a", attempt, signal))
+      .resolves.toEqual({ state: "pending" });
+    await expect(meegle.pollDeviceLogin("profile-a", attempt, signal))
+      .resolves.toEqual({ state: "authorized" });
+    expect(runner.run.mock.calls[1]![0].args).toEqual(expect.arrayContaining([
+      "--phase", "poll", "--once", "--profile", "profile-a",
+    ]));
   });
 
   it("rejects unsafe opaque device values before constructing a poll command", async () => {
