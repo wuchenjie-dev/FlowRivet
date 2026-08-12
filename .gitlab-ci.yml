@@ -1,0 +1,71 @@
+stages:
+  - test
+  - package
+  - verify
+  - publish
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+    - when: never
+
+default:
+  interruptible: false
+
+test:
+  stage: test
+  tags: [flowrivet, linux]
+  script:
+    - npm ci
+    - npm test
+    - npm run typecheck
+    - npm run build
+
+.package-runtime:
+  stage: package
+  needs: [test]
+  script:
+    - node scripts/release/ci-package-runtime.mjs
+  artifacts:
+    expire_in: 7 days
+    paths: [release-output/]
+
+package:windows-x64:
+  extends: .package-runtime
+  tags: [flowrivet, windows, x64]
+  variables: { FLOWRIVET_TARGET_PLATFORM: "win32-x64" }
+
+package:linux-x64:
+  extends: .package-runtime
+  tags: [flowrivet, linux, x64]
+  variables: { FLOWRIVET_TARGET_PLATFORM: "linux-x64" }
+
+package:macos-arm64:
+  extends: .package-runtime
+  tags: [flowrivet, macos, arm64]
+  variables: { FLOWRIVET_TARGET_PLATFORM: "darwin-arm64" }
+
+verify:
+  stage: verify
+  tags: [flowrivet, linux]
+  needs:
+    - { job: package:windows-x64, artifacts: true }
+    - { job: package:linux-x64, artifacts: true }
+    - { job: package:macos-arm64, artifacts: true }
+  script:
+    - node scripts/release/create-release-manifest.mjs
+    - node scripts/release/ci-verify-release.mjs
+  artifacts:
+    expire_in: 7 days
+    paths: [release-output/]
+
+publish:stable:
+  stage: publish
+  tags: [flowrivet, linux]
+  needs: [{ job: verify, artifacts: true }]
+  resource_group: flowrivet-stable-release
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      when: manual
+  script:
+    - node scripts/release/publish-generic-package.mjs
