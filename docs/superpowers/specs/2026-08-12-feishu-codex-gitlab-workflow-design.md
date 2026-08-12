@@ -131,7 +131,7 @@ FlowRivet 不提升飞书项目权限。权限不足时返回明确的拒绝结�
 
 用户通过 `glab auth login --hostname gitlab-aiabu.ruijie.com.cn --web --git-protocol https --use-keyring` 登录。自建 GitLab 必须注册供 `glab` 使用的公共 OAuth Application，并取消 `Confidential`；FlowRivet 只配置公开的 Application ID，不需要或保存 Client Secret。
 
-OAuth 应包含满足 `glab` 研发命令的 `api` 与 `write_repository` 范围。最终可执行操作仍由用户在具体项目中的角色、分支保护、审批规则和 Pipeline 权限限制。推荐普通研发用户为 Developer；FlowRivet 不要求管理员权限。
+已验证的 `glab 1.113.0` 自建实例 OAuth 合同需要 `openid`、`profile`、`read_user`、`api` 与 `write_repository`。最终可执行操作仍由用户在具体项目中的角色、分支保护、审批规则和 Pipeline 权限限制。推荐普通研发用户为 Developer；FlowRivet 不要求管理员权限。
 
 `glab --use-keyring` 管理凭据。FlowRivet 不读取钥匙串 Token、不把 Token 写入环境变量、命令参数、Git remote URL、日志、MCP 结果或 React 状态。自动更新使用的 Deploy Token 与当前 GitLab 用户身份完全隔离。
 
