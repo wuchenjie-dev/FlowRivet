@@ -56,6 +56,8 @@
 
 ### Task 1: 冻结 Meegle 详情合同并实现 Provider
 
+**状态（2026-08-13）：已完成，提交 `a462900`。**
+
 **Files:**
 
 - Create: `packages/codex-plugin/tests/fixtures/meegle/workitem-get.json`
@@ -115,6 +117,8 @@ feat(meegle): read complete work item details
 
 ### Task 2: 按活动 Provider 路由详情并恢复卡片交互
 
+**状态（2026-08-13）：已完成，提交 `17a215b`；详情失败时保留原记录入口的补充修复见 `6aa869a`。**
+
 **Files:**
 
 - Modify: `packages/codex-plugin/src/providers/provider-registry.ts`
@@ -161,6 +165,8 @@ fix(taskboard): restore Feishu work item details
 
 ### Task 3: 增加幂等执行分类与恢复合同
 
+**状态（2026-08-13）：已完成，提交 `43d558a`。**
+
 **Files:**
 
 - Modify: `packages/codex-plugin/src/contracts/executions.ts`
@@ -205,6 +211,8 @@ feat(executions): classify Codex work before repository selection
 ---
 
 ### Task 4: 通过 MCP Apps 直接发送到当前 Codex 对话
+
+**状态（2026-08-13）：已完成自动化验证，提交 `fefe43a`；真实 Codex 宿主能力仍需按 Task 6 验收。**
 
 **Files:**
 
@@ -260,6 +268,8 @@ feat(plugin): hand work items directly to Codex
 
 ### Task 5: 将仓库选择改为独立模态框
 
+**状态（2026-08-13）：主链路已完成，提交 `701eaa9`。当前项目列表为首批结果内本地搜索；服务端搜索与分页作为后续增强保留。**
+
 **Files:**
 
 - Create: `packages/codex-plugin/src/ui/components/RepositoryDialog.tsx`
@@ -304,6 +314,8 @@ fix(ui): separate repository selection from work item details
 ---
 
 ### Task 6: 完成演示、浏览器 E2E、运行手册与真实验收
+
+**状态（2026-08-13）：自动化与文档已完成；Codex 桌面真实 `ui/message` 和测试仓库绑定待人工验收。**
 
 **Files:**
 
