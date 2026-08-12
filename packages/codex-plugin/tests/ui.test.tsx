@@ -437,6 +437,35 @@ describe("FlowRivet taskboard", () => {
     expect(callTool).toHaveBeenCalledWith("bind_execution_repository", expect.objectContaining({ executionId: "execution-1", localPath: "C:\\work\\flowrivet" }));
   });
 
+  it("shows GitLab progress and an explicit local-only writeback state", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const mergeRequestUrl = "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/merge_requests/9";
+    const execution = {
+      schemaVersion: 1, executionId: "execution-progress", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-execution-progress", executionKind: "development",
+      state: "writeback_pending", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+      gitlab: {
+        host: "gitlab-aiabu.ruijie.com.cn", projectId: "1",
+        projectPath: "cc/a-very-long-flowrivet-project-name", localPath: "C:\\very\\long\\workspace\\flowrivet",
+        branch: "codex/feishu-work-item-123", mergeRequestIid: 9,
+        mergeRequestUrl, pipelineId: "42",
+      },
+    };
+    const callTool = vi.fn(async () => ({ content: [], structuredContent: { execution, handoff: { handoffId: "flowrivet-execution-progress", prompt: "Continue" } } }));
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
+    await user.click(screen.getByRole("button", { name: "开始处理" }));
+
+    expect(await screen.findByText("研发实现")).toBeTruthy();
+    expect(screen.getByText("尚未写回，结果已保存在本地")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /查看 MR/ }).getAttribute("href")).toBe(mergeRequestUrl);
+    expect(screen.getByText("codex/feishu-work-item-123")).toBeTruthy();
+  });
+
   it("does not render an unsafe Feishu work item URL", async () => {
     const user = userEvent.setup();
     const opened = vi.spyOn(window, "open").mockImplementation(() => null);

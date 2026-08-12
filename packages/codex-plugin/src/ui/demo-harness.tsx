@@ -360,6 +360,8 @@ function DemoHarness() {
               ? { ok: true, connection: { tapd: "disconnected" } }
               : toolName === "get_work_item_detail" && detailReference.success
                 ? demoWorkItemDetail(detailReference.data)
+              : toolName === "prepare_work_item_execution"
+                ? demoExecution(message.params?.arguments)
               : undefined;
         send({
           jsonrpc: "2.0",
@@ -402,6 +404,29 @@ function DemoHarness() {
       />
     </>
   );
+}
+
+function demoExecution(argumentsValue: unknown) {
+  const item = argumentsValue && typeof argumentsValue === "object" && "item" in argumentsValue
+    ? (argumentsValue as { item?: { key?: string } }).item
+    : undefined;
+  return {
+    execution: {
+      schemaVersion: 1, executionId: "demo-execution-1", providerId: "feishu-project",
+      accountKey: "demo-user", workItemKey: item?.key ?? "demo-item", taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-demo-execution-1", executionKind: "development",
+      state: "writeback_pending", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+      gitlab: {
+        host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", projectPath: "cc/flowrivet",
+        localPath: "C:\\workspace\\a-very-long-directory-name\\flowrivet",
+        branch: "codex/feishu-work-item-123", mergeRequestIid: 9,
+        mergeRequestUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/merge_requests/9",
+        pipelineId: "42",
+      },
+    },
+    handoff: { handoffId: "flowrivet-demo-execution-1", prompt: "Continue FlowRivet demo execution" },
+  };
 }
 
 function createLoginSession(

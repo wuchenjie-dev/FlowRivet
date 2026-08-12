@@ -210,8 +210,10 @@ test("keyboard reaches controls and opens a Feishu work item URL", async ({ page
   });
   await workItemButton.focus();
   await expect(workItemButton).toBeFocused();
-  const popupPromise = page.context().waitForEvent("page");
   await page.keyboard.press("Enter");
+  await expect(board.getByRole("dialog")).toBeVisible();
+  const popupPromise = page.context().waitForEvent("page");
+  await board.getByRole("link", { name: /在飞书项目中打开/ }).click();
   const popup = await popupPromise;
   expect(popup.url()).toMatch(/^https:\/\/project\.feishu\.cn\/demo\/work_item\/1/);
   await popup.close();
@@ -222,14 +224,37 @@ test("desktop Feishu cards open outside the read-only board", async ({ page }) =
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
 
-  const popupPromise = page.context().waitForEvent("page");
   await board.getByRole("button", {
     name: "打开工作项：统一检索结果的排序与筛选体验",
   }).click();
+  await expect(board.getByRole("dialog")).toBeVisible();
+  const popupPromise = page.context().waitForEvent("page");
+  await board.getByRole("link", { name: /在飞书项目中打开/ }).click();
   const popup = await popupPromise;
   expect(popup.url()).toContain("project.feishu.cn/demo/work_item/1");
-  await expect(board.getByRole("dialog")).toHaveCount(0);
+  await expect(board.getByRole("dialog")).toBeVisible();
   await popup.close();
+});
+
+test("execution drawer shows GitLab progress and local writeback fallback", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", {
+    name: "打开工作项：统一检索结果的排序与筛选体验",
+  }).click();
+  await board.getByRole("button", { name: "开始处理" }).click();
+
+  const dialog = board.getByRole("dialog");
+  await expect(dialog.getByText("研发实现")).toBeVisible();
+  await expect(dialog.getByText("尚未写回，结果已保存在本地")).toBeVisible();
+  await expect(dialog.getByText("codex/feishu-work-item-123")).toBeVisible();
+  await expect(dialog.getByRole("link", { name: /查看 MR/ })).toHaveAttribute(
+    "href",
+    "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/merge_requests/9",
+  );
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
 test("opens all accessible projects without a selection step", async ({ page }) => {
@@ -337,10 +362,12 @@ test("cached Feishu cards still open their validated provider URL", async ({ pag
   await page.goto("/src/ui/demo-harness.html?scenario=offline-detail-error");
   const board = boardFrame(page);
 
-  const popupPromise = page.context().waitForEvent("page");
   await board.getByRole("button", {
     name: "打开缓存工作项：统一检索结果的排序与筛选体验",
   }).click();
+  await expect(board.getByRole("dialog")).toBeVisible();
+  const popupPromise = page.context().waitForEvent("page");
+  await board.getByRole("link", { name: /在飞书项目中打开/ }).click();
   const popup = await popupPromise;
   expect(popup.url()).toContain("project.feishu.cn/demo/work_item/1");
   await popup.close();
