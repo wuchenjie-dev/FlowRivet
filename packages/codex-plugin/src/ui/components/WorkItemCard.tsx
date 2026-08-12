@@ -16,8 +16,18 @@ interface WorkItemCardProps {
 
 export function WorkItemCard({ item, onOpen }: WorkItemCardProps) {
   const { label, Icon } = kindPresentation[item.kind];
-  const dueAt = item.dueAt
-    ? new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(item.dueAt))
+  const timeValue = item.stage === "done" && item.completedAt
+    ? item.completedAt
+    : item.dueAt;
+  const timeLabel = item.stage === "done" && item.completedAt ? "完成" : "截止";
+  const formattedTime = timeValue
+    ? new Intl.DateTimeFormat("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date(timeValue))
     : undefined;
   const cached = item.freshness === "cached";
 
@@ -45,7 +55,9 @@ export function WorkItemCard({ item, onOpen }: WorkItemCardProps) {
         <div className="card-meta">
           <span className="project-name">{item.projectName}</span>
           {item.priority ? <span className={`priority priority--${item.priority}`}>{item.priority}</span> : null}
-          {dueAt ? <time dateTime={item.dueAt}>截止 {dueAt}</time> : null}
+          {formattedTime && timeValue
+            ? <time dateTime={timeValue}>{timeLabel} {formattedTime}</time>
+            : null}
         </div>
       </button>
     </article>
