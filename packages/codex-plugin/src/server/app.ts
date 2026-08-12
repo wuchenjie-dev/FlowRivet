@@ -772,7 +772,7 @@ export function createTaskboardMcpServer(
           providerId,
           outcome: "error",
           durationMs: Math.max(0, now().getTime() - started),
-          errorCode: error instanceof Error ? error.message : "notification_operation_failed",
+          errorCode: notificationErrorCode(error),
         });
         throw error;
       }
@@ -847,6 +847,16 @@ export function createTaskboardMcpServer(
   );
 
   return server;
+}
+
+function notificationErrorCode(error: unknown) {
+  if (error instanceof Error && [
+    "provider_not_connected",
+    "provider_identity_validation_failed",
+    "notification_store_read_failed",
+    "notification_store_write_failed",
+  ].includes(error.message)) return error.message;
+  return "notification_operation_failed";
 }
 
 function registerTaskboardPreferencesTool(

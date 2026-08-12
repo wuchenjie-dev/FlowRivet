@@ -47,6 +47,10 @@ describe("Codex taskboard demo operations guide", () => {
     expect(guide).toContain("多个看板");
     expect(guide).toContain("授权失效时暂停");
     expect(guide).toContain("偏好读取失败");
+    expect(guide).toContain("notifications.db");
+    expect(guide).toContain("保留 30 天");
+    expect(guide).toContain("list_work_item_notifications");
+    expect(guide).toContain("MCP 服务端不能主动唤醒 Codex");
     expect(guide).toContain("重新连接飞书项目");
     expect(guide).toContain("probe:cache");
     expect(guide).toContain("requiredFieldsPresent");

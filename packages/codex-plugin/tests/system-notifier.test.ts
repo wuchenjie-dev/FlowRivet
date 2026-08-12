@@ -45,14 +45,15 @@ describe("native system notifier", () => {
 
     await notifier.notify({ title: "A&B", message: "<changed>" });
 
-    expect(spawn).toHaveBeenCalledWith(
-      "powershell.exe",
-      expect.arrayContaining([
-        expect.stringContaining("ToastNotificationManager"),
-        expect.stringContaining("<text>A&amp;B</text><text>&lt;changed&gt;</text>"),
-      ]),
-      expect.objectContaining({ shell: false, detached: true }),
-    );
+    const [command, args, options] = spawn.mock.calls[0] ?? [];
+    expect(command).toBe("powershell.exe");
+    expect(args?.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    const decodedScript = Buffer.from(args?.[3] ?? "", "base64").toString("utf16le");
+    expect(decodedScript).toContain("ToastNotificationManager");
+    const encodedXml = decodedScript.match(/FromBase64String\('([^']+)'\)/)?.[1] ?? "";
+    expect(Buffer.from(encodedXml, "base64").toString("utf8"))
+      .toContain("<text>A&amp;B</text><text>&lt;changed&gt;</text>");
+    expect(options).toEqual(expect.objectContaining({ shell: false, detached: true }));
   });
 
   it("rejects unsafe URLs before invoking the native notifier", async () => {

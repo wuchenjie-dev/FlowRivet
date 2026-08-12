@@ -60,15 +60,11 @@ function notificationInvocation(
 ) {
   switch (platform) {
     case "win32":
+      const encodedCommand = windowsToastCommand(title, message);
       return {
         command: "powershell.exe",
         args: [
-          "-NoProfile", "-NonInteractive", "-Command",
-          "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; "
-            + "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($args[0]); "
-            + "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml; "
-            + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('FlowRivet').Show($toast)",
-          toastXml(title, message),
+          "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand,
         ],
       };
     case "darwin":
@@ -79,6 +75,16 @@ function notificationInvocation(
     default:
       return { command: "notify-send", args: ["--app-name=FlowRivet", title, message] };
   }
+}
+
+function windowsToastCommand(title: string, message: string) {
+  const encodedXml = Buffer.from(toastXml(title, message), "utf8").toString("base64");
+  const script = "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; "
+    + `$toastXml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedXml}')); `
+    + "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml($toastXml); "
+    + "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml; "
+    + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('FlowRivet').Show($toast)";
+  return Buffer.from(script, "utf16le").toString("base64");
 }
 
 function toastXml(title: string, message: string) {

@@ -91,6 +91,7 @@ npm run plugin:update -- --adopt-legacy-companion --json
 7. 看板应显示当前账号的真实工作项、“只读”标识和飞书项目数据来源，不应出现 Demo 数据、Token 输入框、管理项目或拖拽反馈。
 8. 点击飞书工作项卡片应使用 `noopener,noreferrer` 打开经过校验的 HTTPS 原记录链接。
 9. 账号菜单可以断开飞书项目；断开后清除该 Provider 的活跃缓存并返回登录页。
+10. 修改一条已在基线中的飞书任务，等待扫描后右上角铃铛应出现未读数；点击通知应打开飞书原任务。
 
 ## 授权会话行为
 
@@ -109,6 +110,16 @@ npm run plugin:update -- --adopt-legacy-companion --json
 - 刷新偏好保存在 `taskboard-preferences.json`。默认 60 秒，可选择不自动刷新、5 秒、10 秒、30 秒、60 秒或自定义 5～3600 秒。
 - 页面隐藏时暂停刷新；偏好读取失败时当前会话按不自动刷新处理。多个看板只在 Provider、账号和同步范围一致时合并请求。
 - 上游限流时遵循 `Retry-After`；授权失效时暂停自动刷新，完成重新连接飞书项目后恢复。
+
+## 本地工作项通知
+
+- Companion 默认每 60 秒复用共享同步器扫描当前已连接账号；可用 `FLOWRIVET_NOTIFICATION_INTERVAL_SECONDS` 配置 30～3600 秒。
+- 首次成功扫描只建立基线。之后检测新分配、状态变化、排期变化、24 小时内到期和已逾期，并按账号与变化指纹去重。
+- 通知保存在独立的 `notifications.db`，按 Provider 和稳定账号隔离，已读与未读均保留 30 天后自动清理。
+- Windows、macOS 和 Linux 通过原生命令显示系统提醒；原生命令不可用不会回滚事件或停止后台循环。
+- 看板通过 `list_work_item_notifications`、`mark_work_item_notification_read` 和 `mark_all_work_item_notifications_read` 管理持久化通知中心。
+- 系统弹窗不承诺跨平台点击回调；通知中心先标记已读，再校验 `https://project.feishu.cn` 链接并打开原任务。
+- MCP 服务端不能主动唤醒 Codex。对话内提醒需由 Codex Automation 定时调用只读列表工具。
 
 ## 安全与日志
 

@@ -63,6 +63,34 @@ test("one click starts browser authorization and automatically opens the board",
   await expect(board.locator(".task-column")).toHaveCount(4);
 });
 
+test("notification center marks an item read and opens the Feishu record", async ({ page }) => {
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+  const opened = page.waitForEvent("popup");
+
+  await board.getByRole("button", { name: "通知，1 条未读" }).click();
+  await expect(board.getByRole("heading", { name: "工作项通知" })).toBeVisible();
+  await board.locator(".notification-panel")
+    .getByRole("button", { name: /统一检索结果/ }).click();
+
+  const popup = await opened;
+  expect(popup.url()).toContain("project.feishu.cn/demo/work_item/1");
+  await expect(board.getByText("0 条未读")).toBeVisible();
+});
+
+test("notification drawer fills a mobile viewport without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", { name: "通知，1 条未读" }).click();
+  const panel = await board.locator(".notification-panel").boundingBox();
+  expect(panel?.width).toBe(390);
+  expect(await board.locator("html").evaluate(
+    (element) => element.scrollWidth <= element.clientWidth,
+  )).toBe(true);
+});
+
 test("expired scenario requires login again and hides stale data", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=expired");
   const board = boardFrame(page);
@@ -151,7 +179,8 @@ test("cards are read-only and pointer movement cannot change counts", async ({ p
   await expect(board.locator(".drag-handle")).toHaveCount(0);
   await expect(todo.locator(".column-header span")).toHaveText("2");
   await expect(progress.locator(".column-header span")).toHaveText("2");
-  const cardBox = await board.getByText("统一检索结果的排序与筛选体验").boundingBox();
+  const cardBox = await board.locator(".task-board")
+    .getByText("统一检索结果的排序与筛选体验").boundingBox();
   const targetBox = await progress.boundingBox();
   expect(cardBox).not.toBeNull();
   expect(targetBox).not.toBeNull();

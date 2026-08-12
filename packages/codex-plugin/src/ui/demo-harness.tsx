@@ -6,6 +6,7 @@ import {
   taskboardPreferencesSchema,
 } from "../contracts/taskboard-preferences.js";
 import type { ProviderLoginSnapshot } from "../contracts/providers.js";
+import type { WorkItemNotificationList } from "../contracts/notifications.js";
 import type { TaskboardSnapshot } from "../contracts/taskboard.js";
 import { workItemDetailRefSchema } from "../contracts/work-item-detail.js";
 import {
@@ -152,6 +153,20 @@ function DemoHarness() {
   const preferencesRef = useRef({ ...defaultTaskboardPreferences });
   const loginSessionRef = useRef<ProviderLoginSnapshot | undefined>(undefined);
   const loginReadCountRef = useRef(0);
+  const notificationsRef = useRef<WorkItemNotificationList>({
+    unreadCount: 1,
+    notifications: [{
+      id: "demo-notification-1",
+      providerId: "feishu-project",
+      workItemKey: "feishu-project:PROJ-1:work_item:1",
+      type: "assigned",
+      title: "统一检索结果的排序与筛选体验",
+      projectName: "FlowRivet Sandbox",
+      message: "新工作项已分配给你",
+      occurredAt: new Date().toISOString(),
+      externalUrl: "https://project.feishu.cn/demo/work_item/1",
+    }],
+  });
   const [refreshCallCount, setRefreshCallCount] = useState(0);
   const scenario = (new URLSearchParams(location.search).get("scenario") ?? "connected") as Scenario;
 
@@ -201,6 +216,29 @@ function DemoHarness() {
 
       if (message.method === "tools/call" && message.id !== undefined) {
         const toolName = message.params?.name;
+        if (toolName === "list_work_item_notifications") {
+          send({ jsonrpc: "2.0", id: message.id, result: {
+            content: [{ type: "text", text: "ok" }],
+            structuredContent: notificationsRef.current,
+          } });
+          return;
+        }
+        if (toolName === "mark_work_item_notification_read"
+          || toolName === "mark_all_work_item_notifications_read") {
+          const readAt = new Date().toISOString();
+          notificationsRef.current = {
+            unreadCount: 0,
+            notifications: notificationsRef.current.notifications.map((entry) => ({
+              ...entry,
+              readAt,
+            })),
+          };
+          send({ jsonrpc: "2.0", id: message.id, result: {
+            content: [{ type: "text", text: "ok" }],
+            structuredContent: notificationsRef.current,
+          } });
+          return;
+        }
         if (toolName === "get_taskboard_preferences") {
           send({
             jsonrpc: "2.0",
