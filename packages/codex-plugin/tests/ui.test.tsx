@@ -767,13 +767,24 @@ describe("FlowRivet taskboard", () => {
     expect(screen.queryByRole("region", { name: "工作项看板" })).toBeNull();
   });
 
-  it("shows GitLab as a non-interactive future connection", async () => {
+  it("connects GitLab from the connection menu without asking for a token", async () => {
     const user = userEvent.setup();
-    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge()} />);
+    const callTool = vi.fn(async (name: string) => ({
+      content: [],
+      structuredContent: name === "get_gitlab_connection"
+        ? { host: "gitlab-aiabu.ruijie.com.cn", state: "disconnected", cliVersion: "1.113.0" }
+        : name === "start_gitlab_login"
+          ? { state: "waiting" }
+          : { ok: true },
+    }));
+    render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
 
     await user.click(screen.getByRole("button", { name: "打开连接菜单" }));
-    expect(screen.getByText("GitLab 后续接入")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /登录 GitLab/ })).toBeNull();
+    expect(await screen.findByText("GitLab")).toBeTruthy();
+    expect(screen.queryByLabelText(/GitLab Token/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "连接 GitLab" }));
+    expect(callTool).toHaveBeenCalledWith("start_gitlab_login", {});
+    expect(await screen.findByText("请在浏览器完成 GitLab 授权")).toBeTruthy();
   });
 
   it("uses a 60 second cooldown for a full rate-limit MCP error", async () => {

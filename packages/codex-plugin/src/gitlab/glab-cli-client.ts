@@ -18,6 +18,8 @@ import {
 
 export { GitLabAdapterError } from "./gitlab-adapter.js";
 
+const MINIMUM_GLAB_VERSION = [1, 113, 0] as const;
+
 export interface GlabCommandRunner {
   run(input: CommandRunInput): Promise<CommandRunResult>;
 }
@@ -52,10 +54,19 @@ export class GlabCliClient implements GitLabAdapter {
     if (!version) {
       return gitLabConnectionSchema.parse({ host: this.host, state: "cli_unsupported" });
     }
+    if (!isSupportedVersion(version)) {
+      return gitLabConnectionSchema.parse({
+        host: this.host,
+        state: "cli_unsupported",
+        cliVersion: version,
+      });
+    }
 
     let authResult: CommandRunResult;
     try {
-      authResult = await this.run(["auth", "status", "--hostname", this.host]);
+      authResult = await this.run([
+        "api", "user", "--hostname", this.host, "--method", "GET",
+      ]);
     } catch (error) {
       if (error instanceof GitLabAdapterError && error.code === "gitlab_not_connected") {
         return gitLabConnectionSchema.parse({
@@ -70,7 +81,7 @@ export class GlabCliClient implements GitLabAdapter {
         cliVersion: version,
       });
     }
-    const accountDisplayName = authResult.stdout.match(/Logged in (?:to .+ )?as ([^\s(]+)/iu)?.[1];
+    const accountDisplayName = parseUsername(authResult.stdout);
     if (!accountDisplayName) {
       return gitLabConnectionSchema.parse({
         host: this.host,
@@ -131,13 +142,37 @@ export class GlabCliClient implements GitLabAdapter {
         timeoutMs: 30_000,
       });
     } catch (error) {
-      throw mapRunnerError(error, args[0] === "auth");
+      throw mapRunnerError(error, args[0] === "api");
     }
   }
 }
 
+function parseUsername(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && "username" in parsed
+      && typeof parsed.username === "string" && parsed.username.length > 0) {
+      return parsed.username;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 function isAllowedHost(value: string) {
   return value === "gitlab-aiabu.ruijie.com.cn";
+}
+
+function isSupportedVersion(value: string) {
+  const parts = value.split(".").map(Number);
+  for (let index = 0; index < MINIMUM_GLAB_VERSION.length; index += 1) {
+    const actual = parts[index] ?? 0;
+    const minimum = MINIMUM_GLAB_VERSION[index];
+    if (actual > minimum) return true;
+    if (actual < minimum) return false;
+  }
+  return true;
 }
 
 function mapRunnerError(error: unknown, authCommand: boolean) {

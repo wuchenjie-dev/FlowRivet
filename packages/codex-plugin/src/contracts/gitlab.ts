@@ -41,6 +41,11 @@ export const gitLabProjectPageSchema = z.object({
   projects: z.array(gitLabProjectSchema),
 }).strict();
 
+export const gitLabLoginResultSchema = z.object({
+  state: z.enum(["waiting", "connected"]),
+}).strict();
+
 export type GitLabConnection = z.infer<typeof gitLabConnectionSchema>;
 export type GitLabProject = z.infer<typeof gitLabProjectSchema>;
 export type GitLabProjectPage = z.infer<typeof gitLabProjectPageSchema>;
+export type GitLabLoginResult = z.infer<typeof gitLabLoginResultSchema>;

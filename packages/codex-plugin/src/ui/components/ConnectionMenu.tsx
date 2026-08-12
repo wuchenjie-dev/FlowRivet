@@ -2,6 +2,8 @@ import { Check, CircleOff, Server } from "lucide-react";
 
 import type { TaskboardSnapshot } from "../../contracts/taskboard.js";
 import { AutoRefreshSettings } from "./AutoRefreshSettings.js";
+import { GitLabConnection } from "./GitLabConnection.js";
+import type { GitLabConnection as GitLabConnectionState } from "../../contracts/gitlab.js";
 
 interface ConnectionMenuProps {
   connection: TaskboardSnapshot["connection"];
@@ -12,6 +14,13 @@ interface ConnectionMenuProps {
   refreshIntervalSeconds: number | undefined;
   preferencesPending: boolean;
   onSaveRefreshInterval: (value: number) => Promise<boolean>;
+  gitLab: {
+    connection: GitLabConnectionState;
+    pending: boolean;
+    loginWaiting: boolean;
+    onLogin: () => void;
+    onRecheck: () => void;
+  };
 }
 
 export function ConnectionMenu({
@@ -23,6 +32,7 @@ export function ConnectionMenu({
   refreshIntervalSeconds,
   preferencesPending,
   onSaveRefreshInterval,
+  gitLab,
 }: ConnectionMenuProps) {
   const disconnectLabel = connection.provider.displayName === "TAPD"
     ? "断开 TAPD"
@@ -34,11 +44,7 @@ export function ConnectionMenu({
         <div><strong>{connection.provider.displayName}</strong><small>{connection.provider.tenantDisplayName ?? "未连接"}</small></div>
         <span className="connection-value">{connection.provider.state === "connected" ? "已连接" : "需处理"}</span>
       </div>
-      <div className="connection-row connection-row--muted">
-        <span className="connection-icon"><CircleOff size={14} /></span>
-        <div><strong>GitLab 后续接入</strong><small>Phase 0 不读取仓库数据</small></div>
-        <span className="connection-value">未配置</span>
-      </div>
+      <GitLabConnection {...gitLab} />
       <AutoRefreshSettings
         value={refreshIntervalSeconds}
         pending={preferencesPending}

@@ -25,6 +25,7 @@ import { UpdateReadyNotice } from "./components/UpdateReadyNotice.js";
 import { useAutoRefresh } from "./use-auto-refresh.js";
 import { useProviderLogin } from "./use-provider-login.js";
 import { useRuntimeVersion } from "./use-runtime-version.js";
+import { useGitLabConnection } from "./use-gitlab-connection.js";
 
 const EMBEDDED_UI_VERSION = import.meta.env.VITE_FLOWRIVET_UI_VERSION ?? "0.1.0";
 const EMBEDDED_PROTOCOL_VERSION = 1;
@@ -75,6 +76,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     embeddedUiVersion: EMBEDDED_UI_VERSION,
     protocolVersion: EMBEDDED_PROTOCOL_VERSION,
   });
+  const gitLab = useGitLabConnection({ bridge, enabled: menuOpen });
 
   const refreshCoordinator = useAutoRefresh({
     enabled: providerState === "connected",
@@ -453,6 +455,13 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           refreshIntervalSeconds={preferences?.refreshIntervalSeconds}
           preferencesPending={preferencesPending}
           onSaveRefreshInterval={saveRefreshInterval}
+          gitLab={{
+            connection: gitLab.connection,
+            pending: gitLab.pending,
+            loginWaiting: gitLab.loginWaiting,
+            onLogin: () => void gitLab.startLogin(),
+            onRecheck: () => void gitLab.recheck(),
+          }}
         />
       ) : null}
 

@@ -17,10 +17,26 @@ function runner(outputs: Array<{ stdout: string; exitCode?: number }>): GlabComm
 }
 
 describe("GlabCliClient", () => {
-  it("maps version and connected auth status without returning raw output", async () => {
+  it("reports an older glab as unsupported without attempting authentication", async () => {
+    const commandRunner = runner([{ stdout: "glab 1.112.9" }]);
+    const client = new GlabCliClient({
+      executablePath: "C:\\tools\\glab.exe",
+      runner: commandRunner,
+      host: "gitlab-aiabu.ruijie.com.cn",
+    });
+
+    await expect(client.getConnection()).resolves.toEqual({
+      host: "gitlab-aiabu.ruijie.com.cn",
+      state: "cli_unsupported",
+      cliVersion: "1.112.9",
+    });
+    expect(commandRunner.run).toHaveBeenCalledOnce();
+  });
+
+  it("maps version and the authenticated user without returning raw output", async () => {
     const commandRunner = runner([
       { stdout: "glab 1.113.0 (d62881304)" },
-      { stdout: "Logged in as wuchenjie (keyring)" },
+      { stdout: JSON.stringify({ username: "wuchenjie", email: "private@example.com" }) },
     ]);
     const client = new GlabCliClient({
       executablePath: "C:\\tools\\glab.exe",
@@ -34,6 +50,9 @@ describe("GlabCliClient", () => {
       accountDisplayName: "wuchenjie",
       cliVersion: "1.113.0",
     });
+    expect(commandRunner.run).toHaveBeenLastCalledWith(expect.objectContaining({
+      args: ["api", "user", "--hostname", "gitlab-aiabu.ruijie.com.cn", "--method", "GET"],
+    }));
   });
 
   it("lists member projects with a bounded page and strict public fields", async () => {

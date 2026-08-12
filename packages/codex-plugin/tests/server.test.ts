@@ -357,6 +357,27 @@ describe("taskboard MCP app", () => {
       workItemServices: new Map([["feishu-project", synced.service]]),
       notificationStore,
       notificationMonitor: { start: vi.fn(), stop: vi.fn() },
+      gitLabService: {
+        getConnection: vi.fn().mockResolvedValue({
+          host: "gitlab-aiabu.ruijie.com.cn",
+          state: "connected",
+          cliVersion: "1.113.0",
+          accountDisplayName: "wuchenjie",
+        }),
+        startLogin: vi.fn().mockResolvedValue({ state: "connected" }),
+        listProjects: vi.fn().mockResolvedValue({
+          page: 1,
+          hasMore: false,
+          projects: [{
+            host: "gitlab-aiabu.ruijie.com.cn",
+            projectId: "1",
+            pathWithNamespace: "cc/flowrivet",
+            displayName: "flowrivet",
+            defaultBranch: "main",
+            httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git",
+          }],
+        }),
+      },
     } as RuntimeServices;
     const server = createTaskboardMcpServer({
       uiBundlePath: await createBundle(),
@@ -383,12 +404,23 @@ describe("taskboard MCP app", () => {
         "list_work_item_notifications",
         "mark_work_item_notification_read",
         "mark_all_work_item_notifications_read",
+        "get_gitlab_connection",
+        "start_gitlab_login",
+        "recheck_gitlab_connection",
+        "list_gitlab_projects",
       ]));
       expect(names).not.toEqual(expect.arrayContaining([
         "get_connection_status",
         "login_with_tapd_token",
         "disconnect_tapd",
       ]));
+
+      await expect(client.callTool({ name: "get_gitlab_connection", arguments: {} }))
+        .resolves.toMatchObject({ structuredContent: { state: "connected" } });
+      await expect(client.callTool({ name: "start_gitlab_login", arguments: {} }))
+        .resolves.toMatchObject({ structuredContent: { state: "connected" } });
+      await expect(client.callTool({ name: "list_gitlab_projects", arguments: { page: 1, perPage: 50 } }))
+        .resolves.toMatchObject({ structuredContent: { projects: [{ pathWithNamespace: "cc/flowrivet" }] } });
 
       const board = await client.callTool({ name: "open_my_taskboard", arguments: {} });
       expect(board.structuredContent).toMatchObject({
