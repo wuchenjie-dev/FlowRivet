@@ -10,6 +10,13 @@ const uiRoot = fileURLToPath(new URL("./src/ui", import.meta.url));
 export default defineConfig({
   root: uiRoot,
   plugins: [react(), viteSingleFile()],
+  define: {
+    "import.meta.env.VITE_FLOWRIVET_UI_VERSION": JSON.stringify(
+      process.env.VITE_FLOWRIVET_UI_VERSION
+        ?? process.env.CI_COMMIT_TAG?.replace(/^v/u, "")
+        ?? "0.1.0",
+    ),
+  },
   build: {
     outDir: `${packageRoot}/dist/ui`,
     emptyOutDir: false,

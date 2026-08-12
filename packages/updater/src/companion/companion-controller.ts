@@ -90,6 +90,8 @@ export class CompanionController {
         FLOWRIVET_MCP_PORT: String(this.options.port),
         FLOWRIVET_COMPANION_INSTANCE_FILE: this.options.instancePath,
         FLOWRIVET_DATA_ROOT: this.options.sharedDataRoot,
+        FLOWRIVET_RUNTIME_VERSION: version,
+        FLOWRIVET_UI_VERSION: version,
       },
       logPath: this.options.logPath,
     });

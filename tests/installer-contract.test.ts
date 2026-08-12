@@ -10,6 +10,9 @@ describe("FlowRivet installers", () => {
     expect(script).toContain("StandardInput.WriteLine");
     expect(script).toContain("ArgumentList.Add('configure')");
     expect(script).toContain("ArgumentList.Add('--token-stdin')");
+    expect(script).toContain("release-manifest.json");
+    expect(script).toContain("Get-FileHash");
+    expect(script).toContain("Length -ne");
     expect(script).not.toMatch(/--token\s+\$plainToken/u);
   });
 
@@ -19,6 +22,9 @@ describe("FlowRivet installers", () => {
     expect(script).toContain("configure --token-stdin");
     expect(script).toContain("$HOME/Library/Application Support/FlowRivet");
     expect(script).toContain("$HOME/.local/share/flowrivet");
+    expect(script).toContain("release-manifest.json");
+    expect(script).toMatch(/sha256sum|shasum/u);
+    expect(script).toContain("wc -c");
     expect(script).not.toMatch(/--token[ =]"?\$FLOWRIVET_TOKEN/u);
     expect(script).not.toMatch(/curl[^\n]*-(?:H|-header)[^\n]*FLOWRIVET_TOKEN/u);
   });

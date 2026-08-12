@@ -16,7 +16,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   const configStore = new JsonUpdateConfigStore(configPath);
   const credentialStore = createCredentialStore({
     ...(process.platform === "darwin"
-      ? { macosHelperPath: join(dirname(fileURLToPath(import.meta.url)), "..", "native", "macos-keychain") }
+      ? { macosHelperPath: join(dirname(fileURLToPath(import.meta.url)), "..", "native", "macos-keychain-helper") }
       : {}),
   });
   const productionService = createProductionUpdateService({
@@ -24,7 +24,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     protocolVersion: 1,
     updaterVersion: "0.1.0",
     ...(process.platform === "darwin"
-      ? { macosHelperPath: join(dirname(fileURLToPath(import.meta.url)), "..", "native", "macos-keychain") }
+      ? { macosHelperPath: join(dirname(fileURLToPath(import.meta.url)), "..", "native", "macos-keychain-helper") }
       : {}),
   });
   const check = () => productionService.checkAndInstall();

@@ -25,6 +25,9 @@ test:
   stage: package
   needs: [test]
   script:
+    - npm ci
+    - npm run build
+    - npm prune --omit=dev
     - node scripts/release/ci-package-runtime.mjs
   artifacts:
     expire_in: 7 days
@@ -44,6 +47,8 @@ package:macos-arm64:
   extends: .package-runtime
   tags: [flowrivet, macos, arm64]
   variables: { FLOWRIVET_TARGET_PLATFORM: "darwin-arm64" }
+  before_script:
+    - swiftc packages/updater/native/macos-keychain/main.swift -framework Security -o packages/updater/native/macos-keychain-helper
 
 verify:
   stage: verify

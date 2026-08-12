@@ -31,8 +31,14 @@ export class UpdateService {
       await this.dependencies.stopCurrent();
       try {
         await this.dependencies.startVersion(candidate.version);
+        await this.dependencies.activate(candidate.version, currentVersion);
       } catch (error) {
         const errorCode = "candidate_activation_failed";
+        try {
+          await this.dependencies.stopCurrent();
+        } catch {
+          // A candidate that already exited has nothing left to stop.
+        }
         try {
           await this.dependencies.startVersion(currentVersion);
         } catch (rollbackError) {
@@ -42,7 +48,6 @@ export class UpdateService {
         await this.dependencies.recordFailure(candidate.version, errorCode);
         throw new Error(errorCode, { cause: error });
       }
-      await this.dependencies.activate(candidate.version, currentVersion);
       await this.dependencies.recordSuccess(candidate.version);
       return { outcome: "updated", version: candidate.version, previousVersion: currentVersion };
     } finally {

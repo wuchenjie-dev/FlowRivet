@@ -20,9 +20,33 @@ printf '\n'
 FLOWRIVET_TEMP="$(mktemp -d)"
 trap 'unset FLOWRIVET_TOKEN; rm -rf "$FLOWRIVET_TEMP"' EXIT HUP INT TERM
 FLOWRIVET_ARCHIVE="$FLOWRIVET_TEMP/runtime.tar.gz"
-FLOWRIVET_URL="$FLOWRIVET_GITLAB_BASE_URL/api/v4/projects/$FLOWRIVET_PROJECT_ID/packages/generic/flowrivet-runtime/$FLOWRIVET_VERSION/flowrivet-runtime-$FLOWRIVET_PLATFORM-v$FLOWRIVET_VERSION.tar.gz"
-printf 'header = "DEPLOY-TOKEN: %s"\nurl = "%s"\noutput = "%s"\n' "$FLOWRIVET_TOKEN" "$FLOWRIVET_URL" "$FLOWRIVET_ARCHIVE" \
+FLOWRIVET_MANIFEST="$FLOWRIVET_TEMP/release-manifest.json"
+FLOWRIVET_PACKAGE_BASE="$FLOWRIVET_GITLAB_BASE_URL/api/v4/projects/$FLOWRIVET_PROJECT_ID/packages/generic/flowrivet-runtime/$FLOWRIVET_VERSION"
+printf 'header = "DEPLOY-TOKEN: %s"\nurl = "%s/release-manifest.json"\noutput = "%s"\n' "$FLOWRIVET_TOKEN" "$FLOWRIVET_PACKAGE_BASE" "$FLOWRIVET_MANIFEST" \
   | curl --fail --silent --show-error --config -
+if [ "$(uname -s)" = "Darwin" ]; then
+  manifest_value() { /usr/bin/plutil -extract "$1" raw -o - "$FLOWRIVET_MANIFEST"; }
+else
+  command -v python3 >/dev/null 2>&1 || { echo json_parser_unavailable >&2; exit 5; }
+  manifest_value() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); print(__import__("functools").reduce(lambda v,k:v[k], sys.argv[2].split("."), d))' "$FLOWRIVET_MANIFEST" "$1"; }
+fi
+FLOWRIVET_EXPECTED_FILE="flowrivet-runtime-$FLOWRIVET_PLATFORM-v$FLOWRIVET_VERSION.tar.gz"
+[ "$(manifest_value schemaVersion)" = "1" ] || { echo manifest_schema_invalid >&2; exit 6; }
+[ "$(manifest_value version)" = "$FLOWRIVET_VERSION" ] || { echo manifest_version_mismatch >&2; exit 6; }
+FLOWRIVET_FILE="$(manifest_value "packages.$FLOWRIVET_PLATFORM.file")"
+FLOWRIVET_SIZE="$(manifest_value "packages.$FLOWRIVET_PLATFORM.size")"
+FLOWRIVET_SHA256="$(manifest_value "packages.$FLOWRIVET_PLATFORM.sha256")"
+[ "$FLOWRIVET_FILE" = "$FLOWRIVET_EXPECTED_FILE" ] || { echo manifest_file_invalid >&2; exit 6; }
+printf 'header = "DEPLOY-TOKEN: %s"\nurl = "%s/%s"\noutput = "%s"\n' "$FLOWRIVET_TOKEN" "$FLOWRIVET_PACKAGE_BASE" "$FLOWRIVET_FILE" "$FLOWRIVET_ARCHIVE" \
+  | curl --fail --silent --show-error --config -
+FLOWRIVET_ACTUAL_SIZE="$(wc -c < "$FLOWRIVET_ARCHIVE" | tr -d ' ')"
+[ "$FLOWRIVET_ACTUAL_SIZE" = "$FLOWRIVET_SIZE" ] || { echo package_size_mismatch >&2; exit 7; }
+if command -v sha256sum >/dev/null 2>&1; then
+  FLOWRIVET_ACTUAL_SHA256="$(sha256sum "$FLOWRIVET_ARCHIVE" | awk '{print $1}')"
+else
+  FLOWRIVET_ACTUAL_SHA256="$(shasum -a 256 "$FLOWRIVET_ARCHIVE" | awk '{print $1}')"
+fi
+[ "$FLOWRIVET_ACTUAL_SHA256" = "$FLOWRIVET_SHA256" ] || { echo package_hash_mismatch >&2; exit 7; }
 FLOWRIVET_VERSION_ROOT="$FLOWRIVET_ROOT/versions/$FLOWRIVET_VERSION"
 mkdir -p "$FLOWRIVET_VERSION_ROOT"
 tar -xzf "$FLOWRIVET_ARCHIVE" -C "$FLOWRIVET_VERSION_ROOT"
@@ -37,6 +61,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>Label</key><string>cn.flowrivet.updater</string><key>ProgramArguments</key><array><string>$FLOWRIVET_NODE</string><string>$FLOWRIVET_UPDATER</string><string>run</string></array><key>RunAtLoad</key><true/></dict></plist>
 EOF
+  launchctl bootout "gui/$(id -u)/cn.flowrivet.updater" >/dev/null 2>&1 || true
   launchctl bootstrap "gui/$(id -u)" "$FLOWRIVET_AGENT"
 else
   FLOWRIVET_UNIT="$HOME/.config/systemd/user/flowrivet-updater.service"

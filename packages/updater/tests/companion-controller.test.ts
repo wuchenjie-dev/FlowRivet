@@ -26,7 +26,11 @@ describe("CompanionController", () => {
     expect(adapter.start).toHaveBeenCalledWith(expect.objectContaining({
       command: win32.join("C:\\FlowRivet\\versions", "0.2.0", "runtime", "node.exe"),
       arguments: [win32.join("C:\\FlowRivet\\versions", "0.2.0", "app", "packages", "codex-plugin", "dist", "server", "index.js")],
-      environment: expect.objectContaining({ FLOWRIVET_DATA_ROOT: "C:\\FlowRivet\\data" }),
+      environment: expect.objectContaining({
+        FLOWRIVET_DATA_ROOT: "C:\\FlowRivet\\data",
+        FLOWRIVET_RUNTIME_VERSION: "0.2.0",
+        FLOWRIVET_UI_VERSION: "0.2.0",
+      }),
     }));
   });
 

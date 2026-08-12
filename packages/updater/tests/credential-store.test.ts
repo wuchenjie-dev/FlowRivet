@@ -18,6 +18,8 @@ describe("Registry credential stores", () => {
     expect(command).toMatch(/powershell(?:\.exe)?$/i);
     expect(args.join(" ")).not.toContain("deploy-token-value");
     expect(options.stdin).toBe("deploy-token-value");
+    expect(args.join(" ")).toContain("CredWrite");
+    expect(args.join(" ")).not.toContain("PasswordVault");
   });
 
   it("uses the packaged macOS helper and passes the token only through stdin", async () => {

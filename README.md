@@ -17,7 +17,7 @@ FlowRivet 自身可以托管在 GitHub，但受管业务项目的代码事实源
 
 ## Codex 待办看板
 
-Codex 插件当前默认接入飞书项目。FlowRivet 通过本机飞书项目 CLI 读取当前账号的个人待办，使用设备授权完成登录，不要求用户向插件提交密码或访问凭据。看板保持只读，工作项卡片通过经过校验的 HTTPS 链接打开飞书项目原记录。普通用户请阅读 [FlowRivet 普通用户操作指导手册](./docs/user-guide.md)；内部发布、安装、自动更新与回滚见 [内部自动更新运维手册](./docs/operations/internal-auto-update.md)，本地开发验收见 [Codex 看板本地运行手册](./docs/operations/codex-plugin-demo.md)。Provider 设计见 [飞书项目接入规格](./docs/superpowers/specs/2026-08-11-feishu-project-meegle-provider-design.md)。
+Codex 插件当前默认接入飞书项目。FlowRivet 通过本机飞书项目 CLI 读取当前账号的个人待办，使用设备授权完成登录，不要求用户向插件提交密码或访问凭据。看板保持只读，工作项卡片通过经过校验的 HTTPS 链接打开飞书项目原记录。普通用户请阅读 [FlowRivet 普通用户操作指导手册](./docs/user-guide.md)；内部发布、安装、自动更新与回滚见 [内部自动更新运维手册](./docs/operations/internal-auto-update.md)，本地开发验收见 [Codex 看板本地运行手册](./docs/operations/codex-plugin-demo.md)。Provider 设计见 [飞书项目接入规格](./docs/superpowers/specs/2026-08-11-feishu-project-meegle-provider-design.md)，历史 TAPD 看板设计见 [TAPD 我的待办看板规格](./docs/superpowers/specs/2026-08-06-tapd-my-work-taskboard-design.md)。
 
 飞书项目 CLI 使用官方包安装，并由 CLI 与系统钥匙串管理用户会话：
 

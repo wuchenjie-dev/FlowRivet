@@ -12,8 +12,21 @@ try {
   New-Item -ItemType Directory -Force -LiteralPath $temporaryRoot | Out-Null
   New-Item -ItemType Directory -Force -LiteralPath $installRoot | Out-Null
   $archive = Join-Path $temporaryRoot 'flowrivet-runtime.tar.gz'
-  $url = "$GitLabBaseUrl/api/v4/projects/$ProjectId/packages/generic/flowrivet-runtime/$Version/flowrivet-runtime-win32-x64-v$Version.tar.gz"
+  $manifestPath = Join-Path $temporaryRoot 'release-manifest.json'
+  $packageBaseUrl = "$GitLabBaseUrl/api/v4/projects/$ProjectId/packages/generic/flowrivet-runtime/$Version"
+  Invoke-WebRequest -Uri "$packageBaseUrl/release-manifest.json" -Headers @{ 'DEPLOY-TOKEN' = $plainToken } -OutFile $manifestPath
+  $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+  $package = $manifest.packages.'win32-x64'
+  $expectedFile = "flowrivet-runtime-win32-x64-v$Version.tar.gz"
+  if ($manifest.schemaVersion -ne 1 -or $manifest.version -ne $Version -or $null -eq $package -or $package.file -ne $expectedFile) {
+    throw 'flowrivet_manifest_invalid'
+  }
+  $url = "$packageBaseUrl/$expectedFile"
   Invoke-WebRequest -Uri $url -Headers @{ 'DEPLOY-TOKEN' = $plainToken } -OutFile $archive
+  $archiveInfo = Get-Item -LiteralPath $archive
+  if ($archiveInfo.Length -ne [Int64]$package.size) { throw 'flowrivet_package_size_mismatch' }
+  $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+  if ($actualHash -ne ([string]$package.sha256).ToLowerInvariant()) { throw 'flowrivet_package_hash_mismatch' }
   $versionRoot = Join-Path $installRoot "versions\$Version"
   if (-not (Test-Path -LiteralPath $versionRoot)) {
     New-Item -ItemType Directory -Force -LiteralPath $versionRoot | Out-Null

@@ -18,6 +18,13 @@ export async function buildRuntimePackage(options) {
       if (packageName !== "runtime-contracts") throw error;
     }
   }
+  if (options.platform.startsWith("darwin-")) {
+    await mkdir(join(options.outputDirectory, "app", "packages", "updater", "native"), { recursive: true });
+    await cp(
+      join(options.appDirectory, "packages", "updater", "native", "macos-keychain-helper"),
+      join(options.outputDirectory, "app", "packages", "updater", "native", "macos-keychain-helper"),
+    );
+  }
   for (const file of ["package.json", "package-lock.json", "LICENSE", "THIRD_PARTY_LICENSES.txt"]) {
     try {
       await mkdir(join(options.outputDirectory, "app"), { recursive: true });
@@ -31,6 +38,15 @@ export async function buildRuntimePackage(options) {
   } catch {
     // CI may assemble production dependencies in a later isolated step.
   }
+  const sharedPackage = join(options.outputDirectory, "app", "node_modules", "@flowrivet", "runtime-contracts");
+  await rm(sharedPackage, { recursive: true, force: true });
+  await copyRequiredDirectory(join(options.appDirectory, "packages", "runtime-contracts", "dist"), join(sharedPackage, "dist"));
+  await writeFile(join(sharedPackage, "package.json"), `${JSON.stringify({
+    name: "@flowrivet/runtime-contracts",
+    version: options.version,
+    type: "module",
+    exports: { ".": "./dist/index.js" },
+  }, null, 2)}\n`, { mode: 0o600 });
   const metadata = {
     schemaVersion: 1,
     version: options.version,
