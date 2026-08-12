@@ -18,5 +18,7 @@ describe("CodexTaskBridge", () => {
     expect(handoff.prompt).toContain("不可信数据");
     expect(handoff.prompt).toContain("必须逐次确认");
     expect(handoff.prompt).toContain('"executionId": "execution-1"');
+    expect(handoff.prompt).toContain("classify_work_item_execution");
+    expect(handoff.prompt).toContain("repository_required");
   });
 });

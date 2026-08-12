@@ -20,7 +20,41 @@ describe("ExecutionService", () => {
     expect(await service.prepare(input)).toEqual(first);
     expect(await service.get({ ...input })).toEqual(first);
     expect(await service.get({ ...input, accountKey: "user-2" })).toBeUndefined();
+    expect(first).toMatchObject({ executionKind: "pending_classification", state: "prepared" });
   });
+
+  it("classifies idempotently and requests a repository only for development", async () => {
+    const service = new ExecutionService({
+      store: new InMemoryExecutionStore(), createId: () => "execution-1",
+    });
+    const prepared = await service.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
+      taskLaunchMode: "handoff", executionKind: "pending_classification",
+    });
+
+    const classified = await service.classify(prepared.executionId, "development");
+
+    expect(classified).toMatchObject({ executionKind: "development", state: "awaiting_repository" });
+    expect(await service.classify(prepared.executionId, "development")).toEqual(classified);
+    await expect(service.classify(prepared.executionId, "requirement_analysis"))
+      .rejects.toMatchObject({ code: "execution_state_conflict" });
+  });
+
+  it.each(["requirement_analysis", "requirement_breakdown"] as const)(
+    "marks %s ready without a repository",
+    async (executionKind) => {
+      const service = new ExecutionService({
+        store: new InMemoryExecutionStore(), createId: () => `execution-${executionKind}`,
+      });
+      const prepared = await service.prepare({
+        providerId: "feishu-project", accountKey: "user-1", workItemKey: executionKind,
+        taskLaunchMode: "handoff", executionKind: "pending_classification",
+      });
+
+      expect(await service.classify(prepared.executionId, executionKind))
+        .toMatchObject({ executionKind, state: "ready" });
+    },
+  );
 
   it("rejects repository replacement after branch or merge request activity", async () => {
     const store = new InMemoryExecutionStore();

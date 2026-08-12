@@ -430,6 +430,8 @@ describe("taskboard MCP app", () => {
         "recheck_gitlab_connection",
         "list_gitlab_projects",
         "prepare_work_item_execution",
+        "get_work_item_execution",
+        "classify_work_item_execution",
         "get_work_item_detail",
       ]));
       expect(names).not.toEqual(expect.arrayContaining([
@@ -484,6 +486,17 @@ describe("taskboard MCP app", () => {
       });
       expect(resumedExecution.structuredContent).toMatchObject({
         execution: { executionId: "execution-example" },
+      });
+      await expect(client.callTool({
+        name: "get_work_item_execution", arguments: { workItemKey: (boardItem as { key: string }).key },
+      })).resolves.toMatchObject({
+        structuredContent: { execution: { executionId: "execution-example", state: "prepared" } },
+      });
+      await expect(client.callTool({
+        name: "classify_work_item_execution",
+        arguments: { executionId: "execution-example", executionKind: "development" },
+      })).resolves.toMatchObject({
+        structuredContent: { executionKind: "development", state: "awaiting_repository" },
       });
       expect(synced.service.sync).toHaveBeenCalledWith({
         accountDisplayName: "Example User",

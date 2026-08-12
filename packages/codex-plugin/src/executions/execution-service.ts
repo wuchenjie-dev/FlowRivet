@@ -12,6 +12,7 @@ import { ExecutionStoreError, type ExecutionIdentity, type ExecutionStore } from
 export type ExecutionServiceErrorCode =
   | "execution_repository_locked"
   | "execution_not_found"
+  | "execution_state_conflict"
   | "execution_transition_invalid";
 export class ExecutionServiceError extends Error {
   constructor(readonly code: ExecutionServiceErrorCode) { super(code); this.name = "ExecutionServiceError"; }
@@ -43,8 +44,8 @@ export class ExecutionService {
       workItemKey: input.workItemKey,
       ...(input.workItemUpdatedAt ? { workItemUpdatedAt: input.workItemUpdatedAt } : {}),
       taskLaunchMode: input.taskLaunchMode,
-      executionKind: input.executionKind,
-      state: input.executionKind === "development" ? "awaiting_repository" : "prepared",
+      executionKind: "pending_classification",
+      state: "prepared",
       artifacts: [], createdAt: timestamp, updatedAt: timestamp,
     });
     try { await this.store.create(record); return record; }
@@ -58,6 +59,31 @@ export class ExecutionService {
 
   get(identity: ExecutionIdentity) { return this.store.find(identity); }
   getById(executionId: string) { return this.store.getById(executionId); }
+
+  async classify(
+    executionId: string,
+    executionKind: Exclude<ExecutionKind, "pending_classification">,
+  ) {
+    const record = await this.store.getById(executionId);
+    if (!record) throw new ExecutionServiceError("execution_not_found");
+    if (record.executionKind !== "pending_classification") {
+      if (record.executionKind === executionKind) return record;
+      throw new ExecutionServiceError("execution_state_conflict");
+    }
+    if (record.state !== "prepared") {
+      throw new ExecutionServiceError("execution_state_conflict");
+    }
+    const updated = executionRecordSchema.parse({
+      ...record,
+      executionKind,
+      state: executionKind === "development" && !record.gitlab
+        ? "awaiting_repository"
+        : "ready",
+      updatedAt: this.clock().toISOString(),
+    });
+    await this.store.save(updated);
+    return updated;
+  }
 
   async bindRepository(executionId: string, repository: ExecutionRepository) {
     const record = await this.store.getById(executionId);

@@ -51,6 +51,42 @@ export function registerExecutionTools(server: McpServer, options: {
       content: [{ type: "text" as const, text: handoff.prompt }],
     };
   });
+  registerAppTool(server, "get_work_item_execution", {
+    title: "读取工作项执行",
+    description: "恢复当前飞书账号下某个工作项的 FlowRivet 执行状态。",
+    inputSchema: { workItemKey: z.string().min(1) },
+    outputSchema: { execution: executionRecordSchema.optional() },
+    annotations: { readOnlyHint: true, openWorldHint: false }, _meta: {},
+  }, async ({ workItemKey }) => {
+    const execution = await options.service.get({
+      providerId: "feishu-project",
+      accountKey: await options.resolveAccountKey(),
+      workItemKey,
+    });
+    return { structuredContent: { ...(execution ? { execution } : {}) }, content: [] };
+  });
+  registerAppTool(server, "classify_work_item_execution", {
+    title: "分类工作项执行",
+    description: "由 Codex 将待分类执行确定为需求拆解、需求分析或研发实现。",
+    inputSchema: {
+      executionId: z.string().min(1),
+      executionKind: z.enum(["requirement_breakdown", "requirement_analysis", "development"]),
+    },
+    outputSchema: executionRecordSchema.shape,
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false }, _meta: {},
+  }, async ({ executionId, executionKind }) => {
+    const current = await options.service.getById(executionId);
+    if (!current || current.accountKey !== await options.resolveAccountKey()) {
+      throw new Error("execution_not_found");
+    }
+    const execution = await options.service.classify(executionId, executionKind);
+    return {
+      structuredContent: execution,
+      content: execution.state === "awaiting_repository"
+        ? [{ type: "text" as const, text: "repository_required" }]
+        : [],
+    };
+  });
   if (options.repositoryWorkflow) registerAppTool(server, "bind_execution_repository", {
     title: "关联研发仓库",
     description: "复用精确匹配的本地仓库，或在用户指定父目录下安全克隆。",
