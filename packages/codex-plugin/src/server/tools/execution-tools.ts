@@ -12,7 +12,9 @@ import type { RepositoryPreparer } from "../../gitlab/repository-workflow.js";
 import type { DevelopmentOperations } from "../../gitlab/development-workflow.js";
 import { branchForExecution } from "../../gitlab/development-workflow.js";
 import type { ConfirmationService } from "../../executions/confirmation-service.js";
-import { confirmationChallengeSchema, guardedActionAuthorizationSchema } from "../../contracts/executions.js";
+import { confirmationChallengeSchema, executionWritebackResultSchema, guardedActionAuthorizationSchema } from "../../contracts/executions.js";
+import { ResultWriter } from "../../executions/result-writer.js";
+import { WritebackWorkflow, WritebackWorkflowError } from "../../executions/writeback-workflow.js";
 
 export function registerExecutionTools(server: McpServer, options: {
   service: ExecutionService;
@@ -21,8 +23,11 @@ export function registerExecutionTools(server: McpServer, options: {
   repositoryWorkflow?: RepositoryPreparer;
   developmentWorkflow?: DevelopmentOperations;
   confirmationService?: ConfirmationService;
+  writebackWorkflow?: WritebackWorkflow;
 }) {
   const bridge = options.bridge ?? new CodexTaskBridge();
+  const resultWriter = new ResultWriter();
+  const writebackWorkflow = options.writebackWorkflow ?? new WritebackWorkflow({});
   registerAppTool(server, "prepare_work_item_execution", {
     title: "开始处理工作项",
     description: "为当前飞书账号创建或恢复稳定的 Codex handoff。",
@@ -137,4 +142,40 @@ export function registerExecutionTools(server: McpServer, options: {
       return { structuredContent: guardedActionAuthorizationSchema.parse({ authorized: true, operationId: challenge.operationId, action: challenge.action, targetVersion: challenge.targetVersion }), content: [{ type: "text" as const, text: "一次性授权已验证；远端操作尚未执行。" }] };
     });
   }
+  registerAppTool(server, "write_execution_result", {
+    title: "保存执行结果",
+    description: "保存带幂等标记的执行结果；飞书项目不支持写入时明确保留为本地产物。",
+    inputSchema: {
+      executionId: z.string().min(1), artifactType: z.string().min(1),
+      revision: z.number().int().positive(), summary: z.string().min(1).max(6_000),
+      pipelineStatus: z.string().min(1).optional(),
+    },
+    outputSchema: executionWritebackResultSchema.shape,
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true }, _meta: {},
+  }, async ({ executionId, artifactType, revision, summary, pipelineStatus }) => {
+    const current = await options.service.getById(executionId);
+    if (!current) throw new Error("execution_not_found");
+    const content = resultWriter.build({
+      executionId, artifactType, revision, summary,
+      ...(current.gitlab?.projectPath ? { repository: current.gitlab.projectPath } : {}),
+      ...(current.gitlab?.branch ? { branch: current.gitlab.branch } : {}),
+      ...(current.gitlab?.mergeRequestUrl ? { mergeRequestUrl: current.gitlab.mergeRequestUrl } : {}),
+      ...(pipelineStatus ? { pipelineStatus } : {}),
+    });
+    const execution = await options.service.recordArtifact(executionId, {
+      artifactId: `${executionId}:${artifactType}:${revision}`,
+      type: artifactType, revision, summary: summary.slice(0, 2_000), content,
+      uri: `flowrivet://execution/${encodeURIComponent(executionId)}/artifact/${encodeURIComponent(artifactType)}/${revision}`,
+    });
+    try {
+      await writebackWorkflow.write({ executionId, content });
+      return { structuredContent: executionWritebackResultSchema.parse({ execution, writeback: { state: "written", content } }), content: [] };
+    } catch (error) {
+      if (!(error instanceof WritebackWorkflowError)) throw error;
+      return {
+        structuredContent: executionWritebackResultSchema.parse({ execution, writeback: { state: "local_only", errorCode: error.code, content: error.localArtifact } }),
+        content: [{ type: "text" as const, text: "执行结果已保存在 FlowRivet 本地；飞书项目当前不支持自动写回。" }],
+      };
+    }
+  });
 }

@@ -14,6 +14,7 @@ export const executionArtifactSchema = z.object({
   revision: z.number().int().positive(),
   uri: z.string().min(1).optional(),
   summary: z.string().min(1).max(2_000).optional(),
+  content: z.string().min(1).max(8_000).optional(),
   createdAt: z.iso.datetime(),
 }).strict();
 
@@ -55,6 +56,7 @@ export const workExecutionHandoffSchema = z.object({
 }).strict();
 
 export type ExecutionRecord = z.infer<typeof executionRecordSchema>;
+export type ExecutionArtifact = z.infer<typeof executionArtifactSchema>;
 export type ExecutionRepository = z.infer<typeof executionRepositorySchema>;
 export type ExecutionKind = z.infer<typeof executionRecordSchema>["executionKind"];
 export type ExecutionState = z.infer<typeof executionRecordSchema>["state"];
@@ -73,4 +75,13 @@ export const guardedActionAuthorizationSchema = z.object({
   operationId: z.string().min(1),
   action: z.enum(["merge_mr", "retry_pipeline", "close_work_item"]),
   targetVersion: z.string().min(1),
+}).strict();
+
+export const executionWritebackResultSchema = z.object({
+  execution: executionRecordSchema,
+  writeback: z.object({
+    state: z.enum(["written", "local_only"]),
+    errorCode: z.literal("feishu_write_capability_unsupported").optional(),
+    content: z.string().min(1).max(8_000),
+  }).strict(),
 }).strict();

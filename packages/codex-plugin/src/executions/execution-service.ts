@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   executionRecordSchema,
   type ExecutionKind,
+  type ExecutionArtifact,
   type ExecutionRepository,
   type ExecutionState,
 } from "../contracts/executions.js";
@@ -103,6 +104,26 @@ export class ExecutionService {
     if (!record?.gitlab) throw new ExecutionServiceError("execution_not_found");
     const updated = executionRecordSchema.parse({ ...record, gitlab: { ...record.gitlab, ...changes }, updatedAt: this.clock().toISOString() });
     await this.store.save(updated); return updated;
+  }
+
+  async recordArtifact(executionId: string, artifact: Omit<ExecutionArtifact, "createdAt">) {
+    const record = await this.store.getById(executionId);
+    if (!record) throw new ExecutionServiceError("execution_not_found");
+    const existing = record.artifacts.findIndex((entry) => entry.artifactId === artifact.artifactId);
+    const nextArtifact = { ...artifact, createdAt: this.clock().toISOString() };
+    const artifacts = existing < 0
+      ? [...record.artifacts, nextArtifact]
+      : record.artifacts.map((entry, index) => index === existing
+        ? { ...nextArtifact, createdAt: entry.createdAt }
+        : entry);
+    const updated = executionRecordSchema.parse({
+      ...record,
+      artifacts,
+      state: record.state === "completed" ? record.state : "writeback_pending",
+      updatedAt: this.clock().toISOString(),
+    });
+    await this.store.save(updated);
+    return updated;
   }
 }
 

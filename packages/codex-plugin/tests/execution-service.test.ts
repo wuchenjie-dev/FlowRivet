@@ -47,6 +47,29 @@ describe("ExecutionService", () => {
     await expect(service.transition(prepared.executionId, "prepared"))
       .rejects.toMatchObject({ code: "execution_transition_invalid" });
   });
+
+  it("records the same artifact revision idempotently and marks writeback pending", async () => {
+    const service = new ExecutionService({
+      store: new InMemoryExecutionStore(),
+      clock: () => new Date("2026-08-12T00:00:00.000Z"),
+      createId: () => "execution-1",
+    });
+    const prepared = await service.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
+      taskLaunchMode: "handoff", executionKind: "requirement_analysis",
+    });
+    const artifact = {
+      artifactId: "execution-1:analysis:1", type: "analysis", revision: 1,
+      summary: "分析完成", content: "第一版",
+    };
+
+    await service.recordArtifact(prepared.executionId, artifact);
+    const updated = await service.recordArtifact(prepared.executionId, { ...artifact, content: "修订内容" });
+
+    expect(updated.state).toBe("writeback_pending");
+    expect(updated.artifacts).toHaveLength(1);
+    expect(updated.artifacts[0]?.content).toBe("修订内容");
+  });
 });
 
 function repository(projectPath: string, extra: Record<string, unknown> = {}) {
