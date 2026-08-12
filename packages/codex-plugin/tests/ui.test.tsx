@@ -383,27 +383,34 @@ describe("FlowRivet taskboard", () => {
     expect(await screen.findByRole("button", { name: "连接飞书项目" })).toBeTruthy();
   });
 
-  it("opens Feishu work items at their provider URL without requesting details", async () => {
+  it("starts and resumes a stable Codex handoff from a Feishu work item", async () => {
     const user = userEvent.setup();
-    const opened = vi.spyOn(window, "open").mockImplementation(() => null);
-    const callTool = vi.fn();
     const snapshot = snapshotWithFeishuState("connected");
+    const execution = {
+      schemaVersion: 1, executionId: "execution-1", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-execution-1", executionKind: "requirement_analysis",
+      state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent: name === "prepare_work_item_execution"
+      ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue FlowRivet work" } }
+      : { ok: true } }));
     render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
 
     await user.click(screen.getByRole("button", {
       name: `打开工作项：${snapshot.items[0]!.title}`,
     }));
 
-    expect(opened).toHaveBeenCalledWith(
-      snapshot.items[0]!.externalUrl,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
     expect(callTool).not.toHaveBeenCalledWith("get_work_item_detail", expect.anything());
-    opened.mockRestore();
+    await user.click(screen.getByRole("button", { name: "开始处理" }));
+    expect(callTool).toHaveBeenCalledWith("prepare_work_item_execution", { item: snapshot.items[0] });
+    expect(await screen.findByRole("button", { name: "继续处理" })).toBeTruthy();
+    expect(screen.getByText("execution-1")).toBeTruthy();
   });
 
-  it("rejects a non-HTTPS Feishu work item URL", async () => {
+  it("does not render an unsafe Feishu work item URL", async () => {
     const user = userEvent.setup();
     const opened = vi.spyOn(window, "open").mockImplementation(() => null);
     const snapshot = snapshotWithFeishuState("connected");
@@ -415,7 +422,7 @@ describe("FlowRivet taskboard", () => {
     }));
 
     expect(opened).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toContain("工作项链接无效");
+    expect(screen.queryByRole("link", { name: /在飞书项目中打开/ })).toBeNull();
     opened.mockRestore();
   });
   it("renders four stages and work from every demo project", () => {

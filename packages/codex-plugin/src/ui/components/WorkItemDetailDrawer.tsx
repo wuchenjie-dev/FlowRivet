@@ -1,8 +1,10 @@
-import { ExternalLink, RefreshCw, X } from "lucide-react";
+import { ExternalLink, Play, RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 import type { WorkItemDetail } from "../../contracts/work-item-detail.js";
+import type { WorkExecutionHandoff } from "../../contracts/executions.js";
+import { ExecutionSummary } from "./ExecutionSummary.js";
 
 interface WorkItemDetailDrawerProps {
   item: WorkItem;
@@ -12,6 +14,10 @@ interface WorkItemDetailDrawerProps {
   offline?: boolean;
   onClose: () => void;
   onRetry: () => void;
+  execution?: WorkExecutionHandoff;
+  executionPending?: boolean;
+  executionError?: string;
+  onStartExecution?: () => void;
 }
 
 export function WorkItemDetailDrawer({
@@ -22,6 +28,10 @@ export function WorkItemDetailDrawer({
   offline = false,
   onClose,
   onRetry,
+  execution,
+  executionPending = false,
+  executionError,
+  onStartExecution,
 }: WorkItemDetailDrawerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -80,13 +90,44 @@ export function WorkItemDetailDrawer({
         </header>
 
         <div className="detail-body">
-          {pending ? <DetailLoading /> : errorCode ? (
+          {pending ? <DetailLoading /> : errorCode && item.providerId !== "feishu-project" ? (
             <DetailError code={errorCode} offline={offline} onRetry={onRetry} />
-          ) : detail ? <DetailContent detail={detail} /> : null}
+          ) : detail ? <DetailContent detail={detail} /> : <MinimalDetail item={item} />}
+          {onStartExecution ? (
+            <div className="execution-actions">
+              <button type="button" className="execution-primary" onClick={onStartExecution} disabled={executionPending}>
+                <Play size={15} aria-hidden="true" />
+                {executionPending ? "正在准备..." : execution ? "继续处理" : "开始处理"}
+              </button>
+              {executionError ? <p role="alert">{executionError}</p> : null}
+            </div>
+          ) : null}
+          {execution ? <ExecutionSummary value={execution} /> : null}
         </div>
       </section>
     </dialog>
   );
+}
+
+function MinimalDetail({ item }: { item: WorkItem }) {
+  const externalUrl = validatedHttpsUrl(item.externalUrl);
+  return (
+    <>
+      <dl className="detail-fields">
+        <DetailField label="状态" value={item.providerStatus} />
+        <DetailField label="优先级" value={item.priority} />
+        <DetailDate label="截止时间" value={item.dueAt} />
+      </dl>
+      <p className="detail-empty">详细正文请前往来源系统查看。</p>
+      {externalUrl ? <a className="detail-external-link" href={externalUrl} target="_blank" rel="noreferrer">在飞书项目中打开<ExternalLink size={14} /></a> : null}
+    </>
+  );
+}
+
+function validatedHttpsUrl(value: string | undefined) {
+  if (!value) return undefined;
+  try { return new URL(value).protocol === "https:" ? value : undefined; }
+  catch { return undefined; }
 }
 
 function keepFocusInDialog(event: KeyboardEvent<HTMLDialogElement>) {

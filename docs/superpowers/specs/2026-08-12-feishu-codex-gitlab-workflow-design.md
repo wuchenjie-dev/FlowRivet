@@ -172,7 +172,7 @@ interface ExecutionRecord {
   taskLaunchMode: "direct" | "handoff";
   codexTaskId?: string;
   codexHandoffId?: string;
-  executionKind: "requirement_breakdown" | "requirement_analysis" | "development";
+  executionKind: "pending_classification" | "requirement_breakdown" | "requirement_analysis" | "development";
   state: "prepared" | "awaiting_repository" | "ready" | "running" |
     "awaiting_confirmation" | "writeback_pending" | "completed" | "failed";
   gitlab?: {

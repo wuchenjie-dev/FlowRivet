@@ -35,6 +35,8 @@ import type { ProviderConnection } from "../src/contracts/providers.js";
 import type { RuntimeServices } from "../src/server/runtime-services.js";
 import { ProviderLoginCoordinator } from "../src/providers/provider-login-coordinator.js";
 import type { ProviderLoginDriver } from "../src/providers/provider-login-driver.js";
+import { InMemoryExecutionStore } from "../src/executions/execution-store.js";
+import { ExecutionService } from "../src/executions/execution-service.js";
 
 const temporaryDirectories: string[] = [];
 const TEST_RUNTIME_VERSION = {
@@ -378,6 +380,11 @@ describe("taskboard MCP app", () => {
           }],
         }),
       },
+      executionService: new ExecutionService({
+        store: new InMemoryExecutionStore(),
+        clock: () => new Date("2026-08-12T00:00:00.000Z"),
+        createId: () => "execution-example",
+      }),
     } as RuntimeServices;
     const server = createTaskboardMcpServer({
       uiBundlePath: await createBundle(),
@@ -408,6 +415,7 @@ describe("taskboard MCP app", () => {
         "start_gitlab_login",
         "recheck_gitlab_connection",
         "list_gitlab_projects",
+        "prepare_work_item_execution",
       ]));
       expect(names).not.toEqual(expect.arrayContaining([
         "get_connection_status",
@@ -427,6 +435,20 @@ describe("taskboard MCP app", () => {
         connection: { provider: { providerId: "feishu-project", state: "connected" } },
         projects: [expect.objectContaining({ externalId: "PROJ" })],
         items: [expect.objectContaining({ providerId: "feishu-project" })],
+      });
+      const boardItem = (board.structuredContent as { items: unknown[] }).items[0];
+      const firstExecution = await client.callTool({
+        name: "prepare_work_item_execution", arguments: { item: boardItem },
+      });
+      const resumedExecution = await client.callTool({
+        name: "prepare_work_item_execution", arguments: { item: boardItem },
+      });
+      expect(firstExecution.structuredContent).toMatchObject({
+        execution: { executionId: "execution-example", accountKey: "user_example" },
+        handoff: { handoffId: "flowrivet-execution-example" },
+      });
+      expect(resumedExecution.structuredContent).toMatchObject({
+        execution: { executionId: "execution-example" },
       });
       expect(synced.service.sync).toHaveBeenCalledWith({
         accountDisplayName: "Example User",

@@ -19,6 +19,7 @@ import {
 import { workItemNotificationListSchema } from "../contracts/notifications.js";
 import type { RuntimeServices } from "./runtime-services.js";
 import { registerGitLabTools } from "./tools/gitlab-tools.js";
+import { registerExecutionTools } from "./tools/execution-tools.js";
 import {
   resolveRuntimeVersion,
   runtimeVersionSchema,
@@ -191,6 +192,18 @@ export function createTaskboardMcpServer(
     ?? new JsonStderrNotificationOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: runtimeVersion.version });
   if (runtimeServices?.gitLabService) registerGitLabTools(server, runtimeServices.gitLabService);
+  if (runtimeServices?.executionService) registerExecutionTools(server, {
+    service: runtimeServices.executionService,
+    resolveAccountKey: async () => {
+      const active = await runtimeServices.activeProviderStore.load({
+        registeredProviderIds: runtimeServices.registry.ids(),
+      });
+      if (active.activeProviderId !== "feishu-project") throw new Error("execution_provider_unsupported");
+      const identity = runtimeServices.registry.get(active.activeProviderId).auth.getSessionIdentity?.();
+      if (!identity?.accountKey) throw new Error("provider_identity_validation_failed");
+      return identity.accountKey;
+    },
+  });
 
   registerAppTool(
     server,

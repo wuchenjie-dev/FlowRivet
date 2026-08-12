@@ -26,6 +26,7 @@ import { useAutoRefresh } from "./use-auto-refresh.js";
 import { useProviderLogin } from "./use-provider-login.js";
 import { useRuntimeVersion } from "./use-runtime-version.js";
 import { useGitLabConnection } from "./use-gitlab-connection.js";
+import { useWorkExecution } from "./use-work-execution.js";
 
 const EMBEDDED_UI_VERSION = import.meta.env.VITE_FLOWRIVET_UI_VERSION ?? "0.1.0";
 const EMBEDDED_PROTOCOL_VERSION = 1;
@@ -77,6 +78,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     protocolVersion: EMBEDDED_PROTOCOL_VERSION,
   });
   const gitLab = useGitLabConnection({ bridge, enabled: menuOpen });
+  const workExecution = useWorkExecution(bridge);
 
   const refreshCoordinator = useAutoRefresh({
     enabled: providerState === "connected",
@@ -188,14 +190,15 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   }
 
   function openDetail(item: WorkItem, opener: HTMLButtonElement) {
-    if (item.providerId === "feishu-project") {
-      if (!openValidatedProviderUrl(item.externalUrl)) {
-        setNotice("工作项链接无效，无法打开");
-      }
-      return;
-    }
     detailOpener.current = opener;
     setSelectedItem(item);
+    workExecution.clear();
+    if (item.providerId === "feishu-project") {
+      setWorkItemDetail(undefined);
+      setDetailPending(false);
+      setDetailErrorCode(undefined);
+      return;
+    }
     const cached = detailCache.current.get(item.key);
     if (cached) {
       detailRequestSequence.current += 1;
@@ -533,6 +536,12 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           offline={dataFreshness === "offline"}
           onClose={() => closeDetail()}
           onRetry={() => void loadDetail(selectedItem)}
+          execution={workExecution.result}
+          executionPending={workExecution.pending}
+          executionError={workExecution.error}
+          onStartExecution={selectedItem.providerId === "feishu-project"
+            ? () => void workExecution.prepare(selectedItem)
+            : undefined}
         />
       ) : null}
       {reconnectOpen && !isFeishuProject ? (
@@ -562,18 +571,6 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       {notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );
-}
-
-function openValidatedProviderUrl(value: string | undefined) {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:") return false;
-    window.open(url.toString(), "_blank", "noopener,noreferrer");
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function parseLegacyDisconnectedProvider(

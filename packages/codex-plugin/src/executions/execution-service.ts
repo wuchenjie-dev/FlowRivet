@@ -86,6 +86,17 @@ export class ExecutionService {
     await this.store.save(updated);
     return updated;
   }
+
+  async attachHandoff(executionId: string, handoffId: string) {
+    const record = await this.store.getById(executionId);
+    if (!record) throw new ExecutionServiceError("execution_not_found");
+    if (record.codexHandoffId === handoffId) return record;
+    const updated = executionRecordSchema.parse({
+      ...record, codexHandoffId: handoffId, updatedAt: this.clock().toISOString(),
+    });
+    await this.store.save(updated);
+    return updated;
+  }
 }
 
 const allowedTransitions: Record<ExecutionState, ExecutionState[]> = {

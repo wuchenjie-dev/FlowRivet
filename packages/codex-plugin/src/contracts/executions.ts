@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const executionKinds = [
-  "requirement_breakdown", "requirement_analysis", "development",
+  "pending_classification", "requirement_breakdown", "requirement_analysis", "development",
 ] as const;
 export const executionStates = [
   "prepared", "awaiting_repository", "ready", "running",
@@ -46,7 +46,16 @@ export const executionRecordSchema = z.object({
   updatedAt: z.iso.datetime(),
 }).strict();
 
+export const workExecutionHandoffSchema = z.object({
+  execution: executionRecordSchema,
+  handoff: z.object({
+    handoffId: z.string().min(1),
+    prompt: z.string().min(1).max(12_000),
+  }).strict(),
+}).strict();
+
 export type ExecutionRecord = z.infer<typeof executionRecordSchema>;
 export type ExecutionRepository = z.infer<typeof executionRepositorySchema>;
 export type ExecutionKind = z.infer<typeof executionRecordSchema>["executionKind"];
 export type ExecutionState = z.infer<typeof executionRecordSchema>["state"];
+export type WorkExecutionHandoff = z.infer<typeof workExecutionHandoffSchema>;
