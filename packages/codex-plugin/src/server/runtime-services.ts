@@ -24,6 +24,9 @@ import { ExecutionService } from "../executions/execution-service.js";
 import { resolveExecutable } from "../process/bounded-command-runner.js";
 import { GitCliClient } from "../gitlab/git-cli-client.js";
 import { RepositoryWorkflow, type RepositoryPreparer } from "../gitlab/repository-workflow.js";
+import { DevelopmentWorkflow, type DevelopmentOperations } from "../gitlab/development-workflow.js";
+import { GlabCliClient } from "../gitlab/glab-cli-client.js";
+import { FLOWRIVET_GITLAB_HOST } from "../gitlab/gitlab-service.js";
 
 export interface RuntimeServices {
   registry: ProviderRegistry;
@@ -35,6 +38,7 @@ export interface RuntimeServices {
   gitLabService?: GitLabOperations;
   executionService?: ExecutionService;
   repositoryWorkflow?: RepositoryPreparer;
+  developmentWorkflow?: DevelopmentOperations;
 }
 
 export function createDefaultRuntimeServices(
@@ -86,16 +90,29 @@ export function createDefaultRuntimeServices(
     ),
   });
   let git: GitCliClient | undefined;
+  let glab: GlabCliClient | undefined;
+  const getGit = async () => (git ??= new GitCliClient({ executablePath: await resolveExecutable({ command: "git" }) }));
+  const getGlab = async () => (glab ??= new GlabCliClient({ executablePath: await resolveExecutable({ command: "glab" }), host: FLOWRIVET_GITLAB_HOST }));
   const repositoryWorkflow = new RepositoryWorkflow({
     git: {
       async inspect(path) {
-        git ??= new GitCliClient({ executablePath: await resolveExecutable({ command: "git" }) });
-        return git.inspect(path);
+        return (await getGit()).inspect(path);
       },
       async clone(url, target) {
-        git ??= new GitCliClient({ executablePath: await resolveExecutable({ command: "git" }) });
-        return git.clone(url, target);
+        return (await getGit()).clone(url, target);
       },
+    },
+  });
+  const developmentWorkflow = new DevelopmentWorkflow({
+    git: {
+      inspect: async (path) => (await getGit()).inspect(path),
+      push: async (input) => (await getGit()).push(input),
+      createBranch: async (input) => (await getGit()).createBranch(input),
+    },
+    glab: {
+      findMergeRequest: async (projectPath, branch) => (await getGlab()).findMergeRequest(projectPath, branch),
+      createMergeRequest: async (input) => (await getGlab()).createMergeRequest(input),
+      getPipeline: async (projectPath, branch) => (await getGlab()).getPipeline(projectPath, branch),
     },
   });
   return {
@@ -108,5 +125,6 @@ export function createDefaultRuntimeServices(
     gitLabService: createDefaultGitLabService(),
     executionService: new ExecutionService({ store: createExecutionStore() }),
     repositoryWorkflow,
+    developmentWorkflow,
   };
 }

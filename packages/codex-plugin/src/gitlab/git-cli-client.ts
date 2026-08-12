@@ -49,6 +49,22 @@ export class GitCliClient {
     });
   }
 
+  async push(input: { cwd: string; remoteName: string; branch: string }) {
+    if (!/^[a-zA-Z0-9._-]+$/u.test(input.remoteName) || !isSafeBranch(input.branch)) {
+      throw new GitCliError("git_push_invalid");
+    }
+    await this.runner.run({ executablePath: this.executablePath, cwd: input.cwd,
+      args: ["push", "--set-upstream", input.remoteName, input.branch], timeoutMs: 5 * 60_000 });
+  }
+  async createBranch(input: { cwd: string; remoteName: string; defaultBranch: string; branch: string }) {
+    if (!/^[a-zA-Z0-9._-]+$/u.test(input.remoteName) || !/^[a-zA-Z0-9._/-]+$/u.test(input.defaultBranch)
+      || !isSafeBranch(input.branch)) throw new GitCliError("git_branch_invalid");
+    await this.runner.run({ executablePath: this.executablePath, cwd: input.cwd,
+      args: ["fetch", input.remoteName, input.defaultBranch], timeoutMs: 5 * 60_000 });
+    await this.runner.run({ executablePath: this.executablePath, cwd: input.cwd,
+      args: ["switch", "-c", input.branch, "--track", `${input.remoteName}/${input.defaultBranch}`], timeoutMs: 30_000 });
+  }
+
   static projectPathFromRemote(value: string) {
     let url: URL;
     try { url = new URL(value); } catch { throw new GitCliError("git_remote_invalid"); }
@@ -70,4 +86,9 @@ export class GitCliClient {
     });
     return result.stdout;
   }
+}
+
+function isSafeBranch(value: string) {
+  return /^codex\/[a-z0-9][a-z0-9._/-]{0,119}$/u.test(value)
+    && !value.includes("..") && !value.endsWith(".") && !value.endsWith("/");
 }

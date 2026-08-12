@@ -9,12 +9,15 @@ import type { ExecutionService } from "../../executions/execution-service.js";
 import { executionRecordSchema } from "../../contracts/executions.js";
 import { gitLabProjectSchema } from "../../contracts/gitlab.js";
 import type { RepositoryPreparer } from "../../gitlab/repository-workflow.js";
+import type { DevelopmentOperations } from "../../gitlab/development-workflow.js";
+import { branchForExecution } from "../../gitlab/development-workflow.js";
 
 export function registerExecutionTools(server: McpServer, options: {
   service: ExecutionService;
   resolveAccountKey: () => Promise<string>;
   bridge?: CodexTaskBridge;
   repositoryWorkflow?: RepositoryPreparer;
+  developmentWorkflow?: DevelopmentOperations;
 }) {
   const bridge = options.bridge ?? new CodexTaskBridge();
   registerAppTool(server, "prepare_work_item_execution", {
@@ -66,4 +69,51 @@ export function registerExecutionTools(server: McpServer, options: {
     });
     return { structuredContent: execution, content: [] };
   });
+  if (options.developmentWorkflow) {
+    const loadDevelopment = async (executionId: string) => {
+      const execution = await options.service.getById(executionId);
+      if (!execution?.gitlab) throw new Error("execution_repository_required");
+      return execution;
+    };
+    registerAppTool(server, "create_execution_branch", {
+      title: "创建研发分支", description: "从所选仓库默认分支创建稳定的 codex 功能分支。",
+      inputSchema: { executionId: z.string().min(1), externalId: z.string().min(1), title: z.string().min(1), defaultBranch: z.string().min(1) },
+      outputSchema: executionRecordSchema.shape, annotations: { readOnlyHint: false, openWorldHint: true }, _meta: {},
+    }, async ({ executionId, externalId, title, defaultBranch }) => {
+      const execution = await loadDevelopment(executionId);
+      const branch = execution.gitlab!.branch ?? branchForExecution(externalId, title);
+      await options.developmentWorkflow!.createBranch({ localPath: execution.gitlab!.localPath, projectPath: execution.gitlab!.projectPath, defaultBranch, branch });
+      return { structuredContent: await options.service.updateGitLab(executionId, { branch }), content: [] };
+    });
+    registerAppTool(server, "push_execution_branch", {
+      title: "推送研发分支", description: "推送已关联的 codex 功能分支。",
+      inputSchema: { executionId: z.string().min(1), defaultBranch: z.string().min(1) },
+      outputSchema: executionRecordSchema.shape, annotations: { readOnlyHint: false, openWorldHint: true }, _meta: {},
+    }, async ({ executionId, defaultBranch }) => {
+      const execution = await loadDevelopment(executionId); const branch = execution.gitlab!.branch;
+      if (!branch) throw new Error("execution_branch_required");
+      await options.developmentWorkflow!.push({ localPath: execution.gitlab!.localPath, projectPath: execution.gitlab!.projectPath, branch, defaultBranch });
+      return { structuredContent: execution, content: [] };
+    });
+    registerAppTool(server, "create_execution_merge_request", {
+      title: "创建合并请求", description: "幂等创建或恢复当前执行的 GitLab MR。",
+      inputSchema: { executionId: z.string().min(1), defaultBranch: z.string().min(1), title: z.string().min(1), description: z.string().max(12_000) },
+      outputSchema: executionRecordSchema.shape, annotations: { readOnlyHint: false, openWorldHint: true }, _meta: {},
+    }, async ({ executionId, defaultBranch, title, description }) => {
+      const execution = await loadDevelopment(executionId); const branch = execution.gitlab!.branch;
+      if (!branch) throw new Error("execution_branch_required");
+      const mr = await options.developmentWorkflow!.openMergeRequest({ projectPath: execution.gitlab!.projectPath, branch, defaultBranch, title, description });
+      return { structuredContent: await options.service.updateGitLab(executionId, { mergeRequestIid: mr.iid, mergeRequestUrl: mr.webUrl }), content: [] };
+    });
+    registerAppTool(server, "get_execution_pipeline", {
+      title: "读取执行流水线", description: "读取当前分支最新 Pipeline。",
+      inputSchema: { executionId: z.string().min(1) }, outputSchema: executionRecordSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: true }, _meta: {},
+    }, async ({ executionId }) => {
+      const execution = await loadDevelopment(executionId); const branch = execution.gitlab!.branch;
+      if (!branch) throw new Error("execution_branch_required");
+      const pipeline = await options.developmentWorkflow!.getPipeline(execution.gitlab!.projectPath, branch);
+      return { structuredContent: pipeline ? await options.service.updateGitLab(executionId, { pipelineId: pipeline.id }) : execution, content: [] };
+    });
+  }
 }

@@ -134,17 +134,63 @@ export class GlabCliClient implements GitLabAdapter {
     }
   }
 
-  private async run(args: string[]) {
+  async findMergeRequest(projectPath: string, branch: string) {
+    const result = await this.run(["mr", "list", "--repo", projectPath,
+      "--source-branch", branch, "--output", "json"]);
+    const rows = parseArray(result.stdout);
+    const first = rows[0];
+    if (!first) return undefined;
+    if (typeof first.iid !== "number" || typeof first.web_url !== "string") throw new GitLabAdapterError("gitlab_output_invalid");
+    return { iid: first.iid, webUrl: credentialFreeUrl(first.web_url) };
+  }
+
+  async createMergeRequest(input: { projectPath: string; branch: string; defaultBranch: string; title: string; description: string }) {
+    const result = await this.run(["mr", "create", "--repo", input.projectPath,
+      "--source-branch", input.branch, "--target-branch", input.defaultBranch,
+      "--title", input.title, "--description-file", "-", "--yes"], input.description);
+    const url = result.stdout.match(/https:\/\/gitlab-aiabu\.ruijie\.com\.cn\/[^\s]+\/merge_requests\/(\d+)/u);
+    if (!url) throw new GitLabAdapterError("gitlab_output_invalid");
+    return { iid: Number(url[1]), webUrl: credentialFreeUrl(url[0]) };
+  }
+
+  async getPipeline(projectPath: string, branch: string) {
+    const result = await this.run(["ci", "list", "--repo", projectPath,
+      "--ref", branch, "--page", "1", "--per-page", "1", "--output", "json"]);
+    const first = parseArray(result.stdout)[0];
+    if (!first) return undefined;
+    if ((typeof first.id !== "number" && typeof first.id !== "string")
+      || typeof first.status !== "string" || typeof first.sha !== "string"
+      || typeof first.web_url !== "string") throw new GitLabAdapterError("gitlab_output_invalid");
+    return { id: String(first.id), status: first.status, sha: first.sha, webUrl: credentialFreeUrl(first.web_url) };
+  }
+
+  private async run(args: string[], stdin?: string) {
     try {
       return await this.runner.run({
         executablePath: this.executablePath,
         args,
         timeoutMs: 30_000,
+        ...(stdin !== undefined ? { stdin } : {}),
       });
     } catch (error) {
       throw mapRunnerError(error, args[0] === "api");
     }
   }
+}
+
+function parseArray(value: string): Array<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "object" && entry !== null)) return parsed;
+  } catch { /* handled below */ }
+  throw new GitLabAdapterError("gitlab_output_invalid");
+}
+function credentialFreeUrl(value: string) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.hostname !== "gitlab-aiabu.ruijie.com.cn" || url.username || url.password) {
+    throw new GitLabAdapterError("gitlab_output_invalid");
+  }
+  return url.toString();
 }
 
 function parseUsername(value: string) {

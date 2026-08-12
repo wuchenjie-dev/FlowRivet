@@ -195,6 +195,7 @@ export function createTaskboardMcpServer(
   if (runtimeServices?.executionService) registerExecutionTools(server, {
     service: runtimeServices.executionService,
     repositoryWorkflow: runtimeServices.repositoryWorkflow,
+    developmentWorkflow: runtimeServices.developmentWorkflow,
     resolveAccountKey: async () => {
       const active = await runtimeServices.activeProviderStore.load({
         registeredProviderIds: runtimeServices.registry.ids(),

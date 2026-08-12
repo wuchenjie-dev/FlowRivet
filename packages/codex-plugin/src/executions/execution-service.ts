@@ -56,6 +56,7 @@ export class ExecutionService {
   }
 
   get(identity: ExecutionIdentity) { return this.store.find(identity); }
+  getById(executionId: string) { return this.store.getById(executionId); }
 
   async bindRepository(executionId: string, repository: ExecutionRepository) {
     const record = await this.store.getById(executionId);
@@ -96,6 +97,12 @@ export class ExecutionService {
     });
     await this.store.save(updated);
     return updated;
+  }
+  async updateGitLab(executionId: string, changes: Partial<ExecutionRepository>) {
+    const record = await this.store.getById(executionId);
+    if (!record?.gitlab) throw new ExecutionServiceError("execution_not_found");
+    const updated = executionRecordSchema.parse({ ...record, gitlab: { ...record.gitlab, ...changes }, updatedAt: this.clock().toISOString() });
+    await this.store.save(updated); return updated;
   }
 }
 

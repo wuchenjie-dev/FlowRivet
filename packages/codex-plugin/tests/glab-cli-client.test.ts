@@ -99,4 +99,14 @@ describe("GlabCliClient", () => {
     expect(error.message).toBe("gitlab_output_invalid");
     expect(error.message).not.toContain("secret");
   });
+
+  it("parses merge requests and pipelines into strict public fields", async () => {
+    const commandRunner = runner([
+      { stdout: JSON.stringify([{ iid: 9, web_url: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/merge_requests/9" }]) },
+      { stdout: JSON.stringify([{ id: 12, status: "success", sha: "abc123", web_url: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/pipelines/12" }]) },
+    ]);
+    const client = new GlabCliClient({ executablePath: "C:\\tools\\glab.exe", runner: commandRunner, host: "gitlab-aiabu.ruijie.com.cn" });
+    await expect(client.findMergeRequest("cc/flowrivet", "codex/item")).resolves.toMatchObject({ iid: 9 });
+    await expect(client.getPipeline("cc/flowrivet", "codex/item")).resolves.toMatchObject({ id: "12", status: "success" });
+  });
 });
