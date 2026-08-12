@@ -322,7 +322,9 @@ function DemoHarness() {
           return;
         }
         const connectedSnapshot = scenarioSnapshot("connected");
-        const structuredContent = toolName === "start_provider_login"
+        const structuredContent = toolName === "get_runtime_version"
+          ? { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" }
+          : toolName === "start_provider_login"
           ? { requestId: "demo-start", session: loginSessionRef.current }
           : toolName === "get_provider_login"
             ? { requestId: "demo-get", ...(loginSessionRef.current ? { session: loginSessionRef.current } : {}) }

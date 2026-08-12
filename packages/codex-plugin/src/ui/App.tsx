@@ -21,8 +21,13 @@ import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
 import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
+import { UpdateReadyNotice } from "./components/UpdateReadyNotice.js";
 import { useAutoRefresh } from "./use-auto-refresh.js";
 import { useProviderLogin } from "./use-provider-login.js";
+import { useRuntimeVersion } from "./use-runtime-version.js";
+
+const EMBEDDED_UI_VERSION = import.meta.env.VITE_FLOWRIVET_UI_VERSION ?? "0.1.0";
+const EMBEDDED_PROTOCOL_VERSION = 1;
 
 interface AppProps {
   initialSnapshot: TaskboardSnapshot;
@@ -58,12 +63,18 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [detailPending, setDetailPending] = useState(false);
   const [detailErrorCode, setDetailErrorCode] = useState<string>();
   const [reconnectOpen, setReconnectOpen] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const detailCache = useRef(new Map<string, WorkItemDetail>());
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
   const providerState = connection.provider.state;
   const isFeishuProject = connection.provider.providerId === "feishu-project";
+  const runtime = useRuntimeVersion({
+    bridge,
+    embeddedUiVersion: EMBEDDED_UI_VERSION,
+    protocolVersion: EMBEDDED_PROTOCOL_VERSION,
+  });
 
   const refreshCoordinator = useAutoRefresh({
     enabled: providerState === "connected",
@@ -409,6 +420,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
 
   return (
     <div className={`app-shell${displayState.isFullscreen ? " is-fullscreen" : ""}`}>
+      {runtime.updateReady && !updateDismissed ? (
+        <UpdateReadyNotice onDismiss={() => setUpdateDismissed(true)} />
+      ) : null}
       <AppHeader
         connection={connection}
         lastSyncedAt={lastSyncedAt}

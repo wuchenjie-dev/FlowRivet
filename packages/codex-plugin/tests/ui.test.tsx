@@ -939,9 +939,16 @@ describe("FlowRivet taskboard", () => {
   it("shows loading state and a retryable provider error", async () => {
     const user = userEvent.setup();
     const pending = deferred<{ content: []; structuredContent: WorkItemDetail }>();
-    const callTool = vi.fn()
-      .mockReturnValueOnce(pending.promise)
-      .mockResolvedValueOnce({ content: [], structuredContent: workItemDetail() });
+    let detailCalls = 0;
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "get_runtime_version") {
+        return { content: [], structuredContent: { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" } };
+      }
+      detailCalls += 1;
+      return detailCalls === 1
+        ? pending.promise
+        : { content: [] as [], structuredContent: workItemDetail() };
+    });
     render(<App initialSnapshot={demoTaskboardSnapshot} bridge={createBridge({ callTool })} />);
 
     await user.click(screen.getByRole("button", {
@@ -954,7 +961,7 @@ describe("FlowRivet taskboard", () => {
     await user.click(screen.getByRole("button", { name: "重试加载详情" }));
     const dialog = await screen.findByRole("dialog", { name: workItemDetail().title });
     expect(within(dialog).getByText("稳定排序")).toBeTruthy();
-    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(callTool.mock.calls.filter(([name]) => name === "get_work_item_detail")).toHaveLength(2);
   });
 
   it("explains that offline detail requires reconnecting", async () => {

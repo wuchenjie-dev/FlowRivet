@@ -20,6 +20,7 @@ import { workItemNotificationListSchema } from "../contracts/notifications.js";
 import type { RuntimeServices } from "./runtime-services.js";
 import {
   resolveRuntimeVersion,
+  runtimeVersionSchema,
   type RuntimeVersion,
 } from "../contracts/runtime-version.js";
 
@@ -188,6 +189,23 @@ export function createTaskboardMcpServer(
   const notificationLogger = options.notificationLogger
     ?? new JsonStderrNotificationOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: runtimeVersion.version });
+
+  registerAppTool(
+    server,
+    "get_runtime_version",
+    {
+      title: "读取 FlowRivet 运行时版本",
+      description: "读取当前 Companion 和看板 UI 的兼容版本。",
+      inputSchema: {},
+      outputSchema: runtimeVersionSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: {},
+    },
+    async () => ({
+      content: [{ type: "text", text: `FlowRivet ${runtimeVersion.version}` }],
+      structuredContent: runtimeVersion,
+    }),
+  );
 
   registerAppResource(
     server,

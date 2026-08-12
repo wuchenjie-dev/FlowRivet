@@ -44,6 +44,20 @@ const TEST_RUNTIME_VERSION = {
 } as const;
 const TEST_TASKBOARD_RESOURCE_URI = "ui://flowrivet/taskboard/0.2.1.html";
 
+describe("runtime version tool", () => {
+  it("returns the version contract without process identity", async () => {
+    const connection = await connectClient(await createBundle());
+    try {
+      const result = await connection.client.callTool({ name: "get_runtime_version", arguments: {} });
+      expect(result.structuredContent).toEqual(TEST_RUNTIME_VERSION);
+      expect(result.structuredContent).not.toHaveProperty("pid");
+      expect(result.structuredContent).not.toHaveProperty("instanceId");
+    } finally {
+      await connection.close();
+    }
+  });
+});
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
