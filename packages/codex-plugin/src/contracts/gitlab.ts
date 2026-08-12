@@ -27,7 +27,7 @@ const credentialFreeHttpsUrl = z.url().superRefine((value, context) => {
 });
 
 export const gitLabProjectSchema = z.object({
-  host: z.string().min(1),
+  host: z.literal("gitlab-aiabu.ruijie.com.cn"),
   projectId: z.string().min(1),
   pathWithNamespace: z.string().min(1),
   displayName: z.string().min(1),

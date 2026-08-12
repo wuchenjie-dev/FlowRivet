@@ -21,6 +21,9 @@ import { WorkItemService, type WorkItemSynchronizer } from "../work-items/work-i
 import { createDefaultGitLabService, type GitLabOperations } from "../gitlab/gitlab-service.js";
 import { createExecutionStore } from "../executions/create-execution-store.js";
 import { ExecutionService } from "../executions/execution-service.js";
+import { resolveExecutable } from "../process/bounded-command-runner.js";
+import { GitCliClient } from "../gitlab/git-cli-client.js";
+import { RepositoryWorkflow, type RepositoryPreparer } from "../gitlab/repository-workflow.js";
 
 export interface RuntimeServices {
   registry: ProviderRegistry;
@@ -31,6 +34,7 @@ export interface RuntimeServices {
   notificationMonitor: Pick<WorkItemNotificationMonitor, "start" | "stop">;
   gitLabService?: GitLabOperations;
   executionService?: ExecutionService;
+  repositoryWorkflow?: RepositoryPreparer;
 }
 
 export function createDefaultRuntimeServices(
@@ -81,6 +85,19 @@ export function createDefaultRuntimeServices(
       process.env.FLOWRIVET_NOTIFICATION_INTERVAL_SECONDS,
     ),
   });
+  let git: GitCliClient | undefined;
+  const repositoryWorkflow = new RepositoryWorkflow({
+    git: {
+      async inspect(path) {
+        git ??= new GitCliClient({ executablePath: await resolveExecutable({ command: "git" }) });
+        return git.inspect(path);
+      },
+      async clone(url, target) {
+        git ??= new GitCliClient({ executablePath: await resolveExecutable({ command: "git" }) });
+        return git.clone(url, target);
+      },
+    },
+  });
   return {
     registry,
     loginCoordinator,
@@ -90,5 +107,6 @@ export function createDefaultRuntimeServices(
     notificationMonitor,
     gitLabService: createDefaultGitLabService(),
     executionService: new ExecutionService({ store: createExecutionStore() }),
+    repositoryWorkflow,
   };
 }

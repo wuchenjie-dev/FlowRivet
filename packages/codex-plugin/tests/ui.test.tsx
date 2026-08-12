@@ -410,6 +410,33 @@ describe("FlowRivet taskboard", () => {
     expect(screen.getByText("execution-1")).toBeTruthy();
   });
 
+  it("opens repository selection only after an execution is prepared", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const execution = {
+      schemaVersion: 1, executionId: "execution-1", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-execution-1", executionKind: "pending_classification",
+      state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    const project = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" };
+    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
+      name === "prepare_work_item_execution" ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue" } }
+        : name === "list_gitlab_projects" ? { page: 1, hasMore: false, projects: [project] }
+          : { ...execution, state: "ready", gitlab: { host: project.host, projectId: "1", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" } } }));
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+    await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
+    expect(screen.queryByText("选择研发仓库")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "开始处理" }));
+    await user.click(await screen.findByRole("button", { name: "关联研发仓库" }));
+    expect(await screen.findByText("选择研发仓库")).toBeTruthy();
+    await user.click(screen.getByRole("option", { name: "cc/flowrivet" }));
+    await user.type(screen.getByLabelText("本地仓库绝对路径"), "C:\\work\\flowrivet");
+    await user.click(screen.getByRole("button", { name: "确认关联" }));
+    expect(callTool).toHaveBeenCalledWith("bind_execution_repository", expect.objectContaining({ executionId: "execution-1", localPath: "C:\\work\\flowrivet" }));
+  });
+
   it("does not render an unsafe Feishu work item URL", async () => {
     const user = userEvent.setup();
     const opened = vi.spyOn(window, "open").mockImplementation(() => null);

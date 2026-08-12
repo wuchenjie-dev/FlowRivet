@@ -194,6 +194,7 @@ export function createTaskboardMcpServer(
   if (runtimeServices?.gitLabService) registerGitLabTools(server, runtimeServices.gitLabService);
   if (runtimeServices?.executionService) registerExecutionTools(server, {
     service: runtimeServices.executionService,
+    repositoryWorkflow: runtimeServices.repositoryWorkflow,
     resolveAccountKey: async () => {
       const active = await runtimeServices.activeProviderStore.load({
         registeredProviderIds: runtimeServices.registry.ids(),
