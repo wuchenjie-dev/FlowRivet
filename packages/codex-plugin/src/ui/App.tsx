@@ -21,13 +21,13 @@ import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
 import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
+import { RepositoryDialog } from "./components/RepositoryDialog.js";
 import { UpdateReadyNotice } from "./components/UpdateReadyNotice.js";
 import { useAutoRefresh } from "./use-auto-refresh.js";
 import { useProviderLogin } from "./use-provider-login.js";
 import { useRuntimeVersion } from "./use-runtime-version.js";
 import { useGitLabConnection } from "./use-gitlab-connection.js";
 import { useWorkExecution } from "./use-work-execution.js";
-import { RepositoryPicker } from "./components/RepositoryPicker.js";
 
 const EMBEDDED_UI_VERSION = import.meta.env.VITE_FLOWRIVET_UI_VERSION ?? "0.1.0";
 const EMBEDDED_PROTOCOL_VERSION = 1;
@@ -539,15 +539,15 @@ export function App({ initialSnapshot, bridge }: AppProps) {
             ? () => void workExecution.prepareAndSend(selectedItem)
             : undefined}
           onSelectRepository={workExecution.result ? () => void workExecution.openRepositoryPicker() : undefined}
-          repositoryPicker={workExecution.repositoryOpen ? (
-            <RepositoryPicker
-              projects={workExecution.projects}
-              pending={workExecution.pending}
-              error={workExecution.error}
-              onCancel={() => workExecution.setRepositoryOpen(false)}
-              onBind={(project, paths) => void workExecution.bindRepository(project, paths)}
-            />
-          ) : undefined}
+        />
+      ) : null}
+      {selectedItem && workExecution.repositoryOpen ? (
+        <RepositoryDialog
+          projects={workExecution.projects}
+          pending={workExecution.pending}
+          error={workExecution.error}
+          onCancel={() => workExecution.setRepositoryOpen(false)}
+          onBind={(project, paths) => void workExecution.bindRepository(project, paths)}
         />
       ) : null}
       {reconnectOpen && !isFeishuProject ? (

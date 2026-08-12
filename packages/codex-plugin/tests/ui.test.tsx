@@ -463,16 +463,20 @@ describe("FlowRivet taskboard", () => {
       name === "prepare_work_item_execution" ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue" } }
         : name === "list_gitlab_projects" ? { page: 1, hasMore: false, projects: [project] }
           : { ...execution, state: "ready", gitlab: { host: project.host, projectId: "1", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" } } }));
-    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool, sendUserMessage })} />);
     await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
     expect(screen.queryByText("选择研发仓库")).toBeNull();
     await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
     await user.click(await screen.findByRole("button", { name: "关联研发仓库" }));
-    expect(await screen.findByText("选择研发仓库")).toBeTruthy();
-    await user.click(screen.getByRole("option", { name: "cc/flowrivet" }));
+    const repositoryDialog = await screen.findByRole("dialog", { name: "选择研发仓库" });
+    const detailDialog = screen.getByRole("dialog", { name: snapshot.items[0]!.title });
+    expect(detailDialog.contains(repositoryDialog)).toBe(false);
+    await user.click(screen.getByRole("option", { name: /cc\/flowrivet/ }));
     await user.type(screen.getByLabelText("本地仓库绝对路径"), "C:\\work\\flowrivet");
     await user.click(screen.getByRole("button", { name: "确认关联" }));
     expect(callTool).toHaveBeenCalledWith("bind_execution_repository", expect.objectContaining({ executionId: "execution-1", localPath: "C:\\work\\flowrivet" }));
+    expect(sendUserMessage).toHaveBeenLastCalledWith("继续 FlowRivet 执行：execution-1");
   });
 
   it("shows GitLab progress and an explicit local-only writeback state", async () => {

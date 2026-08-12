@@ -1,5 +1,5 @@
 import { ExternalLink, Play, RefreshCw, X } from "lucide-react";
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 import type { WorkItemDetail } from "../../contracts/work-item-detail.js";
@@ -19,7 +19,6 @@ interface WorkItemDetailDrawerProps {
   executionError?: string;
   onStartExecution?: () => void;
   onSelectRepository?: () => void;
-  repositoryPicker?: ReactNode;
 }
 
 export function WorkItemDetailDrawer({
@@ -35,7 +34,6 @@ export function WorkItemDetailDrawer({
   executionError,
   onStartExecution,
   onSelectRepository,
-  repositoryPicker,
 }: WorkItemDetailDrawerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -111,7 +109,6 @@ export function WorkItemDetailDrawer({
             onSelectRepository={onSelectRepository}
             allowCompatibilityCopy={Boolean(executionError)}
           /> : null}
-          {repositoryPicker}
         </div>
       </section>
     </dialog>

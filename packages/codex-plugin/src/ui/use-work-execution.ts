@@ -75,7 +75,7 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
   async function loadRepositories() {
     setPending(true); setError(undefined);
     try {
-      const response = await bridge.callTool("list_gitlab_projects", { page: 1, perPage: 100 });
+      const response = await bridge.callTool("list_gitlab_projects", { page: 1, perPage: 50 });
       setProjects(gitLabProjectPageSchema.parse(response.structuredContent).projects);
       setRepositoryOpen(true);
     } catch { setError("无法读取 GitLab 项目，请检查连接"); }
@@ -89,8 +89,16 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
       const response = await bridge.callTool("bind_execution_repository", {
         executionId: result.execution.executionId, project, ...paths,
       });
-      setResult({ ...result, execution: executionRecordSchema.parse(response.structuredContent) });
+      const execution = executionRecordSchema.parse(response.structuredContent);
+      const next = { ...result, execution };
+      setResult(next);
+      resultRef.current = next;
       setRepositoryOpen(false);
+      try {
+        await bridge.sendUserMessage(`继续 FlowRivet 执行：${execution.executionId}`);
+      } catch {
+        setError("仓库已关联，但未能通知 Codex 继续；请重试继续处理");
+      }
     } catch { setError("仓库无法关联：请检查路径、remote 和工作树状态"); }
     finally { setPending(false); }
   }
