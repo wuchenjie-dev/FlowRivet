@@ -16,6 +16,7 @@ import {
   providerLoginLookupResultSchema,
   providerLoginToolResultSchema,
 } from "../contracts/providers.js";
+import { workItemNotificationListSchema } from "../contracts/notifications.js";
 import type { RuntimeServices } from "./runtime-services.js";
 
 import { createCredentialStore } from "../auth/credential-store.js";
@@ -60,6 +61,11 @@ import {
   type TaskboardPreferencesOperationLogger,
   type TaskboardPreferencesToolName,
 } from "../observability/taskboard-preferences-operation-logger.js";
+import {
+  JsonStderrNotificationOperationLogger,
+  type NotificationOperationLogger,
+  type NotificationToolName,
+} from "../observability/notification-operation-logger.js";
 import { JsonTaskboardPreferencesStore } from "../preferences/json-taskboard-preferences-store.js";
 import { TaskboardPreferencesService } from "../preferences/taskboard-preferences-service.js";
 import { TaskboardPreferencesStoreError } from "../preferences/taskboard-preferences-store.js";
@@ -108,6 +114,7 @@ export interface TaskboardMcpServerOptions {
   workItemDetailLogger?: WorkItemDetailOperationLogger;
   taskboardPreferences?: TaskboardPreferencesReaderWriter;
   taskboardPreferencesLogger?: TaskboardPreferencesOperationLogger;
+  notificationLogger?: NotificationOperationLogger;
   runtimeServices?: RuntimeServices;
 }
 
@@ -169,6 +176,8 @@ export function createTaskboardMcpServer(
     }));
   const taskboardPreferencesLogger = options.taskboardPreferencesLogger
     ?? new JsonStderrTaskboardPreferencesOperationLogger();
+  const notificationLogger = options.notificationLogger
+    ?? new JsonStderrNotificationOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: "0.1.0" });
 
   registerAppResource(
@@ -717,6 +726,99 @@ export function createTaskboardMcpServer(
       await runtimeServices.workItemServices.get(registration.id)?.clearCached(registration.id);
       return { structuredContent: result, content: [{ type: "text" as const, text: "项目管理系统已断开。" }] };
     });
+
+    const notificationAccount = async () => {
+      const active = await activeProvider();
+      const registration = runtimeServices.registry.get(active.activeProviderId);
+      const connection = await registration.auth.getConnection();
+      if (connection.state !== "connected") throw new Error("provider_not_connected");
+      const identity = registration.auth.getSessionIdentity?.();
+      if (!identity?.accountKey) throw new Error("provider_identity_validation_failed");
+      return {
+        providerId: registration.id,
+        account: { providerId: registration.id, accountKey: identity.accountKey },
+      };
+    };
+    const runNotificationTool = async (
+      tool: NotificationToolName,
+      operation: (account: { providerId: string; accountKey: string }) => Promise<unknown>,
+    ) => {
+      const requestId = randomUUID();
+      const started = now().getTime();
+      let providerId = "unknown";
+      try {
+        const resolved = await notificationAccount();
+        providerId = resolved.providerId;
+        const result = workItemNotificationListSchema.parse(
+          await operation(resolved.account),
+        );
+        notificationLogger.completed({
+          requestId,
+          tool,
+          providerId,
+          outcome: "success",
+          durationMs: Math.max(0, now().getTime() - started),
+          notificationCount: result.notifications.length,
+          unreadCount: result.unreadCount,
+        });
+        return {
+          structuredContent: result,
+          content: [{ type: "text" as const, text: "本地通知已更新。" }],
+        };
+      } catch (error) {
+        notificationLogger.completed({
+          requestId,
+          tool,
+          providerId,
+          outcome: "error",
+          durationMs: Math.max(0, now().getTime() - started),
+          errorCode: error instanceof Error ? error.message : "notification_operation_failed",
+        });
+        throw error;
+      }
+    };
+    registerAppTool(server, "list_work_item_notifications", {
+      title: "读取工作项通知",
+      description: "读取当前账号最近 30 天的本地工作项变化通知。",
+      inputSchema: { unreadOnly: z.boolean().optional() },
+      outputSchema: workItemNotificationListSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: {},
+    }, ({ unreadOnly }) => runNotificationTool(
+      "list_work_item_notifications",
+      (account) => runtimeServices.notificationStore.list(account, {
+        now: now(),
+        ...(unreadOnly === true ? { unreadOnly: true } : {}),
+      }),
+    ));
+    registerAppTool(server, "mark_work_item_notification_read", {
+      title: "标记工作项通知已读",
+      description: "幂等标记当前账号的一条本地通知已读。",
+      inputSchema: { notificationId: z.string().min(1) },
+      outputSchema: workItemNotificationListSchema.shape,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+      _meta: {},
+    }, ({ notificationId }) => runNotificationTool(
+      "mark_work_item_notification_read",
+      async (account) => {
+        await runtimeServices.notificationStore.markRead(account, notificationId, now());
+        return runtimeServices.notificationStore.list(account, { now: now() });
+      },
+    ));
+    registerAppTool(server, "mark_all_work_item_notifications_read", {
+      title: "全部工作项通知已读",
+      description: "幂等标记当前账号的全部本地通知已读。",
+      inputSchema: {},
+      outputSchema: workItemNotificationListSchema.shape,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+      _meta: {},
+    }, () => runNotificationTool(
+      "mark_all_work_item_notifications_read",
+      async (account) => {
+        await runtimeServices.notificationStore.markAllRead(account, now());
+        return runtimeServices.notificationStore.list(account, { now: now() });
+      },
+    ));
   }
 
   registerAppTool(

@@ -296,11 +296,46 @@ describe("taskboard MCP app", () => {
       lastVerifiedAt: "2026-08-11T00:00:00.000Z",
     }], "feishu-project");
     vi.mocked(synced.service.loadCached).mockResolvedValue(synced.result);
+    const notification = {
+      id: "notification-1",
+      providerId: "feishu-project",
+      workItemKey: "feishu-project:PROJ:task:1",
+      type: "assigned" as const,
+      title: "Work 1",
+      projectName: "Example Project",
+      message: "已分配给你",
+      occurredAt: "2026-08-11T00:00:00.000Z",
+      externalUrl: "https://project.feishu.cn/space/story/detail/1",
+    };
+    let notifications = [notification];
+    const notificationStore = {
+      loadBaseline: vi.fn(),
+      applyScan: vi.fn(),
+      list: vi.fn(async (_account, options: { unreadOnly?: boolean }) => ({
+        notifications: options.unreadOnly
+          ? notifications.filter((entry) => !("readAt" in entry))
+          : notifications,
+        unreadCount: notifications.filter((entry) => !("readAt" in entry)).length,
+      })),
+      markRead: vi.fn(async (_account, id: string, date: Date) => {
+        notifications = notifications.map((entry) => entry.id === id
+          ? { ...entry, readAt: date.toISOString() }
+          : entry) as typeof notifications;
+      }),
+      markAllRead: vi.fn(async (_account, date: Date) => {
+        notifications = notifications.map((entry) => ({
+          ...entry,
+          readAt: date.toISOString(),
+        })) as typeof notifications;
+      }),
+    };
     const runtimeServices = {
       registry,
       loginCoordinator,
       activeProviderStore,
       workItemServices: new Map([["feishu-project", synced.service]]),
+      notificationStore,
+      notificationMonitor: { start: vi.fn(), stop: vi.fn() },
     } as RuntimeServices;
     const server = createTaskboardMcpServer({
       uiBundlePath: await createBundle(),
@@ -324,6 +359,9 @@ describe("taskboard MCP app", () => {
         "reopen_provider_login",
         "cancel_provider_login",
         "disconnect_provider",
+        "list_work_item_notifications",
+        "mark_work_item_notification_read",
+        "mark_all_work_item_notifications_read",
       ]));
       expect(names).not.toEqual(expect.arrayContaining([
         "get_connection_status",
@@ -410,6 +448,37 @@ describe("taskboard MCP app", () => {
       await client.callTool({ name: "disconnect_provider", arguments: {} });
       expect(auth.disconnect).toHaveBeenCalledOnce();
       expect(synced.service.clearCached).toHaveBeenCalledWith("feishu-project");
+      connectionState = "connected";
+      const listed = await client.callTool({
+        name: "list_work_item_notifications",
+        arguments: { unreadOnly: true },
+      });
+      expect(listed.structuredContent).toMatchObject({
+        notifications: [{ id: "notification-1" }],
+        unreadCount: 1,
+      });
+      expect(notificationStore.list).toHaveBeenCalledWith({
+        providerId: "feishu-project",
+        accountKey: "user_example",
+      }, expect.objectContaining({ unreadOnly: true }));
+      const marked = await client.callTool({
+        name: "mark_work_item_notification_read",
+        arguments: { notificationId: "notification-1" },
+      });
+      expect(marked.structuredContent).toMatchObject({ unreadCount: 0 });
+      expect(notificationStore.markRead).toHaveBeenCalledWith(
+        { providerId: "feishu-project", accountKey: "user_example" },
+        "notification-1",
+        expect.any(Date),
+      );
+      await client.callTool({
+        name: "mark_all_work_item_notifications_read",
+        arguments: {},
+      });
+      expect(notificationStore.markAllRead).toHaveBeenCalledWith(
+        { providerId: "feishu-project", accountKey: "user_example" },
+        expect.any(Date),
+      );
     } finally {
       await client.close();
       await server.close();
