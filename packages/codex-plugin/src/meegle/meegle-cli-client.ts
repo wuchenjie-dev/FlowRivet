@@ -13,10 +13,12 @@ import {
   meegleDevicePollSchema,
   meegleMyWorkPageSchema,
   meegleProjectSearchSchema,
+  meegleWorkItemDetailSchema,
   meegleUserSchema,
   type MeegleAuthStatus,
   type MeegleMyWorkPage,
   type MeegleUser,
+  type MeegleWorkItemDetail,
 } from "./meegle-cli-contracts.js";
 
 export type MeegleCliErrorCode =
@@ -154,6 +156,21 @@ export class MeegleCliClient {
       "--format", "json",
     ], meegleProjectSearchSchema, { timeoutMs: 30_000 });
     return result.projects.find((project) => project.project_key === projectKey)?.simple_name;
+  }
+
+  async getWorkItem(
+    profile: string,
+    projectKey: string,
+    workItemId: string,
+  ): Promise<MeegleWorkItemDetail> {
+    return this.runJson([
+      "workitem", "get",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-id", validateOpaqueKey(workItemId),
+      "--fields", "_all",
+      "--profile", validateProfile(profile),
+      "--format", "json",
+    ], meegleWorkItemDetailSchema, { timeoutMs: 30_000 });
   }
 
   async initializeDeviceLogin(

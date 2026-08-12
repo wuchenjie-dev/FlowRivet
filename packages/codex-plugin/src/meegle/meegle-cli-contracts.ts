@@ -59,6 +59,46 @@ export const meegleProjectSearchSchema = z.object({
   }).strict()),
 }).strict();
 
+const meegleDetailUserSchema = z.object({
+  email: z.string(),
+  key: z.string().min(1),
+  name: z.string().min(1),
+}).strict();
+
+export const meegleWorkItemDetailSchema = z.object({
+  pagination: z.object({
+    has_more: z.boolean(),
+    page_size: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+    next_page_token: z.string().min(1).optional(),
+  }).strict(),
+  work_item_attribute: z.object({
+    create_by: meegleDetailUserSchema,
+    create_time: z.string().min(1),
+    owned_project: z.object({
+      key: z.string().min(1),
+      name: z.string().min(1),
+      simple_name: z.string().min(1),
+    }).strict(),
+    template: z.object({
+      id: z.union([z.number().int().nonnegative(), z.string().min(1)]),
+      name: z.string().min(1),
+    }).strict(),
+    update_time: z.string().min(1),
+    updated_by: meegleDetailUserSchema,
+    work_item_id: z.union([z.number().int().nonnegative(), z.string().min(1)]),
+    work_item_mod: z.string().min(1),
+    work_item_name: z.string().min(1),
+    work_item_status: z.object({ key: z.string().min(1), name: z.string().min(1) }).strict(),
+    work_item_type: z.object({ key: z.string().min(1), name: z.string().min(1) }).strict(),
+  }).strict(),
+  work_item_fields: z.array(z.object({
+    key: z.string().min(1),
+    name: z.string().min(1),
+    value: z.string().nullable(),
+  }).strict()),
+}).strict();
+
 export const meegleDeviceInitSchema = z.object({
   client_id: cliOpaqueTokenSchema,
   device_code: cliOpaqueTokenSchema,
@@ -80,3 +120,4 @@ export const meegleDevicePollSchema = z.union([
 export type MeegleAuthStatus = z.infer<typeof meegleAuthStatusSchema>;
 export type MeegleUser = z.infer<typeof meegleUserSchema>;
 export type MeegleMyWorkPage = z.infer<typeof meegleMyWorkPageSchema>;
+export type MeegleWorkItemDetail = z.infer<typeof meegleWorkItemDetailSchema>;

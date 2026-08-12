@@ -20,6 +20,7 @@ export const workItemDetailSchema = workItemDetailRefSchema.extend({
   creator: z.string().optional(),
   createdAt: z.iso.datetime().optional(),
   updatedAt: z.iso.datetime().optional(),
+  startedAt: z.iso.datetime().optional(),
   dueAt: z.iso.datetime().optional(),
   completedAt: z.iso.datetime().optional(),
   sanitizedDescriptionHtml: z.string().optional(),

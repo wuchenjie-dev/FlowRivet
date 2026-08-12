@@ -1,0 +1,73 @@
+{
+  "pagination": {
+    "has_more": false,
+    "page_size": 100,
+    "total": 6
+  },
+  "work_item_attribute": {
+    "create_by": {
+      "email": "creator@example.invalid",
+      "key": "user_creator",
+      "name": "Example Creator"
+    },
+    "create_time": "2026-08-10T01:00:00Z",
+    "owned_project": {
+      "key": "PROJ",
+      "name": "Example Project",
+      "simple_name": "example-project"
+    },
+    "template": {
+      "id": 1,
+      "name": "Example Template"
+    },
+    "update_time": "2026-08-12T02:00:00Z",
+    "updated_by": {
+      "email": "updater@example.invalid",
+      "key": "user_updater",
+      "name": "Example Updater"
+    },
+    "work_item_id": "10001",
+    "work_item_mod": "work_item",
+    "work_item_name": "Example requirement",
+    "work_item_status": {
+      "key": "planning",
+      "name": "Planning"
+    },
+    "work_item_type": {
+      "key": "story",
+      "name": "Requirement"
+    }
+  },
+  "work_item_fields": [
+    {
+      "key": "description",
+      "name": "Description",
+      "value": "<p>Example <strong>description</strong><script>bad()</script></p>"
+    },
+    {
+      "key": "priority",
+      "name": "Priority",
+      "value": "{\"label\":\"High\",\"value\":\"high\"}"
+    },
+    {
+      "key": "current_status_operator",
+      "name": "Assignee",
+      "value": "[{\"key\":\"user_owner\",\"name\":\"Example Owner\"}]"
+    },
+    {
+      "key": "start_time",
+      "name": "Start",
+      "value": "2026-08-11T01:00:00Z"
+    },
+    {
+      "key": "due_time",
+      "name": "Due",
+      "value": "2026-08-20T01:00:00Z"
+    },
+    {
+      "key": "finish_time",
+      "name": "Completed",
+      "value": null
+    }
+  ]
+}

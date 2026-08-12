@@ -113,6 +113,36 @@ describe("Meegle CLI client", () => {
     ]);
   });
 
+  it("reads all work item fields without the broken page-size flag", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        pagination: { has_more: false, page_size: 100, total: 0 },
+        work_item_attribute: {
+          create_by: { email: "creator@example.invalid", key: "creator", name: "Creator" },
+          create_time: "2026-08-10T01:00:00Z",
+          owned_project: { key: "PROJ", name: "Example Project", simple_name: "example-project" },
+          template: { id: 1, name: "Template" },
+          update_time: "2026-08-12T01:00:00Z",
+          updated_by: { email: "updater@example.invalid", key: "updater", name: "Updater" },
+          work_item_id: "10001", work_item_mod: "work_item", work_item_name: "Example",
+          work_item_status: { key: "planning", name: "Planning" },
+          work_item_type: { key: "story", name: "Requirement" },
+        },
+        work_item_fields: [],
+      }),
+      exitCode: 0,
+    });
+
+    await expect(client(runner).getWorkItem("default", "PROJ", "10001"))
+      .resolves.toMatchObject({ work_item_fields: [] });
+    expect(runner.run.mock.calls[0]![0].args).toEqual([
+      "workitem", "get", "--project-key", "PROJ", "--work-item-id", "10001",
+      "--fields", "_all", "--profile", "default", "--format", "json",
+    ]);
+    expect(runner.run.mock.calls[0]![0].args).not.toContain("--page-size");
+  });
+
   it("accepts structured unauthenticated status on exit one", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({
