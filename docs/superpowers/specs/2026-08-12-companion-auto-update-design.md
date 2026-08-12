@@ -100,6 +100,8 @@ Updater 不读取飞书任务内容，不持有飞书登录凭据，也不实现
 
 第一阶段沿用项目的 TypeScript/Node.js 技术栈，但安装包携带项目私有的固定 Node.js 运行时和生产依赖。Updater 与 Companion 都由该私有运行时启动，不依赖系统 `node`、npm 或用户 `PATH`。CI 对每个平台执行运行时来源校验、许可证归档和包内依赖扫描。
 
+每个平台的 Node 运行时来源必须在仓库内的可信清单中固定精确 HTTPS URL、SHA-256 和文件名。生产 CI 默认下载该 URL 到作业临时目录，下载完成后先校验大小（若清单提供）和 SHA-256，再解压和打包；禁止跟随到非 HTTPS 地址，也不得从公网或浮动 `latest` 地址解析版本。`FLOWRIVET_NODE_RUNTIME_ARCHIVE` 只作为开发、离线或受控 Runner 的显式本地覆盖入口，仍须命中同一清单的 SHA-256，不是生产默认供给方式。
+
 ### 6.3 FlowRivet Companion
 
 Companion 继续监听回环地址，负责 MCP、看板 UI、Provider、缓存和通知。它必须通过 `/health` 暴露非敏感运行信息：

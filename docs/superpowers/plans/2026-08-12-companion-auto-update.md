@@ -583,6 +583,8 @@ Expected: FAIL because release scripts do not exist.
 
 Download Node runtimes only from an administrator-configured internal mirror in CI, verify a pinned SHA-256 inventory committed with the release tooling, and never download runtimes on end-user machines. Normalize archive timestamps and ordering where the platform archive format permits.
 
+The inventory entry for each platform contains an exact HTTPS URL, archive file name, SHA-256, and optional byte size. CI downloads it into the job temporary directory before extraction. `FLOWRIVET_NODE_RUNTIME_ARCHIVE` remains an explicit development/offline override only and must pass the same pinned hash check. This is required for Docker executors, which cannot rely on an arbitrary host filesystem path.
+
 - [ ] **Step 6: Implement transactional publishing**
 
 Use `CI_JOB_TOKEN` for CI uploads, not the client Deploy Token. Upload to `flowrivet-runtime/<semver>`, verify through the Registry download endpoint, and finally upload `flowrivet-channel/latest/manifest.json`. Keep credentials out of command output.
