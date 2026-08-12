@@ -92,8 +92,10 @@ export function WorkItemDetailDrawer({
         </header>
 
         <div className="detail-body">
-          {pending ? <DetailLoading /> : errorCode ? (
+          {pending ? <DetailLoading /> : errorCode ? (<>
             <DetailError code={errorCode} offline={offline} onRetry={onRetry} />
+            <MinimalDetail item={item} />
+          </>
           ) : detail ? <DetailContent detail={detail} /> : <MinimalDetail item={item} />}
           {onStartExecution ? (
             <div className="execution-actions">
@@ -215,7 +217,7 @@ function DetailContent({ detail }: { detail: WorkItemDetail }) {
         target="_blank"
         rel="noreferrer"
       >
-        在 {detail.providerId.toUpperCase()} 中打开
+        在 {providerLabel(detail.providerId)} 中打开
         <ExternalLink size={14} />
       </a>
     </>
@@ -254,6 +256,12 @@ function detailErrorCopy(code: string) {
   if (code.includes("work_item_detail_unsupported")) return "暂不支持查看此类型工作项的详情。";
   if (code.includes("work_item_detail_invalid_response")) return "项目管理系统返回了无法识别的数据。";
   return "项目管理系统暂时不可用，请稍后重试";
+}
+
+function providerLabel(providerId: string) {
+  return providerId === "feishu-project" ? "飞书项目"
+    : providerId === "tapd" ? "TAPD"
+      : providerId;
 }
 
 function kindLabel(kind: WorkItem["kind"]) {
