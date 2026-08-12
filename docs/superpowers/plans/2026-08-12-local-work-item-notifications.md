@@ -6,7 +6,7 @@
 
 **Architecture:** A Companion-owned monitor reuses the provider registry and shared synchronizer, diffs successful snapshots against an account-scoped SQLite baseline, persists deduplicated events, and invokes a narrow system notifier. Provider-neutral MCP tools expose the event inbox to the taskboard and future Codex Automations.
 
-**Tech Stack:** TypeScript, Node.js 22, node:sqlite, MCP SDK, React 19, Vitest, Playwright, cross-platform desktop notifications.
+**Tech Stack:** TypeScript, Node.js 22, node:sqlite, MCP SDK, React 19, Vitest, Playwright, native cross-platform desktop notification commands.
 
 ---
 
@@ -61,10 +61,7 @@
 - Create: `packages/codex-plugin/src/notifications/work-item-notification-monitor.ts`
 - Create: `packages/codex-plugin/tests/system-notifier.test.ts`
 - Create: `packages/codex-plugin/tests/work-item-notification-monitor.test.ts`
-- Modify: `packages/codex-plugin/package.json`
-- Modify: `package-lock.json`
-
-- [ ] Select and pin a maintained cross-platform notification dependency after validating Node 22 and packaging support.
+- [ ] Implement native platform commands with argv-only process spawning after rejecting notification dependencies with known security advisories.
 - [ ] Write failing monitor tests for delayed first scan, connected sync, disconnected skip, no initial alerts, single-flight, sync failure, notifier failure, interval validation, and stop.
 - [ ] Write URL allowlist and notifier adapter tests; CI must use a fake notifier only.
 - [ ] Implement the monitor against narrow registry/store/synchronizer interfaces.
