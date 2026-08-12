@@ -19,6 +19,8 @@ import { SystemBrowserLauncher } from "../providers/system-browser-launcher.js";
 import { JsonStderrProviderLoginOperationLogger } from "../observability/provider-login-operation-logger.js";
 import { WorkItemService, type WorkItemSynchronizer } from "../work-items/work-item-service.js";
 import { createDefaultGitLabService, type GitLabOperations } from "../gitlab/gitlab-service.js";
+import { createExecutionStore } from "../executions/create-execution-store.js";
+import { ExecutionService } from "../executions/execution-service.js";
 
 export interface RuntimeServices {
   registry: ProviderRegistry;
@@ -28,6 +30,7 @@ export interface RuntimeServices {
   notificationStore: NotificationStore;
   notificationMonitor: Pick<WorkItemNotificationMonitor, "start" | "stop">;
   gitLabService?: GitLabOperations;
+  executionService?: ExecutionService;
 }
 
 export function createDefaultRuntimeServices(
@@ -86,5 +89,6 @@ export function createDefaultRuntimeServices(
     notificationStore,
     notificationMonitor,
     gitLabService: createDefaultGitLabService(),
+    executionService: new ExecutionService({ store: createExecutionStore() }),
   };
 }
