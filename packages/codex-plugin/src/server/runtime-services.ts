@@ -1,4 +1,11 @@
 import { createWorkItemCacheStore } from "../cache/create-work-item-cache-store.js";
+import { createNotificationStore } from "../notifications/create-notification-store.js";
+import type { NotificationStore } from "../notifications/notification-store.js";
+import { NativeSystemNotifier } from "../notifications/system-notifier.js";
+import {
+  parseNotificationInterval,
+  WorkItemNotificationMonitor,
+} from "../notifications/work-item-notification-monitor.js";
 import { MeegleAuthService } from "../meegle/meegle-auth-service.js";
 import { MeegleCliClient } from "../meegle/meegle-cli-client.js";
 import { MeegleLoginDriver } from "../meegle/meegle-login-driver.js";
@@ -17,6 +24,8 @@ export interface RuntimeServices {
   loginCoordinator: ProviderLoginCoordinator;
   activeProviderStore: ActiveProviderStore;
   workItemServices: Map<string, WorkItemSynchronizer>;
+  notificationStore: NotificationStore;
+  notificationMonitor: Pick<WorkItemNotificationMonitor, "start" | "stop">;
 }
 
 export function createDefaultRuntimeServices(
@@ -45,12 +54,34 @@ export function createDefaultRuntimeServices(
     logger: new JsonStderrProviderLoginOperationLogger(),
     clock: now,
   });
+  const activeProviderStore = new JsonActiveProviderStore({
+    directory: resolveFlowRivetConfigDirectory(),
+  });
+  const workItemServices = new Map([["feishu-project", workItemService]]);
+  const notificationStore = createNotificationStore();
+  const notificationMonitor = new WorkItemNotificationMonitor({
+    activeProvider: async () => (await activeProviderStore.load({
+      registeredProviderIds: registry.ids(),
+    })).activeProviderId,
+    resolveProvider: (providerId) => ({
+      auth: registry.get(providerId).auth,
+      synchronizer: workItemServices.get(providerId) ?? (() => {
+        throw new Error("work_item_service_not_registered");
+      })(),
+    }),
+    store: notificationStore,
+    notifier: new NativeSystemNotifier(),
+    clock: now,
+    intervalSeconds: parseNotificationInterval(
+      process.env.FLOWRIVET_NOTIFICATION_INTERVAL_SECONDS,
+    ),
+  });
   return {
     registry,
     loginCoordinator,
-    activeProviderStore: new JsonActiveProviderStore({
-      directory: resolveFlowRivetConfigDirectory(),
-    }),
-    workItemServices: new Map([["feishu-project", workItemService]]),
+    activeProviderStore,
+    workItemServices,
+    notificationStore,
+    notificationMonitor,
   };
 }

@@ -54,7 +54,7 @@ export function createTaskboardHttpServer(
     ...runtimeOptions
   } = options;
   const runtime = createTaskboardRuntime(runtimeOptions);
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     const url = new URL(
       request.url ?? "/",
       `http://${request.headers.host ?? "127.0.0.1"}`,
@@ -114,4 +114,7 @@ export function createTaskboardHttpServer(
       }
     }
   });
+  server.once("listening", () => runtime.start());
+  server.once("close", () => runtime.stop());
+  return server;
 }

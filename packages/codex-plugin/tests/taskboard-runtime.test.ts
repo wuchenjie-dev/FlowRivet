@@ -14,6 +14,24 @@ function synchronizer(): WorkItemSynchronizer {
 }
 
 describe("taskboard Companion runtime", () => {
+  it("starts and stops the shared notification monitor once", () => {
+    const start = vi.fn();
+    const stop = vi.fn();
+    const shared = { notificationMonitor: { start, stop } } as unknown as RuntimeServices;
+    const runtime = createTaskboardRuntime({}, {
+      createRuntimeServices: () => shared,
+      createMcpServer: (options) => options,
+    });
+
+    runtime.start();
+    runtime.start();
+    runtime.stop();
+    runtime.stop();
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("creates provider runtime services once and shares them across request servers", () => {
     const shared = { marker: "shared" } as unknown as RuntimeServices;
     const createRuntimeServices = vi.fn(() => shared);

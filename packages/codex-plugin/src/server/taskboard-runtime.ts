@@ -13,6 +13,8 @@ type DefaultServer = ReturnType<typeof createTaskboardMcpServer>;
 
 export interface TaskboardRuntime<TServer = DefaultServer> {
   createServer(): TServer;
+  start(): void;
+  stop(): void;
 }
 
 export function createTaskboardRuntime<TServer = DefaultServer>(
@@ -36,11 +38,22 @@ export function createTaskboardRuntime<TServer = DefaultServer>(
   const createMcpServer = factories.createMcpServer
     ?? (createTaskboardMcpServer as (options: TaskboardMcpServerOptions) => TServer);
 
+  let started = false;
   return {
     createServer: () => createMcpServer({
       ...options,
       ...(runtimeServices ? { runtimeServices } : {}),
       ...(workItemService ? { workItemService } : {}),
     }),
+    start: () => {
+      if (started) return;
+      started = true;
+      runtimeServices?.notificationMonitor.start();
+    },
+    stop: () => {
+      if (!started) return;
+      started = false;
+      runtimeServices?.notificationMonitor.stop();
+    },
   };
 }
