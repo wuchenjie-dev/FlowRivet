@@ -17,12 +17,14 @@
     "start": "node dist/server/index.js",
     "dev:server": "node --watch dist/server/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run build --workspace @flowrivet/runtime-contracts",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
     "probe:cache": "npm run --silent build:server && node --no-warnings scripts/probe-work-item-cache.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@flowrivet/runtime-contracts": "^0.1.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "lucide-react": "^1.28.0",

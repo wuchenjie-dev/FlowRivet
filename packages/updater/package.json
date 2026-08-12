@@ -6,9 +6,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run build --workspace @flowrivet/runtime-contracts",
     "test": "vitest run"
   },
   "dependencies": {
+    "@flowrivet/runtime-contracts": "^0.1.0",
     "tar": "^7.5.22",
     "yauzl": "^3.4.0",
     "zod": "^4.0.0"

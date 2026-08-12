@@ -3,24 +3,18 @@ import { homedir } from "node:os";
 import { dirname, posix, win32 } from "node:path";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 
-export const COMPANION_PRODUCT = "flowrivet-companion";
+import {
+  COMPANION_PRODUCT,
+  isCompanionInstance,
+  type CompanionHealthIdentity,
+  type CompanionInstanceIdentity,
+} from "@flowrivet/runtime-contracts";
 
-export interface CompanionHealth {
-  product: typeof COMPANION_PRODUCT;
-  pid: number;
-  instanceId: string;
-  runtimeVersion: string;
-  protocolVersion: number;
-  uiVersion: string;
-}
+export { COMPANION_PRODUCT };
 
-export interface CompanionInstance extends CompanionHealth {
-  version: 1;
-  processStartedAt: string;
-  host: string;
-  port: number;
-  startedAt: string;
-}
+export type CompanionHealth = CompanionHealthIdentity;
+
+export type CompanionInstance = CompanionInstanceIdentity;
 
 export function resolveCompanionInstancePath(options: {
   platform?: NodeJS.Platform;
@@ -95,26 +89,6 @@ export async function removeCompanionInstance(
   ) {
     await rm(path, { force: true });
   }
-}
-
-function isCompanionInstance(value: unknown): value is CompanionInstance {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<CompanionInstance>;
-  return candidate.version === 1 &&
-    candidate.product === COMPANION_PRODUCT &&
-    Number.isInteger(candidate.pid) &&
-    (candidate.pid ?? 0) > 0 &&
-    typeof candidate.runtimeVersion === "string" &&
-    Number.isInteger(candidate.protocolVersion) &&
-    (candidate.protocolVersion ?? 0) > 0 &&
-    typeof candidate.uiVersion === "string" &&
-    typeof candidate.processStartedAt === "string" &&
-    typeof candidate.host === "string" &&
-    Number.isInteger(candidate.port) &&
-    (candidate.port ?? 0) > 0 &&
-    typeof candidate.instanceId === "string" &&
-    candidate.instanceId.length > 0 &&
-    typeof candidate.startedAt === "string";
 }
 
 function isNodeError(error: unknown, code: string): boolean {
