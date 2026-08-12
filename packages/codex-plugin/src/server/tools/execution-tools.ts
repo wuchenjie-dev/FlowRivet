@@ -11,6 +11,8 @@ import { gitLabProjectSchema } from "../../contracts/gitlab.js";
 import type { RepositoryPreparer } from "../../gitlab/repository-workflow.js";
 import type { DevelopmentOperations } from "../../gitlab/development-workflow.js";
 import { branchForExecution } from "../../gitlab/development-workflow.js";
+import type { ConfirmationService } from "../../executions/confirmation-service.js";
+import { confirmationChallengeSchema, guardedActionAuthorizationSchema } from "../../contracts/executions.js";
 
 export function registerExecutionTools(server: McpServer, options: {
   service: ExecutionService;
@@ -18,6 +20,7 @@ export function registerExecutionTools(server: McpServer, options: {
   bridge?: CodexTaskBridge;
   repositoryWorkflow?: RepositoryPreparer;
   developmentWorkflow?: DevelopmentOperations;
+  confirmationService?: ConfirmationService;
 }) {
   const bridge = options.bridge ?? new CodexTaskBridge();
   registerAppTool(server, "prepare_work_item_execution", {
@@ -114,6 +117,24 @@ export function registerExecutionTools(server: McpServer, options: {
       if (!branch) throw new Error("execution_branch_required");
       const pipeline = await options.developmentWorkflow!.getPipeline(execution.gitlab!.projectPath, branch);
       return { structuredContent: pipeline ? await options.service.updateGitLab(executionId, { pipelineId: pipeline.id }) : execution, content: [] };
+    });
+  }
+  if (options.confirmationService) {
+    const guardedAction = z.enum(["merge_mr", "retry_pipeline", "close_work_item"]);
+    registerAppTool(server, "prepare_guarded_action", {
+      title: "准备受保护操作", description: "生成五分钟有效、绑定当前用户与目标版本的一次性确认。",
+      inputSchema: { operationId: z.string().min(1), action: guardedAction, targetVersion: z.string().min(1), title: z.string().min(1), details: z.array(z.string().min(1)).max(20) },
+      outputSchema: confirmationChallengeSchema.shape, annotations: { readOnlyHint: true, openWorldHint: false }, _meta: {},
+    }, async ({ operationId, action, targetVersion, title, details }) => ({
+      structuredContent: options.confirmationService!.prepare({ operationId, action, actorKey: await options.resolveAccountKey(), targetVersion, summary: { title, details } }), content: [],
+    }));
+    registerAppTool(server, "confirm_guarded_action", {
+      title: "确认受保护操作", description: "消费一次性确认；此工具不接受 confirmed 布尔值，也不直接绕过远端状态复查。",
+      inputSchema: { challengeId: z.string().min(1), targetVersion: z.string().min(1) },
+      outputSchema: guardedActionAuthorizationSchema.shape, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, _meta: {},
+    }, async ({ challengeId, targetVersion }) => {
+      const challenge = options.confirmationService!.consume({ challengeId, actorKey: await options.resolveAccountKey(), targetVersion });
+      return { structuredContent: guardedActionAuthorizationSchema.parse({ authorized: true, operationId: challenge.operationId, action: challenge.action, targetVersion: challenge.targetVersion }), content: [{ type: "text" as const, text: "一次性授权已验证；远端操作尚未执行。" }] };
     });
   }
 }

@@ -196,6 +196,7 @@ export function createTaskboardMcpServer(
     service: runtimeServices.executionService,
     repositoryWorkflow: runtimeServices.repositoryWorkflow,
     developmentWorkflow: runtimeServices.developmentWorkflow,
+    confirmationService: runtimeServices.confirmationService,
     resolveAccountKey: async () => {
       const active = await runtimeServices.activeProviderStore.load({
         registeredProviderIds: runtimeServices.registry.ids(),

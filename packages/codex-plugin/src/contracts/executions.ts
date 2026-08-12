@@ -59,3 +59,18 @@ export type ExecutionRepository = z.infer<typeof executionRepositorySchema>;
 export type ExecutionKind = z.infer<typeof executionRecordSchema>["executionKind"];
 export type ExecutionState = z.infer<typeof executionRecordSchema>["state"];
 export type WorkExecutionHandoff = z.infer<typeof workExecutionHandoffSchema>;
+
+export const confirmationChallengeSchema = z.object({
+  challengeId: z.string().min(1), operationId: z.string().min(1),
+  action: z.enum(["merge_mr", "retry_pipeline", "close_work_item"]),
+  actorKey: z.string().min(1), targetVersion: z.string().min(1),
+  summary: z.object({ title: z.string().min(1), details: z.array(z.string().min(1)).max(20) }).strict(),
+  expiresAt: z.iso.datetime(),
+}).strict();
+export type ConfirmationChallenge = z.infer<typeof confirmationChallengeSchema>;
+export const guardedActionAuthorizationSchema = z.object({
+  authorized: z.literal(true),
+  operationId: z.string().min(1),
+  action: z.enum(["merge_mr", "retry_pipeline", "close_work_item"]),
+  targetVersion: z.string().min(1),
+}).strict();

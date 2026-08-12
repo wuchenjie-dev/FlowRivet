@@ -27,6 +27,7 @@ import { RepositoryWorkflow, type RepositoryPreparer } from "../gitlab/repositor
 import { DevelopmentWorkflow, type DevelopmentOperations } from "../gitlab/development-workflow.js";
 import { GlabCliClient } from "../gitlab/glab-cli-client.js";
 import { FLOWRIVET_GITLAB_HOST } from "../gitlab/gitlab-service.js";
+import { ConfirmationService } from "../executions/confirmation-service.js";
 
 export interface RuntimeServices {
   registry: ProviderRegistry;
@@ -39,6 +40,7 @@ export interface RuntimeServices {
   executionService?: ExecutionService;
   repositoryWorkflow?: RepositoryPreparer;
   developmentWorkflow?: DevelopmentOperations;
+  confirmationService?: ConfirmationService;
 }
 
 export function createDefaultRuntimeServices(
@@ -126,5 +128,6 @@ export function createDefaultRuntimeServices(
     executionService: new ExecutionService({ store: createExecutionStore() }),
     repositoryWorkflow,
     developmentWorkflow,
+    confirmationService: new ConfirmationService(),
   };
 }
