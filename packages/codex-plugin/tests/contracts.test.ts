@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  workItemNotificationSchema,
+  workItemNotificationListSchema,
+} from "../src/contracts/notifications.js";
+
 import { authResultSchema } from "../src/contracts/auth.js";
 import {
   activeProviderSchema,
@@ -344,6 +349,34 @@ describe("taskboard demo contract", () => {
     expect(workItemDetailSchema.safeParse({
       ...detail,
       externalUrl: "http://www.tapd.cn/unsafe",
+    }).success).toBe(false);
+  });
+
+  it("validates closed provider-neutral notification results", () => {
+    const notification = {
+      id: "event-1",
+      providerId: "feishu-project",
+      workItemKey: "feishu-project:PROJ:story:42",
+      type: "assigned",
+      title: "Example work item",
+      projectName: "Project",
+      message: "新任务已分配给你",
+      occurredAt: "2026-08-12T00:00:00.000Z",
+      externalUrl: "https://project.feishu.cn/space/story/detail/42",
+    } as const;
+
+    expect(workItemNotificationSchema.parse(notification)).toEqual(notification);
+    expect(workItemNotificationListSchema.parse({
+      notifications: [notification],
+      unreadCount: 1,
+    })).toMatchObject({ unreadCount: 1 });
+    expect(workItemNotificationSchema.safeParse({
+      ...notification,
+      accountKey: "must-not-leak",
+    }).success).toBe(false);
+    expect(workItemNotificationSchema.safeParse({
+      ...notification,
+      externalUrl: "http://project.feishu.cn/unsafe",
     }).success).toBe(false);
   });
 });
