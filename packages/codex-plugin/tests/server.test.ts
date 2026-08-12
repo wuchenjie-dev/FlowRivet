@@ -20,7 +20,7 @@ import type { ProjectCatalog } from "../src/projects/project-catalog-service.js"
 import { TaskboardPreferencesStoreError } from "../src/preferences/taskboard-preferences-store.js";
 import {
   createTaskboardMcpServer,
-  TASKBOARD_RESOURCE_URI,
+  taskboardResourceUri,
 } from "../src/server/app.js";
 import {
   assertLoopbackHost,
@@ -37,6 +37,12 @@ import { ProviderLoginCoordinator } from "../src/providers/provider-login-coordi
 import type { ProviderLoginDriver } from "../src/providers/provider-login-driver.js";
 
 const temporaryDirectories: string[] = [];
+const TEST_RUNTIME_VERSION = {
+  version: "0.2.1",
+  protocolVersion: 1,
+  uiVersion: "0.2.1",
+} as const;
+const TEST_TASKBOARD_RESOURCE_URI = "ui://flowrivet/taskboard/0.2.1.html";
 
 afterEach(async () => {
   await Promise.all(
@@ -104,6 +110,7 @@ async function connectClient(
 ) {
   const server = createTaskboardMcpServer({
     uiBundlePath,
+    runtimeVersion: TEST_RUNTIME_VERSION,
     authService,
     projectCatalog,
     ...(projectLogger ? { projectLogger } : {}),
@@ -513,7 +520,8 @@ describe("taskboard MCP app", () => {
       const detailTool = tools.find((tool) => tool.name === "get_work_item_detail");
       const getPreferences = tools.find((tool) => tool.name === "get_taskboard_preferences");
       const savePreferences = tools.find((tool) => tool.name === "save_taskboard_preferences");
-      expect(openTool?._meta?.ui).toEqual({ resourceUri: TASKBOARD_RESOURCE_URI });
+      expect(taskboardResourceUri("0.2.1")).toBe(TEST_TASKBOARD_RESOURCE_URI);
+      expect(openTool?._meta?.ui).toEqual({ resourceUri: TEST_TASKBOARD_RESOURCE_URI });
       expect(pingTool?._meta?.ui).toBeUndefined();
       expect(detailTool?.annotations).toMatchObject({
         readOnlyHint: true,
@@ -997,11 +1005,11 @@ describe("taskboard MCP app", () => {
 
     try {
       const resource = await connection.client.readResource({
-        uri: TASKBOARD_RESOURCE_URI,
+        uri: TEST_TASKBOARD_RESOURCE_URI,
       });
       expect(resource.contents).toEqual([
         expect.objectContaining({
-          uri: TASKBOARD_RESOURCE_URI,
+          uri: TEST_TASKBOARD_RESOURCE_URI,
           mimeType: "text/html;profile=mcp-app",
           text: html,
         }),
@@ -1343,7 +1351,7 @@ describe("taskboard MCP app", () => {
 
     try {
       await expect(
-        connection.client.readResource({ uri: TASKBOARD_RESOURCE_URI }),
+        connection.client.readResource({ uri: TEST_TASKBOARD_RESOURCE_URI }),
       ).rejects.toThrow(
         "npm run build:ui --workspace @flowrivet/codex-plugin",
       );
@@ -1370,6 +1378,9 @@ describe("taskboard HTTP server", () => {
         product: "flowrivet-companion",
         pid: 4321,
         instanceId: "instance-health-test",
+        runtimeVersion: "0.2.1",
+        protocolVersion: 1,
+        uiVersion: "0.2.1",
       },
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1388,6 +1399,9 @@ describe("taskboard HTTP server", () => {
         product: "flowrivet-companion",
         pid: 4321,
         instanceId: "instance-health-test",
+        version: "0.2.1",
+        protocolVersion: 1,
+        uiVersion: "0.2.1",
       });
       expect(health.status).toBe(200);
       expect(missing.status).toBe(404);

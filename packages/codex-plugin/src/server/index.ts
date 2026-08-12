@@ -11,6 +11,7 @@ import {
   writeCompanionInstance,
   type CompanionInstance,
 } from "./companion-instance.js";
+import { resolveRuntimeVersion } from "../contracts/runtime-version.js";
 
 const host = process.env.FLOWRIVET_MCP_HOST ?? "127.0.0.1";
 const port = Number(process.env.FLOWRIVET_MCP_PORT ?? "43120");
@@ -23,7 +24,15 @@ assertLoopbackHost(host);
 const instanceId = randomUUID();
 const startedAt = new Date().toISOString();
 const instancePath = resolveCompanionInstancePath();
-const health = { product: COMPANION_PRODUCT, pid: process.pid, instanceId } as const;
+const runtimeVersion = resolveRuntimeVersion();
+const health = {
+  product: COMPANION_PRODUCT,
+  pid: process.pid,
+  instanceId,
+  runtimeVersion: runtimeVersion.version,
+  protocolVersion: runtimeVersion.protocolVersion,
+  uiVersion: runtimeVersion.uiVersion,
+} as const;
 const server = createTaskboardHttpServer({ companionHealth: health });
 
 server.listen(port, host, () => {

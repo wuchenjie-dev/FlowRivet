@@ -9,6 +9,7 @@ import {
   COMPANION_PRODUCT,
   type CompanionHealth,
 } from "./companion-instance.js";
+import { resolveRuntimeVersion } from "../contracts/runtime-version.js";
 
 const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
 
@@ -45,15 +46,26 @@ function applyCors(origin: string | undefined, response: import("node:http").Ser
 export function createTaskboardHttpServer(
   options: TaskboardMcpServerOptions & { companionHealth?: CompanionHealth } = {},
 ) {
+  const defaultRuntimeVersion = resolveRuntimeVersion();
   const {
     companionHealth = {
       product: COMPANION_PRODUCT,
       pid: process.pid,
       instanceId: randomUUID(),
+      runtimeVersion: defaultRuntimeVersion.version,
+      protocolVersion: defaultRuntimeVersion.protocolVersion,
+      uiVersion: defaultRuntimeVersion.uiVersion,
     },
     ...runtimeOptions
   } = options;
-  const runtime = createTaskboardRuntime(runtimeOptions);
+  const runtime = createTaskboardRuntime({
+    ...runtimeOptions,
+    runtimeVersion: {
+      version: companionHealth.runtimeVersion,
+      protocolVersion: companionHealth.protocolVersion,
+      uiVersion: companionHealth.uiVersion,
+    },
+  });
   const server = createServer(async (request, response) => {
     const url = new URL(
       request.url ?? "/",
@@ -62,7 +74,8 @@ export function createTaskboardHttpServer(
 
     if (request.method === "GET" && url.pathname === "/health") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ status: "ok", ...companionHealth }));
+      const { runtimeVersion: version, ...health } = companionHealth;
+      response.end(JSON.stringify({ status: "ok", ...health, version }));
       return;
     }
 

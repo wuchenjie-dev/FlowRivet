@@ -9,6 +9,9 @@ export interface CompanionHealth {
   product: typeof COMPANION_PRODUCT;
   pid: number;
   instanceId: string;
+  runtimeVersion: string;
+  protocolVersion: number;
+  uiVersion: string;
 }
 
 export interface CompanionInstance extends CompanionHealth {
@@ -101,6 +104,10 @@ function isCompanionInstance(value: unknown): value is CompanionInstance {
     candidate.product === COMPANION_PRODUCT &&
     Number.isInteger(candidate.pid) &&
     (candidate.pid ?? 0) > 0 &&
+    typeof candidate.runtimeVersion === "string" &&
+    Number.isInteger(candidate.protocolVersion) &&
+    (candidate.protocolVersion ?? 0) > 0 &&
+    typeof candidate.uiVersion === "string" &&
     typeof candidate.processStartedAt === "string" &&
     typeof candidate.host === "string" &&
     Number.isInteger(candidate.port) &&

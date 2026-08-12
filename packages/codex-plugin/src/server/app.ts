@@ -18,6 +18,10 @@ import {
 } from "../contracts/providers.js";
 import { workItemNotificationListSchema } from "../contracts/notifications.js";
 import type { RuntimeServices } from "./runtime-services.js";
+import {
+  resolveRuntimeVersion,
+  type RuntimeVersion,
+} from "../contracts/runtime-version.js";
 
 import { createCredentialStore } from "../auth/credential-store.js";
 import {
@@ -96,7 +100,9 @@ import {
 } from "../work-items/work-item-detail-service.js";
 import { WorkItemDetailProviderError } from "../work-items/work-item-detail-provider.js";
 
-export const TASKBOARD_RESOURCE_URI = "ui://flowrivet/taskboard.html";
+export function taskboardResourceUri(uiVersion: string) {
+  return `ui://flowrivet/taskboard/${encodeURIComponent(uiVersion)}.html`;
+}
 
 const DEFAULT_UI_BUNDLE_PATH = fileURLToPath(
   new URL("../ui/taskboard.html", import.meta.url),
@@ -116,6 +122,7 @@ export interface TaskboardMcpServerOptions {
   taskboardPreferencesLogger?: TaskboardPreferencesOperationLogger;
   notificationLogger?: NotificationOperationLogger;
   runtimeServices?: RuntimeServices;
+  runtimeVersion?: RuntimeVersion;
 }
 
 export interface TaskboardPreferencesReaderWriter {
@@ -142,6 +149,8 @@ export function createTaskboardMcpServer(
   options: TaskboardMcpServerOptions = {},
 ) {
   const uiBundlePath = options.uiBundlePath ?? DEFAULT_UI_BUNDLE_PATH;
+  const runtimeVersion = options.runtimeVersion ?? resolveRuntimeVersion();
+  const resourceUri = taskboardResourceUri(runtimeVersion.uiVersion);
   const runtimeServices = options.runtimeServices;
   const now = options.now ?? (() => new Date());
   const credentialStore = createCredentialStore();
@@ -178,12 +187,12 @@ export function createTaskboardMcpServer(
     ?? new JsonStderrTaskboardPreferencesOperationLogger();
   const notificationLogger = options.notificationLogger
     ?? new JsonStderrNotificationOperationLogger();
-  const server = new McpServer({ name: "flowrivet", version: "0.1.0" });
+  const server = new McpServer({ name: "flowrivet", version: runtimeVersion.version });
 
   registerAppResource(
     server,
     "FlowRivet 我的待办看板",
-    TASKBOARD_RESOURCE_URI,
+    resourceUri,
     { description: "FlowRivet 待办看板 React UI" },
     async () => {
       let html: string;
@@ -201,7 +210,7 @@ export function createTaskboardMcpServer(
       return {
         contents: [
           {
-            uri: TASKBOARD_RESOURCE_URI,
+            uri: resourceUri,
             mimeType: RESOURCE_MIME_TYPE,
             text: html,
           },
@@ -214,7 +223,7 @@ export function createTaskboardMcpServer(
   registerWorkItemTool(server, workItemLogger, "open_my_taskboard", {
     title: "打开我的待办看板",
     description: "打开当前项目管理系统中的真实只读待办看板。",
-    resourceUri: TASKBOARD_RESOURCE_URI,
+    resourceUri,
     run: snapshotBuilder,
     providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
