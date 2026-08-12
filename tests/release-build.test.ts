@@ -42,6 +42,12 @@ describe("runtime package builder", () => {
     expect(pipeline).toContain("swiftc packages/updater/native/macos-keychain/main.swift");
   });
 
+  it("cleans the package workspace before downloading the runtime", async () => {
+    const script = await readFile("scripts/release/ci-package-runtime.mjs", "utf8");
+    expect(script.indexOf("await rm(scratch")).toBeGreaterThan(-1);
+    expect(script.indexOf("await rm(scratch")).toBeLessThan(script.indexOf("const archive = await resolveRuntimeArchive"));
+  });
+
   it("includes the compiled Keychain helper in a macOS package", async () => {
     const root = await mkdtemp(join(tmpdir(), "flowrivet-macos-release-"));
     const runtime = join(root, "node-runtime");

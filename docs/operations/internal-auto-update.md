@@ -8,9 +8,28 @@ FlowRivet Companion、MCP 看板 UI 和更新器通过企业内部 GitLab Generi
 
 1. 在自建 GitLab 为 FlowRivet 启用 Generic Package Registry，并配置受保护的 `v*` 标签。
 2. 为 Windows x64、Linux x64、macOS arm64 准备受保护 Runner。
-3. 把 Node 22 运行时放入企业内网镜像，将文件名、来源和 SHA-256 写入 `scripts/release/runtime-checksums.json`。不得在终端机器下载 Node。
-4. 为 CI 设置 `FLOWRIVET_NODE_RUNTIME_ARCHIVE`。发布任务仅使用 `CI_JOB_TOKEN` 上传。
+3. 把 Node 22 运行时放入企业内网 HTTPS 镜像，将每个平台的精确 URL、文件名、字节数和 SHA-256 写入 `scripts/release/runtime-checksums.json`。不得使用 HTTP、浮动 `latest` URL，也不得在终端机器下载 Node。
+4. 生产 CI 默认从清单 URL 下载运行时。`FLOWRIVET_NODE_RUNTIME_ARCHIVE` 只用于开发、离线或受控 Runner 的显式本地覆盖，并且仍须通过同一清单哈希校验。发布任务仅使用 `CI_JOB_TOKEN` 上传。
 5. 验证不可变版本包拒绝重复上传；只允许 `flowrivet-channel/latest/manifest.json` 更新。
+
+当前验收项目为 `https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet`，项目 ID 是 `75`。清单条目格式：
+
+```json
+{
+  "schemaVersion": 1,
+  "nodeVersion": "22.19.0",
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://<内网镜像>/node-v22.19.0-linux-x64.tar.gz",
+      "file": "node-v22.19.0-linux-x64.tar.gz",
+      "size": 0,
+      "sha256": "<64位小写SHA-256>"
+    }
+  }
+}
+```
+
+Windows x64 和 macOS arm64 使用相同字段，键分别为 `win32-x64`、`darwin-arm64`。`size` 必须替换为真实字节数。清单缺少平台、URL 不安全、大小不符或哈希不符时，CI 必须失败且不得发布。
 
 ## 普通用户安装
 
