@@ -299,7 +299,7 @@ export function createTaskboardMcpServer(
     },
   );
 
-  if (!runtimeServices) registerAppTool(
+  registerAppTool(
     server,
     "get_work_item_detail",
     {
@@ -315,6 +315,59 @@ export function createTaskboardMcpServer(
       const requestId = randomUUID();
       const startedAt = performance.now();
       try {
+        if (runtimeServices) {
+          const active = await runtimeServices.activeProviderStore.load({
+            registeredProviderIds: runtimeServices.registry.ids(),
+          });
+          const registration = runtimeServices.registry.get(active.activeProviderId);
+          const connection = await registration.auth.getConnection();
+          if (connection.state !== "connected") {
+            throw new WorkItemDetailProviderError(
+              connection.state === "expired"
+                ? "provider_unauthorized"
+                : "provider_not_connected",
+            );
+          }
+          if (reference.providerId !== registration.id || !registration.details) {
+            throw new WorkItemDetailProviderError("work_item_detail_unsupported");
+          }
+          const synchronizer = runtimeServices.workItemServices.get(registration.id);
+          const cached = await synchronizer?.loadCached(registration.id);
+          const visibleItem = cached?.items.find((item) =>
+            item.providerId === reference.providerId
+            && item.projectExternalId === reference.projectExternalId
+            && item.providerItemType === reference.providerItemType
+            && item.externalId === reference.externalId
+          );
+          if (!visibleItem) {
+            throw new WorkItemDetailProviderError("work_item_detail_forbidden");
+          }
+          const identity = registration.auth.getSessionIdentity?.();
+          const accountDisplayName = identity?.accountDisplayName
+            ?? connection.accountDisplayName;
+          if (!accountDisplayName) {
+            throw new WorkItemDetailProviderError("provider_unauthorized");
+          }
+          const detail = workItemDetailSchema.parse(
+            await registration.details.getWorkItemDetail({
+              reference,
+              projectName: visibleItem.projectName,
+              accountDisplayName,
+            }),
+          );
+          workItemDetailLogger.completed({
+            requestId,
+            tool: "get_work_item_detail",
+            providerId: reference.providerId,
+            providerItemType: reference.providerItemType,
+            outcome: "success",
+            durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+          });
+          return {
+            structuredContent: detail,
+            content: [{ type: "text" as const, text: "工作项详情已加载。" }],
+          };
+        }
         const auth = await authService.getConnectionStatus();
         if (auth.connection.tapd !== "connected") {
           throw new WorkItemDetailProviderError(

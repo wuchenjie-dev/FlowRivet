@@ -194,12 +194,6 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     detailOpener.current = opener;
     setSelectedItem(item);
     workExecution.clear();
-    if (item.providerId === "feishu-project") {
-      setWorkItemDetail(undefined);
-      setDetailPending(false);
-      setDetailErrorCode(undefined);
-      return;
-    }
     const cached = detailCache.current.get(item.key);
     if (cached) {
       detailRequestSequence.current += 1;

@@ -403,7 +403,12 @@ describe("FlowRivet taskboard", () => {
     }));
 
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(callTool).not.toHaveBeenCalledWith("get_work_item_detail", expect.anything());
+    expect(callTool).toHaveBeenCalledWith("get_work_item_detail", {
+      providerId: snapshot.items[0]!.providerId,
+      projectExternalId: snapshot.items[0]!.projectExternalId,
+      providerItemType: snapshot.items[0]!.providerItemType,
+      externalId: snapshot.items[0]!.externalId,
+    });
     await user.click(screen.getByRole("button", { name: "开始处理" }));
     expect(callTool).toHaveBeenCalledWith("prepare_work_item_execution", { item: snapshot.items[0] });
     expect(await screen.findByRole("button", { name: "继续处理" })).toBeTruthy();
@@ -1008,6 +1013,43 @@ describe("FlowRivet taskboard", () => {
       target: "_blank",
       rel: "noreferrer",
     });
+  });
+
+  it("loads complete detail for a Feishu card instead of stopping at its summary", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const item = snapshot.items[0]!;
+    const detail = workItemDetail({
+      key: item.key,
+      providerId: "feishu-project",
+      projectExternalId: item.projectExternalId,
+      providerItemType: item.providerItemType,
+      externalId: item.externalId,
+      projectName: item.projectName,
+      title: item.title,
+      externalUrl: item.externalUrl,
+      assignees: ["Example Owner"],
+      startedAt: "2026-08-11T01:00:00.000Z",
+    });
+    const pending = deferred<{ content: []; structuredContent: WorkItemDetail }>();
+    const callTool = vi.fn(async (name: string) => name === "get_work_item_detail"
+      ? pending.promise
+      : { content: [] as [], structuredContent: { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" } });
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+
+    await user.click(screen.getByRole("button", { name: `打开工作项：${item.title}` }));
+
+    expect(screen.getByText("正在加载工作项详情")).toBeTruthy();
+    pending.resolve({ content: [], structuredContent: detail });
+    const dialog = await screen.findByRole("dialog", { name: item.title });
+    expect(callTool).toHaveBeenCalledWith("get_work_item_detail", {
+      providerId: "feishu-project",
+      projectExternalId: item.projectExternalId,
+      providerItemType: item.providerItemType,
+      externalId: item.externalId,
+    });
+    expect(within(dialog).getByText("Example Owner")).toBeTruthy();
+    expect(within(dialog).getByText("开始时间")).toBeTruthy();
   });
 
   it("shows loading state and a retryable provider error", async () => {

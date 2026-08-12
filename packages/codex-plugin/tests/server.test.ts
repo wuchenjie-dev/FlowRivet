@@ -296,6 +296,20 @@ describe("taskboard MCP app", () => {
       auth,
       login,
       workItems,
+      details: {
+        id: "feishu-project",
+        getWorkItemDetail: vi.fn(async ({ reference }) => ({
+          ...reference,
+          key: `feishu-project:${reference.projectExternalId}:${reference.providerItemType}:${reference.externalId}`,
+          projectName: "Example Project",
+          kind: "task",
+          title: "Work 1",
+          providerStatus: "Planning",
+          assignees: ["Example User"],
+          descriptionTruncated: false,
+          externalUrl: "https://project.feishu.cn/example-project/task/detail/1",
+        })),
+      },
     }]);
     const loginCoordinator = new ProviderLoginCoordinator({
       resolveDriver: (providerId) => registry.get(providerId).login,
@@ -416,6 +430,7 @@ describe("taskboard MCP app", () => {
         "recheck_gitlab_connection",
         "list_gitlab_projects",
         "prepare_work_item_execution",
+        "get_work_item_detail",
       ]));
       expect(names).not.toEqual(expect.arrayContaining([
         "get_connection_status",
@@ -437,6 +452,26 @@ describe("taskboard MCP app", () => {
         items: [expect.objectContaining({ providerId: "feishu-project" })],
       });
       const boardItem = (board.structuredContent as { items: unknown[] }).items[0];
+      await expect(client.callTool({
+        name: "get_work_item_detail",
+        arguments: {
+          providerId: "feishu-project",
+          projectExternalId: "PROJ",
+          providerItemType: "task",
+          externalId: "1",
+        },
+      })).resolves.toMatchObject({
+        structuredContent: { providerId: "feishu-project", externalId: "1", title: "Work 1" },
+      });
+      await expect(client.callTool({
+        name: "get_work_item_detail",
+        arguments: {
+          providerId: "feishu-project",
+          projectExternalId: "PROJ",
+          providerItemType: "task",
+          externalId: "not-synchronized",
+        },
+      })).resolves.toMatchObject({ isError: true });
       const firstExecution = await client.callTool({
         name: "prepare_work_item_execution", arguments: { item: boardItem },
       });

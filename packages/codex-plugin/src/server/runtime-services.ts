@@ -9,6 +9,7 @@ import {
 import { MeegleAuthService } from "../meegle/meegle-auth-service.js";
 import { MeegleCliClient } from "../meegle/meegle-cli-client.js";
 import { MeegleLoginDriver } from "../meegle/meegle-login-driver.js";
+import { MeegleWorkItemDetailProvider } from "../meegle/meegle-work-item-detail-provider.js";
 import { MeegleWorkItemProvider } from "../meegle/meegle-work-item-provider.js";
 import { resolveFlowRivetConfigDirectory } from "../projects/json-project-selection-store.js";
 import type { ActiveProviderStore } from "../providers/active-provider-store.js";
@@ -50,6 +51,7 @@ export function createDefaultRuntimeServices(
   const auth = new MeegleAuthService({ client, clock: now });
   const login = new MeegleLoginDriver(client);
   const workItems = new MeegleWorkItemProvider({ client, clock: now });
+  const details = new MeegleWorkItemDetailProvider({ client });
   const workItemService = new WorkItemService(
     workItems,
     now,
@@ -62,6 +64,7 @@ export function createDefaultRuntimeServices(
     auth,
     login,
     workItems,
+    details,
   }]);
   const loginCoordinator = new ProviderLoginCoordinator({
     resolveDriver: (providerId) => registry.get(providerId).login,

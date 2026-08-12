@@ -94,7 +94,7 @@ export function WorkItemDetailDrawer({
         </header>
 
         <div className="detail-body">
-          {pending ? <DetailLoading /> : errorCode && item.providerId !== "feishu-project" ? (
+          {pending ? <DetailLoading /> : errorCode ? (
             <DetailError code={errorCode} offline={offline} onRetry={onRetry} />
           ) : detail ? <DetailContent detail={detail} /> : <MinimalDetail item={item} />}
           {onStartExecution ? (
@@ -190,6 +190,7 @@ function DetailContent({ detail }: { detail: WorkItemDetail }) {
         <DetailField label="创建人" value={detail.creator} />
         <DetailDate label="创建时间" value={detail.createdAt} />
         <DetailDate label="更新时间" value={detail.updatedAt} />
+        <DetailDate label="开始时间" value={detail.startedAt} />
         <DetailDate label="截止时间" value={detail.dueAt} />
         <DetailDate label="完成时间" value={detail.completedAt} />
       </dl>
