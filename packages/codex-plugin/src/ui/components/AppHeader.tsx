@@ -1,4 +1,5 @@
 import { ChevronDown, Maximize2, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { TaskboardSnapshot } from "../../contracts/taskboard.js";
 
@@ -13,6 +14,7 @@ interface AppHeaderProps {
   onFullscreen: () => void;
   onRefresh: () => void;
   onToggleMenu: () => void;
+  notificationCenter?: ReactNode;
 }
 
 const statusCopy = {
@@ -35,6 +37,7 @@ export function AppHeader({
   onFullscreen,
   onRefresh,
   onToggleMenu,
+  notificationCenter,
 }: AppHeaderProps) {
   const syncedAt = new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -67,6 +70,7 @@ export function AppHeader({
             <Maximize2 size={16} aria-hidden="true" />
           </button>
         ) : null}
+        {notificationCenter}
         <button
           className="icon-button"
           type="button"

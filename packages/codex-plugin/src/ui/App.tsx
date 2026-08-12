@@ -16,6 +16,7 @@ import type { WorkItem } from "../contracts/taskboard.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { ConnectionMenu } from "./components/ConnectionMenu.js";
 import { FeishuProjectLogin } from "./components/FeishuProjectLogin.js";
+import { NotificationCenter } from "./components/NotificationCenter.js";
 import { ProjectSidebar, type BoardFilter } from "./components/ProjectSidebar.js";
 import { TaskBoard } from "./components/TaskBoard.js";
 import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
@@ -420,6 +421,13 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         onFullscreen={() => void enterFullscreen()}
         onRefresh={() => void refreshCoordinator.requestRefresh().catch(() => undefined)}
         onToggleMenu={() => setMenuOpen((open) => !open)}
+        notificationCenter={(
+          <NotificationCenter
+            bridge={bridge}
+            enabled={isFeishuProject && providerState === "connected"}
+            onNotice={setNotice}
+          />
+        )}
       />
       {menuOpen ? (
         <ConnectionMenu
