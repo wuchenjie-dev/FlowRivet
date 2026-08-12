@@ -2,13 +2,21 @@ import { Check, Copy, ExternalLink } from "lucide-react";
 
 import type { WorkExecutionHandoff } from "../../contracts/executions.js";
 
-export function ExecutionSummary({ value, onSelectRepository }: { value: WorkExecutionHandoff; onSelectRepository?: () => void }) {
+export function ExecutionSummary({
+  value,
+  onSelectRepository,
+  allowCompatibilityCopy = false,
+}: {
+  value: WorkExecutionHandoff;
+  onSelectRepository?: () => void;
+  allowCompatibilityCopy?: boolean;
+}) {
   const gitlab = value.execution.gitlab;
   const mergeRequestUrl = safeGitLabUrl(gitlab?.mergeRequestUrl);
   return (
     <section className="execution-summary" aria-labelledby="execution-summary-heading">
       <h3 id="execution-summary-heading">Codex 处理任务</h3>
-      <p><Check size={14} aria-hidden="true" />已创建可恢复的 handoff</p>
+      <p role="status"><Check size={14} aria-hidden="true" />已创建可恢复的 Codex 执行</p>
       <dl>
         <div><dt>执行 ID</dt><dd>{value.execution.executionId}</dd></div>
         <div><dt>任务类型</dt><dd>{kindLabel(value.execution.executionKind)}</dd></div>
@@ -22,9 +30,11 @@ export function ExecutionSummary({ value, onSelectRepository }: { value: WorkExe
         </> : null}
         {value.execution.state === "writeback_pending" ? <div><dt>飞书回写</dt><dd>尚未写回，结果已保存在本地</dd></div> : null}
       </dl>
-      <button type="button" onClick={() => void navigator.clipboard?.writeText(value.handoff.prompt)}>
-        <Copy size={14} aria-hidden="true" />复制到 Codex
-      </button>
+      {allowCompatibilityCopy ? (
+        <button type="button" onClick={() => void navigator.clipboard?.writeText(value.handoff.prompt)}>
+          <Copy size={14} aria-hidden="true" />兼容复制到 Codex
+        </button>
+      ) : null}
       {!gitlab && onSelectRepository ? <button type="button" onClick={onSelectRepository}>关联研发仓库</button> : null}
     </section>
   );

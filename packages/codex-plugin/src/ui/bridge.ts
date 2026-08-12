@@ -11,6 +11,8 @@ export interface DisplayState {
 export interface McpAppsBridge {
   initialize(appInfo: Implementation): Promise<void>;
   callTool(name: string, arguments_: Record<string, unknown>): Promise<CallToolResult>;
+  canSendMessage(): boolean;
+  sendUserMessage(text: string): Promise<void>;
   getDisplayState(): DisplayState;
   requestFullscreen(): Promise<DisplayState>;
   onToolResult(listener: ToolResultListener): () => void;
@@ -63,6 +65,30 @@ export function createMcpAppsBridge(hostWindow: Window = window.parent): McpApps
       }
       await initialization;
       return app.callServerTool({ name, arguments: arguments_ });
+    },
+
+    canSendMessage() {
+      return Boolean(app?.getHostCapabilities()?.message);
+    },
+
+    async sendUserMessage(text) {
+      if (!app || !initialization) {
+        throw new Error("MCP Apps bridge is not initialized");
+      }
+      await initialization;
+      if (!app.getHostCapabilities()?.message) {
+        throw new Error("codex_handoff_unsupported");
+      }
+      try {
+        const result = await app.sendMessage({
+          role: "user",
+          content: [{ type: "text", text }],
+        });
+        if (result.isError) throw new Error("codex_handoff_failed");
+      } catch (error) {
+        if (error instanceof Error && error.message === "codex_handoff_failed") throw error;
+        throw new Error("codex_handoff_failed");
+      }
     },
 
     getDisplayState,

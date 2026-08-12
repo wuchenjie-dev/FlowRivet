@@ -244,7 +244,7 @@ test("execution drawer shows GitLab progress and local writeback fallback", asyn
   await board.getByRole("button", {
     name: "打开工作项：统一检索结果的排序与筛选体验",
   }).click();
-  await board.getByRole("button", { name: "开始处理" }).click();
+  await board.getByRole("button", { name: "交给 Codex 处理" }).click();
 
   const dialog = board.getByRole("dialog");
   await expect(dialog.getByText("研发实现")).toBeVisible();

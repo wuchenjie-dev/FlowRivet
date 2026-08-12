@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { workExecutionHandoffSchema, type WorkExecutionHandoff } from "../contracts/executions.js";
 import type { WorkItem } from "../contracts/taskboard.js";
@@ -6,26 +6,73 @@ import type { McpAppsBridge } from "./bridge.js";
 import { gitLabProjectPageSchema, type GitLabProject } from "../contracts/gitlab.js";
 import { executionRecordSchema } from "../contracts/executions.js";
 
-export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool">) {
+export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendUserMessage" | "onToolResult">) {
   const [result, setResult] = useState<WorkExecutionHandoff>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const [projects, setProjects] = useState<GitLabProject[]>([]);
   const [repositoryOpen, setRepositoryOpen] = useState(false);
-  async function prepare(item: WorkItem) {
+  const resultRef = useRef<WorkExecutionHandoff | undefined>(undefined);
+  const recoverySequence = useRef(0);
+  resultRef.current = result;
+
+  useEffect(() => bridge.onToolResult((toolResult) => {
+    const execution = executionRecordSchema.safeParse(toolResult.structuredContent);
+    const current = resultRef.current;
+    if (!execution.success || !current
+      || execution.data.executionId !== current.execution.executionId) return;
+    const next = { ...current, execution: execution.data };
+    resultRef.current = next;
+    setResult(next);
+    if (execution.data.state === "awaiting_repository") {
+      void loadRepositories();
+    }
+  }), [bridge]);
+  async function prepareAndSend(item: WorkItem) {
     setPending(true); setError(undefined);
     try {
-      const response = await bridge.callTool("prepare_work_item_execution", { item });
-      const parsed = workExecutionHandoffSchema.parse(response.structuredContent);
-      setResult(parsed);
-      return parsed;
-    } catch {
-      setError("无法创建 Codex 处理任务，请稍后重试");
+      const prepared = result ?? workExecutionHandoffSchema.parse((await bridge.callTool(
+        "prepare_work_item_execution",
+        { item },
+      )).structuredContent);
+      setResult(prepared);
+      resultRef.current = prepared;
+      await bridge.sendUserMessage(prepared.handoff.prompt);
+      return prepared;
+    } catch (cause) {
+      setError(cause instanceof Error && cause.message === "codex_handoff_unsupported"
+        ? "当前 Codex 版本不支持直接接管，可使用兼容复制"
+        : "未能交给 Codex，请重试");
       return undefined;
     } finally { setPending(false); }
   }
-  function clear() { setResult(undefined); setError(undefined); }
-  async function openRepositoryPicker() {
+  async function restore(item: WorkItem) {
+    const sequence = recoverySequence.current;
+    try {
+      const response = await bridge.callTool("get_work_item_execution", { workItemKey: item.key });
+      const restored = executionRecordSchema.safeParse(
+        (response.structuredContent as { execution?: unknown } | undefined)?.execution,
+      );
+      if (!restored.success || restored.data.workItemKey !== item.key
+        || sequence !== recoverySequence.current) return;
+      const handoffResponse = await bridge.callTool("prepare_work_item_execution", { item });
+      const prepared = workExecutionHandoffSchema.parse(handoffResponse.structuredContent);
+      if (sequence !== recoverySequence.current) return;
+      setResult(prepared);
+      resultRef.current = prepared;
+      if (restored.data.state === "awaiting_repository") await loadRepositories();
+    } catch {
+      // Detail remains usable even if execution recovery is temporarily unavailable.
+    }
+  }
+  function clear() {
+    recoverySequence.current += 1;
+    resultRef.current = undefined;
+    setResult(undefined);
+    setError(undefined);
+    setRepositoryOpen(false);
+  }
+  async function loadRepositories() {
     setPending(true); setError(undefined);
     try {
       const response = await bridge.callTool("list_gitlab_projects", { page: 1, perPage: 100 });
@@ -34,6 +81,7 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool">) {
     } catch { setError("无法读取 GitLab 项目，请检查连接"); }
     finally { setPending(false); }
   }
+  async function openRepositoryPicker() { await loadRepositories(); }
   async function bindRepository(project: GitLabProject, paths: { localPath?: string; parentDirectory?: string }) {
     if (!result) return;
     setPending(true); setError(undefined);
@@ -46,5 +94,5 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool">) {
     } catch { setError("仓库无法关联：请检查路径、remote 和工作树状态"); }
     finally { setPending(false); }
   }
-  return { result, pending, error, prepare, clear, projects, repositoryOpen, setRepositoryOpen, openRepositoryPicker, bindRepository };
+  return { result, pending, error, prepareAndSend, restore, clear, projects, repositoryOpen, setRepositoryOpen, openRepositoryPicker, bindRepository };
 }

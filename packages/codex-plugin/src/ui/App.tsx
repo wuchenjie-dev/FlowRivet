@@ -194,6 +194,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     detailOpener.current = opener;
     setSelectedItem(item);
     workExecution.clear();
+    if (item.providerId === "feishu-project") void workExecution.restore(item);
     const cached = detailCache.current.get(item.key);
     if (cached) {
       detailRequestSequence.current += 1;
@@ -535,7 +536,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           executionPending={workExecution.pending}
           executionError={workExecution.error}
           onStartExecution={selectedItem.providerId === "feishu-project"
-            ? () => void workExecution.prepare(selectedItem)
+            ? () => void workExecution.prepareAndSend(selectedItem)
             : undefined}
           onSelectRepository={workExecution.result ? () => void workExecution.openRepositoryPicker() : undefined}
           repositoryPicker={workExecution.repositoryOpen ? (

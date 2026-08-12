@@ -37,6 +37,8 @@ function bridge(callTool: McpAppsBridge["callTool"]): McpAppsBridge {
   return {
     initialize: vi.fn(),
     callTool,
+    canSendMessage: vi.fn(() => false),
+    sendUserMessage: vi.fn(),
     getDisplayState: vi.fn(() => ({ canFullscreen: false, isFullscreen: false })),
     requestFullscreen: vi.fn(),
     onToolResult: vi.fn(() => () => undefined),

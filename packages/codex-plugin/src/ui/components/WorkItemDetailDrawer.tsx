@@ -101,12 +101,16 @@ export function WorkItemDetailDrawer({
             <div className="execution-actions">
               <button type="button" className="execution-primary" onClick={onStartExecution} disabled={executionPending}>
                 <Play size={15} aria-hidden="true" />
-                {executionPending ? "正在准备..." : execution ? "继续处理" : "开始处理"}
+                {executionPending ? "正在交给 Codex..." : execution ? "继续由 Codex 处理" : "交给 Codex 处理"}
               </button>
               {executionError ? <p role="alert">{executionError}</p> : null}
             </div>
           ) : null}
-          {execution ? <ExecutionSummary value={execution} onSelectRepository={onSelectRepository} /> : null}
+          {execution ? <ExecutionSummary
+            value={execution}
+            onSelectRepository={onSelectRepository}
+            allowCompatibilityCopy={Boolean(executionError)}
+          /> : null}
           {repositoryPicker}
         </div>
       </section>

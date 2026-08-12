@@ -53,6 +53,7 @@ function initializationResult(
     displayMode: "inline",
     availableDisplayModes: ["inline", "fullscreen"],
   },
+  hostCapabilities: Record<string, unknown> = { serverTools: {} },
 ): RpcMessage {
   return {
     jsonrpc: "2.0",
@@ -60,13 +61,16 @@ function initializationResult(
     result: {
       protocolVersion: "2026-01-26",
       hostInfo: { name: "flowrivet-test-host", version: "0.1.0" },
-      hostCapabilities: { serverTools: {} },
+      hostCapabilities,
       hostContext,
     },
   };
 }
 
-async function initializeBridge(hostContext?: Record<string, unknown>) {
+async function initializeBridge(
+  hostContext?: Record<string, unknown>,
+  hostCapabilities?: Record<string, unknown>,
+) {
   const host = createHost();
   const bridge = createMcpAppsBridge(host.host);
   bridges.push(bridge);
@@ -75,7 +79,7 @@ async function initializeBridge(hostContext?: Record<string, unknown>) {
     version: "0.1.0",
   });
   const request = await host.request("ui/initialize");
-  host.dispatch(initializationResult(request.id, hostContext));
+  host.dispatch(initializationResult(request.id, hostContext, hostCapabilities));
   await initializing;
   return { bridge, ...host };
 }
@@ -110,6 +114,35 @@ describe("MCP Apps bridge", () => {
     await expect(calling).resolves.toMatchObject({
       structuredContent: { ok: true, message: "hello" },
     });
+  });
+
+  it("sends one user message when the host declares message support", async () => {
+    const { bridge, dispatch, request } = await initializeBridge(undefined, {
+      serverTools: {}, message: { text: {} },
+    });
+
+    expect(bridge.canSendMessage()).toBe(true);
+    const sending = bridge.sendUserMessage("Continue execution-1");
+    const message = await request("ui/message");
+    expect(message.params).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "Continue execution-1" }],
+    });
+    dispatch({ jsonrpc: "2.0", id: message.id, result: {} });
+    await expect(sending).resolves.toBeUndefined();
+  });
+
+  it("returns stable errors when messages are unsupported or rejected", async () => {
+    const unsupported = await initializeBridge();
+    expect(unsupported.bridge.canSendMessage()).toBe(false);
+    await expect(unsupported.bridge.sendUserMessage("Continue"))
+      .rejects.toMatchObject({ message: "codex_handoff_unsupported" });
+
+    const supported = await initializeBridge(undefined, { message: { text: {} } });
+    const sending = supported.bridge.sendUserMessage("Continue");
+    const message = await supported.request("ui/message");
+    supported.dispatch({ jsonrpc: "2.0", id: message.id, result: { isError: true } });
+    await expect(sending).rejects.toMatchObject({ message: "codex_handoff_failed" });
   });
 
   it("requests fullscreen when the host supports it", async () => {

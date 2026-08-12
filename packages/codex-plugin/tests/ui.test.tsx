@@ -27,6 +27,8 @@ function createBridge(
   const delegatedCallTool = overrides.callTool;
   return {
     initialize: vi.fn().mockResolvedValue(undefined),
+    canSendMessage: vi.fn(() => true),
+    sendUserMessage: vi.fn().mockResolvedValue(undefined),
     getDisplayState: vi.fn(() => ({ canFullscreen: true, isFullscreen: false })),
     requestFullscreen: vi.fn().mockResolvedValue({ canFullscreen: true, isFullscreen: true }),
     onToolResult: vi.fn(() => () => undefined),
@@ -396,7 +398,8 @@ describe("FlowRivet taskboard", () => {
     const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent: name === "prepare_work_item_execution"
       ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue FlowRivet work" } }
       : { ok: true } }));
-    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+    const sendUserMessage = vi.fn().mockResolvedValue(undefined);
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool, sendUserMessage })} />);
 
     await user.click(screen.getByRole("button", {
       name: `打开工作项：${snapshot.items[0]!.title}`,
@@ -409,10 +412,40 @@ describe("FlowRivet taskboard", () => {
       providerItemType: snapshot.items[0]!.providerItemType,
       externalId: snapshot.items[0]!.externalId,
     });
-    await user.click(screen.getByRole("button", { name: "开始处理" }));
+    await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
     expect(callTool).toHaveBeenCalledWith("prepare_work_item_execution", { item: snapshot.items[0] });
-    expect(await screen.findByRole("button", { name: "继续处理" })).toBeTruthy();
+    expect(sendUserMessage).toHaveBeenCalledOnce();
+    expect(sendUserMessage).toHaveBeenCalledWith("Continue FlowRivet work");
+    expect(await screen.findByRole("button", { name: "继续由 Codex 处理" })).toBeTruthy();
     expect(screen.getByText("execution-1")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "兼容复制到 Codex" })).toBeNull();
+  });
+
+  it("keeps the execution retryable when the host rejects direct handoff", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const execution = {
+      schemaVersion: 1, executionId: "execution-1", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-execution-1", executionKind: "pending_classification",
+      state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
+      name === "prepare_work_item_execution"
+        ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue safely" } }
+        : { ok: true } }));
+    const sendUserMessage = vi.fn().mockRejectedValue(new Error("codex_handoff_unsupported"));
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool, sendUserMessage })} />);
+    await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
+
+    await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
+
+    expect(await screen.findByText("当前 Codex 版本不支持直接接管，可使用兼容复制")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "兼容复制到 Codex" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "继续由 Codex 处理" }));
+    expect(callTool.mock.calls.filter(([name]) => name === "prepare_work_item_execution")).toHaveLength(1);
+    expect(sendUserMessage).toHaveBeenCalledTimes(2);
   });
 
   it("opens repository selection only after an execution is prepared", async () => {
@@ -433,7 +466,7 @@ describe("FlowRivet taskboard", () => {
     render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
     await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
     expect(screen.queryByText("选择研发仓库")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "开始处理" }));
+    await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
     await user.click(await screen.findByRole("button", { name: "关联研发仓库" }));
     expect(await screen.findByText("选择研发仓库")).toBeTruthy();
     await user.click(screen.getByRole("option", { name: "cc/flowrivet" }));
@@ -459,11 +492,14 @@ describe("FlowRivet taskboard", () => {
         mergeRequestUrl, pipelineId: "42",
       },
     };
-    const callTool = vi.fn(async () => ({ content: [], structuredContent: { execution, handoff: { handoffId: "flowrivet-execution-progress", prompt: "Continue" } } }));
+    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
+      name === "get_work_item_execution"
+        ? {}
+        : { execution, handoff: { handoffId: "flowrivet-execution-progress", prompt: "Continue" } } }));
     render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
 
     await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
-    await user.click(screen.getByRole("button", { name: "开始处理" }));
+    await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
 
     expect(await screen.findByText("研发实现")).toBeTruthy();
     expect(screen.getByText("尚未写回，结果已保存在本地")).toBeTruthy();
