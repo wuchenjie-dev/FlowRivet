@@ -31,6 +31,11 @@ export async function runCli(args: string[], dependencies: CliDependencies): Pro
   }
 }
 
+export function argumentValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
 function formatHuman(command: string, result: unknown): string {
   if (result && typeof result === "object" && "version" in result && typeof result.version === "string") {
     return `${command}: ${result.version}`;
