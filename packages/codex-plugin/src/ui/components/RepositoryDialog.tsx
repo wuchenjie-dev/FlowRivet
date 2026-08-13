@@ -1,13 +1,15 @@
-import { GitBranch, X } from "lucide-react";
+import { FolderOpen, GitBranch, LoaderCircle, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { GitLabProject } from "../../contracts/gitlab.js";
+import type { DirectoryPurpose, DirectorySelection } from "../../local-directory/directory-picker.js";
 
 export function RepositoryDialog(props: {
   projects: GitLabProject[];
   pending: boolean;
   error?: string;
   onBind: (project: GitLabProject, paths: { localPath?: string; parentDirectory?: string }) => void;
+  onSelectDirectory: (purpose: DirectoryPurpose) => Promise<DirectorySelection>;
   onCancel: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -15,7 +17,11 @@ export function RepositoryDialog(props: {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<GitLabProject>();
   const [mode, setMode] = useState<"existing" | "clone">("existing");
-  const [path, setPath] = useState("");
+  const [paths, setPaths] = useState({ existing: "", clone: "" });
+  const [selectingDirectory, setSelectingDirectory] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string>();
+  const directoryRequest = useRef(0);
+  const path = paths[mode];
   const filtered = useMemo(() => props.projects.filter((project) =>
     project.pathWithNamespace.toLowerCase().includes(query.trim().toLowerCase())), [props.projects, query]);
 
@@ -24,8 +30,40 @@ export function RepositoryDialog(props: {
     if (!dialog) return;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
-    return () => openerRef.current?.focus();
+    return () => {
+      directoryRequest.current += 1;
+      openerRef.current?.focus();
+    };
   }, []);
+
+  function changeMode(nextMode: "existing" | "clone") {
+    directoryRequest.current += 1;
+    setSelectingDirectory(false);
+    setDirectoryError(undefined);
+    setMode(nextMode);
+  }
+
+  async function selectDirectory() {
+    const request = ++directoryRequest.current;
+    const requestedMode = mode;
+    setSelectingDirectory(true);
+    setDirectoryError(undefined);
+    try {
+      const selection = await props.onSelectDirectory(
+        requestedMode === "existing" ? "existing_repository" : "clone_parent",
+      );
+      if (request !== directoryRequest.current) return;
+      if (selection.outcome === "selected") {
+        setPaths((current) => ({ ...current, [requestedMode]: selection.absolutePath }));
+      }
+    } catch {
+      if (request === directoryRequest.current) {
+        setDirectoryError("无法打开文件夹选择器，请手动输入绝对路径");
+      }
+    } finally {
+      if (request === directoryRequest.current) setSelectingDirectory(false);
+    }
+  }
 
   return (
     <dialog
@@ -51,10 +89,27 @@ export function RepositoryDialog(props: {
             {filtered.length === 0 ? <p>没有匹配的项目</p> : null}
           </div>
           <div className="repository-modes" aria-label="仓库准备方式">
-            <button type="button" aria-pressed={mode === "existing"} onClick={() => setMode("existing")}>复用本地仓库</button>
-            <button type="button" aria-pressed={mode === "clone"} onClick={() => setMode("clone")}>克隆到父目录</button>
+            <button type="button" aria-pressed={mode === "existing"} onClick={() => changeMode("existing")}>复用本地仓库</button>
+            <button type="button" aria-pressed={mode === "clone"} onClick={() => changeMode("clone")}>克隆到父目录</button>
           </div>
-          <label>{mode === "existing" ? "本地仓库绝对路径" : "父目录绝对路径"}<input value={path} onChange={(event) => setPath(event.target.value)} placeholder={mode === "existing" ? "C:\\workspace\\project" : "C:\\workspace"} /></label>
+          <label>
+            {mode === "existing" ? "本地仓库绝对路径" : "父目录绝对路径"}
+            <span className="repository-path-field">
+              <input value={path} onChange={(event) => setPaths((current) => ({ ...current, [mode]: event.target.value }))} placeholder={mode === "existing" ? "C:\\workspace\\project" : "C:\\workspace"} />
+              <button
+                type="button"
+                className="icon-button repository-directory-button"
+                aria-label={mode === "existing" ? "选择本地仓库文件夹" : "选择克隆父文件夹"}
+                title={mode === "existing" ? "选择本地仓库文件夹" : "选择克隆父文件夹"}
+                disabled={selectingDirectory}
+                aria-busy={selectingDirectory}
+                onClick={() => void selectDirectory()}
+              >
+                {selectingDirectory ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <FolderOpen size={16} aria-hidden="true" />}
+              </button>
+            </span>
+          </label>
+          {directoryError ? <p className="repository-directory-error" role="alert">{directoryError}</p> : null}
           {props.error ? <p role="alert">{props.error}</p> : null}
         </div>
         <footer className="repository-actions">

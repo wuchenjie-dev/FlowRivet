@@ -11,6 +11,7 @@ import type { WorkItemDetail } from "../src/contracts/work-item-detail.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import { App } from "../src/ui/App.js";
 import type { McpAppsBridge } from "../src/ui/bridge.js";
+import { RepositoryDialog } from "../src/ui/components/RepositoryDialog.js";
 
 afterEach(() => {
   cleanup();
@@ -477,6 +478,112 @@ describe("FlowRivet taskboard", () => {
     await user.click(screen.getByRole("button", { name: "确认关联" }));
     expect(callTool).toHaveBeenCalledWith("bind_execution_repository", expect.objectContaining({ executionId: "execution-1", localPath: "C:\\work\\flowrivet" }));
     expect(sendUserMessage).toHaveBeenLastCalledWith("继续 FlowRivet 执行：execution-1");
+  });
+
+  it("selects existing repository and clone parent directories without submitting", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const execution = {
+      schemaVersion: 1, executionId: "execution-directory", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-execution-directory", executionKind: "development",
+      state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    const project = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" };
+    const callTool = vi.fn(async (name: string, arguments_: Record<string, unknown>) => ({
+      content: [],
+      structuredContent: name === "prepare_work_item_execution"
+        ? { execution, handoff: { handoffId: "flowrivet-execution-directory", prompt: "Continue" } }
+        : name === "list_gitlab_projects"
+          ? { page: 1, hasMore: false, projects: [project] }
+          : name === "select_local_directory"
+            ? arguments_.purpose === "existing_repository"
+              ? { outcome: "selected", absolutePath: "C:\\work\\flowrivet" }
+              : { outcome: "selected", absolutePath: "C:\\work" }
+            : { ok: true },
+    }));
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+    await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
+    await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
+    await user.click(await screen.findByRole("button", { name: "关联研发仓库" }));
+    await user.click(screen.getByRole("option", { name: /cc\/flowrivet/ }));
+
+    const existingButton = screen.getByRole("button", { name: "选择本地仓库文件夹" });
+    expect(existingButton.getAttribute("title")).toBe("选择本地仓库文件夹");
+    await user.click(existingButton);
+    expect(callTool).toHaveBeenCalledWith("select_local_directory", { purpose: "existing_repository" });
+    expect((screen.getByLabelText("本地仓库绝对路径") as HTMLInputElement).value).toBe("C:\\work\\flowrivet");
+    expect(callTool.mock.calls.some(([name]) => name === "bind_execution_repository")).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "克隆到父目录" }));
+    const cloneButton = screen.getByRole("button", { name: "选择克隆父文件夹" });
+    expect(cloneButton.getAttribute("title")).toBe("选择克隆父文件夹");
+    await user.click(cloneButton);
+    expect(callTool).toHaveBeenCalledWith("select_local_directory", { purpose: "clone_parent" });
+    expect((screen.getByLabelText("父目录绝对路径") as HTMLInputElement).value).toBe("C:\\work");
+  });
+
+  it("keeps manual paths on directory picker cancel and failure", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const execution = {
+      schemaVersion: 1, executionId: "execution-directory-error", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      codexHandoffId: "flowrivet-execution-directory-error", executionKind: "development",
+      state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    const project = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" };
+    let selectionAttempt = 0;
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "prepare_work_item_execution") return { content: [], structuredContent: { execution, handoff: { handoffId: "flowrivet-execution-directory-error", prompt: "Continue" } } };
+      if (name === "list_gitlab_projects") return { content: [], structuredContent: { page: 1, hasMore: false, projects: [project] } };
+      if (name === "select_local_directory") {
+        selectionAttempt += 1;
+        if (selectionAttempt === 1) return { content: [], structuredContent: { outcome: "cancelled" } };
+        throw new Error("directory_picker_unavailable");
+      }
+      return { content: [], structuredContent: { ok: true } };
+    });
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+    await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
+    await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
+    await user.click(await screen.findByRole("button", { name: "关联研发仓库" }));
+
+    const input = screen.getByLabelText("本地仓库绝对路径");
+    await user.type(input, "C:\\manual\\repository");
+    await user.click(screen.getByRole("button", { name: "选择本地仓库文件夹" }));
+    expect((input as HTMLInputElement).value).toBe("C:\\manual\\repository");
+    await user.click(screen.getByRole("button", { name: "选择本地仓库文件夹" }));
+    const pickerError = await screen.findByText("无法打开文件夹选择器，请手动输入绝对路径");
+    expect(pickerError.getAttribute("role")).toBe("alert");
+    expect((input as HTMLInputElement).value).toBe("C:\\manual\\repository");
+    expect((input as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("ignores a directory selection that finishes after the preparation mode changes", async () => {
+    const user = userEvent.setup();
+    let finishSelection: ((value: { outcome: "selected"; absolutePath: string }) => void) | undefined;
+    const onSelectDirectory = vi.fn(() => new Promise<{ outcome: "selected"; absolutePath: string }>((resolve) => {
+      finishSelection = resolve;
+    }));
+    render(<RepositoryDialog
+      projects={[]}
+      pending={false}
+      onBind={vi.fn()}
+      onCancel={vi.fn()}
+      onSelectDirectory={onSelectDirectory}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "选择本地仓库文件夹" }));
+    expect(screen.getByRole("button", { name: "选择本地仓库文件夹" }).getAttribute("aria-busy")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "克隆到父目录" }));
+    finishSelection?.({ outcome: "selected", absolutePath: "C:\\stale\\repository" });
+    await act(async () => undefined);
+
+    expect((screen.getByLabelText("父目录绝对路径") as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("button", { name: "选择克隆父文件夹" }).getAttribute("aria-busy")).toBe("false");
   });
 
   it("shows GitLab progress and an explicit local-only writeback state", async () => {

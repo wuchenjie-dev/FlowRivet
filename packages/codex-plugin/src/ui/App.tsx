@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { authResultSchema, type AuthErrorCode } from "../contracts/auth.js";
+import { directorySelectionSchema } from "../contracts/directory-picker.js";
 import { providerConnectionSchema } from "../contracts/providers.js";
 import {
   taskboardPreferencesSchema,
@@ -547,6 +548,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           pending={workExecution.pending}
           error={workExecution.error}
           onCancel={() => workExecution.setRepositoryOpen(false)}
+          onSelectDirectory={async (purpose) => {
+            const response = await bridge.callTool("select_local_directory", { purpose });
+            return directorySelectionSchema.parse(response.structuredContent);
+          }}
           onBind={(project, paths) => void workExecution.bindRepository(project, paths)}
         />
       ) : null}
