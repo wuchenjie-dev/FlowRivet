@@ -229,7 +229,40 @@ interface ExecutionRecord {
 
 FlowRivet 只编排 GitLab 操作；代码编辑、构建和测试由 Codex 在明确工作区内完成。提交作者使用用户本地 Git 配置，不由 FlowRivet伪造。
 
-### 9.4 人工确认门禁
+### 9.4 本机目录选择
+
+仓库对话框的路径输入框右侧提供“选择文件夹”按钮。选择行为随准备方式变化：
+
+- “复用本地仓库”选择具体的已有 Git 仓库目录。
+- “克隆到父目录”选择用于创建目标仓库目录的父目录。
+
+MCP App 不使用浏览器 `showDirectoryPicker`，因为浏览器目录句柄不能可靠提供本机绝对路径，也不能满足后续 `git`/`glab` 子进程合同。页面调用只读工具 `select_local_directory`，由本机 Companion 的 `DirectoryPicker` 接口打开系统原生目录选择窗口，并只返回用户本次明确选择的绝对路径。
+
+```ts
+interface DirectoryPicker {
+  selectDirectory(input: {
+    purpose: "existing_repository" | "clone_parent";
+    signal: AbortSignal;
+  }): Promise<{ outcome: "selected"; absolutePath: string } | { outcome: "cancelled" }>;
+}
+```
+
+平台差异限制在 Adapter 内：Windows 使用 STA 模式的系统文件夹选择对话框；macOS 使用 `osascript` 调用系统目录选择；Linux 按已验证顺序发现 `zenity` 或 `kdialog`。每个 Adapter 使用固定可执行文件和固定参数数组，不拼接路径或 Shell 字符串。平台缺少可用选择器时返回稳定错误 `directory_picker_unavailable`，页面保留手动输入，不扫描磁盘或猜测目录。
+
+目录选择是可取消的长请求。MCP 请求取消、App 关闭或 Companion 停止时，取消信号必须关闭选择器并终止完整子进程树；用户点击系统对话框“取消”映射为正常的 `cancelled`，不显示错误。同一 Companion 只允许一个活动选择会话，后续请求返回 `directory_picker_busy`，不得排队后突然弹窗。
+
+选择器只负责取得路径，不负责信任路径。用户确认关联时继续通过现有 Repository Workflow 校验：路径必须为绝对路径；复用模式必须为 Git 仓库且 remote 匹配所选 GitLab 项目；克隆模式的父目录必须存在、可访问，目标目录必须满足克隆安全条件。
+
+安全和隐私约束：
+
+- 只有用户点击按钮后才能打开选择器，不允许后台或自动弹出。
+- Companion 不遍历、索引或上传文件系统，不返回目录内容。
+- 日志只记录 requestId、purpose、outcome、平台和耗时，不记录所选路径。
+- 取消选择保持原输入值和当前仓库选择不变。
+- 同一时刻只允许一个选择会话；重复点击在会话完成前禁用。
+- 选择结果只进入当前 React 表单和现有仓库绑定调用，不新增最近目录持久化。
+
+### 9.5 人工确认门禁
 
 以下操作必须生成短期 `ConfirmationChallenge`，展示精确目标和影响，并要求用户逐次确认：
 
@@ -268,6 +301,7 @@ FlowRivet 执行摘要
 - 工作项详情新增主要命令“开始处理”。已有执行时显示“继续处理”。
 - 执行摘要显示 Codex 任务、执行类型、仓库、分支、MR、Pipeline 和回写状态。
 - 代码开发首次进入时打开仓库选择对话框，不在连接菜单中维护全局仓库映射。
+- 本地路径输入框提供文件夹图标按钮并配有可访问名称；选择中禁用重复操作，取消或失败不清空已有输入。
 - 连接菜单新增 GitLab 状态：CLI 缺失、未登录、已连接、版本不兼容、暂不可用。
 - 高风险操作使用明确的确认对话框，不使用普通按钮误触；确认按钮写明具体动作。
 
@@ -278,6 +312,7 @@ FlowRivet 执行摘要
 - `prepare_work_item_execution`
 - `get_work_item_execution`
 - `list_gitlab_projects`
+- `select_local_directory`
 - `bind_execution_repository`
 - `inspect_execution_workspace`
 - `record_execution_artifact`
@@ -290,6 +325,8 @@ FlowRivet 执行摘要
 
 读取工具标记 `readOnlyHint`。创建分支、推送、创建 MR 和回写标记为非只读；合并、重试和关闭只允许通过确认工具执行。任何工具都不能接受任意可执行文件路径、任意 Shell 字符串或调用方提供的 Token。
 
+`select_local_directory` 仅接受稳定枚举 `existing_repository | clone_parent`，标记为只读且不接受起始路径。工具结果只包含 `selected + absolutePath` 或 `cancelled`；并发选择、平台不支持、选择器启动失败和返回非绝对路径分别映射为 `directory_picker_busy`、`directory_picker_unavailable`、`directory_picker_failed` 和 `directory_picker_invalid_result`。路径不得进入日志或错误文本。
+
 ## 12. 错误处理与恢复
 
 稳定错误至少包括：
@@ -299,6 +336,7 @@ FlowRivet 执行摘要
 - `gitlab_not_connected`、`gitlab_unauthorized`
 - `gitlab_project_forbidden`、`gitlab_output_invalid`
 - `workspace_not_selected`、`workspace_dirty`、`workspace_mismatch`
+- `directory_picker_busy`、`directory_picker_unavailable`、`directory_picker_failed`、`directory_picker_invalid_result`
 - `branch_conflict`、`push_rejected`
 - `merge_request_create_failed`、`pipeline_query_failed`
 - `confirmation_required`、`confirmation_expired`、`confirmation_stale`
@@ -339,6 +377,8 @@ GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令�
 - 工作项到 ExecutionRecord 的唯一键和账号隔离。
 - 重复开始、重复推送、重复创建 MR 和重复回写的幂等性。
 - 仓库 remote 精确匹配、脏工作树保护和分支命名。
+- 目录选择目的枚举、取消、并发选择、非绝对路径拒绝和无路径日志。
+- Windows/macOS/Linux Adapter 的固定参数、取消与错误映射合同。
 - 三类人工门禁的过期、目标变化、账号变化和重启失效。
 - 外部文本不能覆盖门禁或注入命令参数。
 
@@ -357,12 +397,13 @@ GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令�
 2. 从“我的待办”启动需求分析，恢复同一 Codex 任务并回写摘要。
 3. 启动代码开发，选择仓库，复用本地 checkout。
 4. 在无本地仓库时选择父目录并克隆。
-5. 创建 `codex/*` 分支、提交、推送并创建 MR。
-6. 读取 Pipeline 并回写链接与测试结论。
-7. 未确认时拒绝合并、重试 Pipeline 和关闭飞书任务。
-8. 确认过期或目标变化时拒绝执行。
-9. 用户无仓库权限、分支受保护、飞书写权限不足时给出准确恢复动作。
-10. Windows 完成真实全链路；Linux 和 macOS 至少完成自动化 CLI、路径和进程合同，具备对应环境后补真实 E2E。
+5. Windows 原生目录选择器可分别选择已有仓库和克隆父目录；取消保持原输入，失败可手工输入。
+6. 创建 `codex/*` 分支、提交、推送并创建 MR。
+7. 读取 Pipeline 并回写链接与测试结论。
+8. 未确认时拒绝合并、重试 Pipeline 和关闭飞书任务。
+9. 确认过期或目标变化时拒绝执行。
+10. 用户无仓库权限、分支受保护、飞书写权限不足时给出准确恢复动作。
+11. Windows 完成真实全链路；Linux 和 macOS 至少完成自动化 CLI、路径和进程合同，具备对应环境后补真实 E2E。
 
 ## 15. 分阶段交付
 
