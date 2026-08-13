@@ -20,6 +20,7 @@ export class DirectoryPickerError extends Error {
 export interface DirectoryPicker {
   selectDirectory(input: {
     purpose: DirectoryPurpose;
+    initialDirectory?: string;
     signal: AbortSignal;
   }): Promise<DirectorySelection>;
 }

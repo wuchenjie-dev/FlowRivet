@@ -36,7 +36,9 @@ describe("directory picker MCP tool", () => {
       const tool = (await connection.client.listTools()).tools
         .find((entry) => entry.name === "select_local_directory");
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
-      expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(["purpose"]);
+      expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual([
+        "purpose", "initialDirectory",
+      ]);
       expect(tool?.inputSchema.properties?.purpose).toMatchObject({
         enum: ["existing_repository", "clone_parent"],
       });
@@ -51,7 +53,10 @@ describe("directory picker MCP tool", () => {
     try {
       const selected = await connection.client.callTool({
         name: "select_local_directory",
-        arguments: { purpose: "existing_repository" },
+        arguments: {
+          purpose: "existing_repository",
+          initialDirectory: "C:\\workspace\\example",
+        },
       });
       const cancelled = await connection.client.callTool({
         name: "select_local_directory",
@@ -62,7 +67,9 @@ describe("directory picker MCP tool", () => {
       });
       expect(cancelled.structuredContent).toEqual({ outcome: "cancelled" });
       expect(selectDirectory).toHaveBeenNthCalledWith(1, {
-        purpose: "existing_repository", signal: expect.any(AbortSignal),
+        purpose: "existing_repository",
+        initialDirectory: "C:\\workspace\\example",
+        signal: expect.any(AbortSignal),
       });
     } finally { await connection.close(); }
   });
@@ -96,6 +103,7 @@ describe("directory picker MCP tool", () => {
         }),
       ]);
       expect(JSON.stringify(events)).not.toMatch(/C:\\\\private|workspace/i);
+      expect(JSON.stringify(events)).not.toContain("initialDirectory");
     } finally { await connection.close(); }
   });
 

@@ -25,6 +25,7 @@ function picker(options: {
   platform?: NodeJS.Platform;
   runner?: DirectoryPickerCommandRunner;
   resolve?: (command: string) => Promise<string>;
+  directoryExists?: (path: string) => Promise<boolean>;
 } = {}) {
   return new NativeDirectoryPicker({
     platform: options.platform ?? "win32",
@@ -32,12 +33,14 @@ function picker(options: {
     resolveExecutable: options.resolve ?? (async (command) => command === "powershell"
       ? "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
       : `/usr/bin/${command}`),
+    directoryExists: options.directoryExists,
   });
 }
 
-function select(instance: NativeDirectoryPicker) {
+function select(instance: NativeDirectoryPicker, initialDirectory?: string) {
   return instance.selectDirectory({
     purpose: "existing_repository",
+    ...(initialDirectory ? { initialDirectory } : {}),
     signal: new AbortController().signal,
   });
 }
@@ -45,9 +48,9 @@ function select(instance: NativeDirectoryPicker) {
 describe("NativeDirectoryPicker", () => {
   it("uses a fixed STA PowerShell script on Windows", async () => {
     const commandRunner = runner();
-    const instance = picker({ runner: commandRunner });
+    const instance = picker({ runner: commandRunner, directoryExists: async () => true });
 
-    await expect(select(instance)).resolves.toEqual({
+    await expect(select(instance, "C:\\workspace\\example")).resolves.toEqual({
       outcome: "selected",
       absolutePath: "C:\\workspace\\example",
     });
@@ -60,10 +63,12 @@ describe("NativeDirectoryPicker", () => {
     expect(input.args[4]).toMatch(/^[A-Za-z0-9+/]+=*$/u);
     const script = Buffer.from(input.args[4]!, "base64").toString("utf16le");
     expect(script).toContain("GetForegroundWindow");
-    expect(script).toContain("BrowseForFolder($owner");
-    expect(script).toContain("New-Object -ComObject Shell.Application");
-    expect(script).toContain("BrowseForFolder");
-    expect(script).not.toContain("System.Windows.Forms");
+    expect(script).toContain("System.Windows.Forms.FolderBrowserDialog");
+    expect(script).toContain("SelectedPath");
+    expect(script).toContain("ShowDialog($owner)");
+    expect(script).toContain("[Console]::In.ReadToEnd()");
+    expect(script).not.toContain("BrowseForFolder");
+    expect(input.stdin).toBe("C:\\workspace\\example");
     expect(input.args).not.toContain("-WindowStyle");
     expect(input.args.join(" ")).not.toContain("existing_repository");
     expect(input).toMatchObject({
@@ -74,20 +79,81 @@ describe("NativeDirectoryPicker", () => {
 
   it("uses fixed native commands on macOS and Linux", async () => {
     const macRunner = runner({ stdout: "/Users/example/work\n", exitCode: 0 });
-    const mac = picker({ platform: "darwin", runner: macRunner });
-    await expect(select(mac)).resolves.toMatchObject({ outcome: "selected" });
-    expect(macRunner.run.mock.calls[0]![0]).toMatchObject({
-      executablePath: "/usr/bin/osascript",
-      args: ["-e", expect.stringContaining("choose folder")],
+    const mac = picker({
+      platform: "darwin", runner: macRunner, directoryExists: async () => true,
     });
+    await expect(select(mac, "/Users/example/work")).resolves.toMatchObject({ outcome: "selected" });
+    const macInput = macRunner.run.mock.calls[0]![0];
+    expect(macInput).toMatchObject({
+      executablePath: "/usr/bin/osascript",
+      args: ["-e", expect.stringContaining("on run argv"), "/Users/example/work"],
+    });
+    expect(macInput.args[1]).not.toContain("/Users/example/work");
 
     const linuxRunner = runner({ stdout: "/home/example/work\n", exitCode: 0 });
-    const linux = picker({ platform: "linux", runner: linuxRunner });
-    await expect(select(linux)).resolves.toMatchObject({ outcome: "selected" });
+    const linux = picker({
+      platform: "linux", runner: linuxRunner, directoryExists: async () => true,
+    });
+    await expect(select(linux, "/home/example/work")).resolves.toMatchObject({ outcome: "selected" });
     expect(linuxRunner.run.mock.calls[0]![0]).toMatchObject({
       executablePath: "/usr/bin/zenity",
-      args: ["--file-selection", "--directory"],
+      args: ["--file-selection", "--directory", "--filename=/home/example/work/"],
     });
+  });
+
+  it("passes an initial directory to kdialog as a separate token", async () => {
+    const commandRunner = runner({ stdout: "/home/example/work", exitCode: 0 });
+    const instance = picker({
+      platform: "linux",
+      runner: commandRunner,
+      directoryExists: async () => true,
+      resolve: async (command) => {
+        if (command === "zenity") throw new CommandRunnerError("provider_cli_missing");
+        return "/usr/bin/kdialog";
+      },
+    });
+
+    await expect(select(instance, "/home/example/work")).resolves.toMatchObject({
+      outcome: "selected",
+    });
+    expect(commandRunner.run.mock.calls[0]![0].args).toEqual([
+      "--getexistingdirectory", "/home/example/work",
+    ]);
+  });
+
+  it.each(["relative/path", "/missing/path"])(
+    "ignores an unusable initial directory %s",
+    async (initialDirectory) => {
+      const commandRunner = runner({ stdout: "/home/example/work", exitCode: 0 });
+      const instance = picker({
+        platform: "linux",
+        runner: commandRunner,
+        directoryExists: async () => false,
+      });
+
+      await expect(select(instance, initialDirectory)).resolves.toMatchObject({
+        outcome: "selected",
+      });
+      expect(commandRunner.run.mock.calls[0]![0].args).toEqual([
+        "--file-selection", "--directory",
+      ]);
+    },
+  );
+
+  it("ignores an initial directory when its accessibility check fails", async () => {
+    const commandRunner = runner({ stdout: "/home/example/work", exitCode: 0 });
+    const instance = picker({
+      platform: "linux",
+      runner: commandRunner,
+      directoryExists: async () => { throw new Error("private path"); },
+    });
+
+    await expect(select(instance, "/private/work")).resolves.toMatchObject({
+      outcome: "selected",
+    });
+    expect(commandRunner.run.mock.calls[0]![0].args).toEqual([
+      "--file-selection", "--directory",
+    ]);
   });
 
   it("falls back from zenity to kdialog and reports missing pickers", async () => {

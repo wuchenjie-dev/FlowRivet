@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
   directoryPurposeSchema,
+  directorySelectionInputSchema,
   directorySelectionSchema,
 } from "../../contracts/directory-picker.js";
 import {
@@ -49,7 +50,10 @@ export function registerDirectoryPickerTools(server: McpServer, options: {
   registerAppTool(server, "select_local_directory", {
     title: "选择本机文件夹",
     description: "在本机打开系统目录选择器，只返回用户主动选择的绝对路径。",
-    inputSchema: { purpose: directoryPurposeSchema },
+    inputSchema: {
+      purpose: directoryPurposeSchema,
+      initialDirectory: directorySelectionInputSchema.shape.initialDirectory,
+    },
     outputSchema: {
       outcome: directorySelectionSchema.options[0].shape.outcome.or(
         directorySelectionSchema.options[1].shape.outcome,
@@ -58,12 +62,16 @@ export function registerDirectoryPickerTools(server: McpServer, options: {
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
     _meta: {},
-  }, async ({ purpose }, extra) => {
+  }, async ({ purpose, initialDirectory }, extra) => {
     const requestId = createRequestId();
     const startedAt = now().getTime();
     try {
       const selection = directorySelectionSchema.parse(
-        await options.picker.selectDirectory({ purpose, signal: extra.signal }),
+        await options.picker.selectDirectory({
+          purpose,
+          ...(initialDirectory ? { initialDirectory } : {}),
+          signal: extra.signal,
+        }),
       );
       logger.completed({
         requestId,

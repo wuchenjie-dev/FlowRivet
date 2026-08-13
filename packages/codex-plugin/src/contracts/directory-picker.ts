@@ -7,6 +7,7 @@ export const directoryPurposeSchema = z.enum([
 
 export const directorySelectionInputSchema = z.object({
   purpose: directoryPurposeSchema,
+  initialDirectory: z.string().min(1).optional(),
 }).strict();
 
 export const directorySelectionSchema = z.discriminatedUnion("outcome", [
