@@ -78,7 +78,7 @@ npm run plugin:update
 npm run plugin:update -- --adopt-legacy-companion --json
 ```
 
-成功结果包含插件版本、marketplace、Companion PID、实例 ID 和 health 地址，不包含命令输出、业务数据或凭据。更新完成后必须重启 Codex 并新建任务；已有任务不会重新加载 Skill 和 MCP 工具。
+成功结果包含插件版本、marketplace、Companion PID、实例 ID 和 health 地址，不包含命令输出、业务数据或凭据。更新完成后优先在 Codex 中重新打开 FlowRivet 看板；需要加载新增 MCP 工具时新建任务。只有宿主仍缓存旧资源时才完全退出并重启 Codex。
 
 ## 验收流程
 
@@ -94,8 +94,11 @@ npm run plugin:update -- --adopt-legacy-companion --json
 10. Codex 分类为研发实现且缺少仓库时，应打开详情抽屉同级的独立仓库模态框。两种准备方式均显示文件夹图标；“复用本地仓库”选择 Git 仓库，“克隆到父目录”选择父目录。
 11. 点击文件夹图标应打开当前操作系统的原生目录选择窗口。选择成功只填入绝对路径，不自动关联；取消保留原输入；选择器不可用时显示可恢复提示且允许手动输入。
 12. 关联成功后发送只含执行 ID 的恢复消息。
-13. 账号菜单可以断开飞书项目；断开后清除该 Provider 的活跃缓存并返回登录页。
-14. 修改一条已在基线中的飞书任务，等待扫描后右上角铃铛应出现未读数；点击通知应打开飞书原任务。
+13. 关联成功后应显示“仓库已关联”。在没有 branch/MR 时点击“修改仓库关联”，当前项目与本地路径必须预选；当前项目不在项目列表首屏时通过数字 projectId 精确恢复。
+14. 再次点击文件夹按钮应以当前存在路径为初始目录，等待期间显示“等待系统选择...”，成功后显示“目录已选择”；取消和错误都保留输入。
+15. 执行已有 branch 或 MR 后应显示“仓库关联已锁定”。直接调用工具替换项目 ID、项目路径或本地路径均返回 `execution_repository_locked`，完全相同的重试保持幂等。
+16. 账号菜单可以断开飞书项目；断开后清除该 Provider 的活跃缓存并返回登录页。
+17. 修改一条已在基线中的飞书任务，等待扫描后右上角铃铛应出现未读数；点击通知应打开飞书原任务。
 
 ## 授权会话行为
 
@@ -136,10 +139,11 @@ npm run plugin:update -- --adopt-legacy-companion --json
 
 ## 原生目录选择验收
 
-- Windows：确认 PowerShell STA 进程能显示系统文件夹窗口；选择目录返回成功，点击取消返回取消，并且 Companion 不保留路径日志。
+- Windows：确认只显示系统文件夹窗口，不出现 PowerShell 控制台；重复选择时初始位置为当前存在路径，并且可以向上浏览。选择目录返回成功，点击取消返回取消，Companion 不保留路径日志。
 - macOS：确认系统目录选择窗口可选目录、可取消；自动化合同固定使用 `osascript`，不拼接用户输入。
 - Linux：优先验收 `zenity`，缺失时验收 `kdialog`；两者都缺失时页面应显示手动输入降级提示。
 - 保持系统选择窗口打开时关闭仓库弹窗，晚到结果不得覆盖随后输入或另一种准备方式的路径。
+- 检查 `companion.log`：`select_local_directory` 只能记录 requestId、purpose、platform、outcome、durationMs 和稳定 errorCode，不得出现初始路径、选择结果或目录内容。
 
 ## 自动化验证
 

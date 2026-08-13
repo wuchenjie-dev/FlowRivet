@@ -515,6 +515,8 @@ describe("FlowRivet taskboard", () => {
     await user.click(existingButton);
     expect(callTool).toHaveBeenCalledWith("select_local_directory", { purpose: "existing_repository" });
     expect((screen.getByLabelText("本地仓库绝对路径") as HTMLInputElement).value).toBe("C:\\work\\flowrivet");
+    expect(screen.getByRole("dialog", { name: "选择研发仓库" })
+      .querySelector(".repository-directory-success")?.textContent).toContain("目录已选择");
     expect(callTool.mock.calls.some(([name]) => name === "bind_execution_repository")).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "克隆到父目录" }));

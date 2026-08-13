@@ -1,4 +1,4 @@
-import { FolderOpen, GitBranch, LoaderCircle, X } from "lucide-react";
+import { Check, FolderOpen, GitBranch, LoaderCircle, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { GitLabProject } from "../../contracts/gitlab.js";
@@ -26,6 +26,7 @@ export function RepositoryDialog(props: {
   });
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string>();
+  const [directorySelected, setDirectorySelected] = useState(false);
   const directoryRequest = useRef(0);
   const path = paths[mode];
   const filtered = useMemo(() => props.projects.filter((project) =>
@@ -46,6 +47,7 @@ export function RepositoryDialog(props: {
     directoryRequest.current += 1;
     setSelectingDirectory(false);
     setDirectoryError(undefined);
+    setDirectorySelected(false);
     setMode(nextMode);
   }
 
@@ -54,6 +56,7 @@ export function RepositoryDialog(props: {
     const requestedMode = mode;
     setSelectingDirectory(true);
     setDirectoryError(undefined);
+    setDirectorySelected(false);
     try {
       const selection = await props.onSelectDirectory(
         requestedMode === "existing" ? "existing_repository" : "clone_parent",
@@ -62,6 +65,7 @@ export function RepositoryDialog(props: {
       if (request !== directoryRequest.current) return;
       if (selection.outcome === "selected") {
         setPaths((current) => ({ ...current, [requestedMode]: selection.absolutePath }));
+        setDirectorySelected(true);
       }
     } catch {
       if (request === directoryRequest.current) {
@@ -102,7 +106,10 @@ export function RepositoryDialog(props: {
           <label>
             {mode === "existing" ? "本地仓库绝对路径" : "父目录绝对路径"}
             <span className="repository-path-field">
-              <input disabled={props.pending} value={path} onChange={(event) => setPaths((current) => ({ ...current, [mode]: event.target.value }))} placeholder={mode === "existing" ? "C:\\workspace\\project" : "C:\\workspace"} />
+              <input disabled={props.pending} value={path} onChange={(event) => {
+                setDirectorySelected(false);
+                setPaths((current) => ({ ...current, [mode]: event.target.value }));
+              }} placeholder={mode === "existing" ? "C:\\workspace\\project" : "C:\\workspace"} />
               <button
                 type="button"
                 className="repository-directory-button"
@@ -116,6 +123,7 @@ export function RepositoryDialog(props: {
               </button>
             </span>
           </label>
+          {directorySelected ? <p className="repository-directory-success" role="status" aria-live="polite"><Check size={14} aria-hidden="true" />目录已选择</p> : null}
           {directoryError ? <p className="repository-directory-error" role="alert">{directoryError}</p> : null}
           {props.error ? <p role="alert">{props.error}</p> : null}
         </div>

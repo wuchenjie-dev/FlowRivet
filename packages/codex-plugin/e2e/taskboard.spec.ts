@@ -271,6 +271,7 @@ test("repository dialog selects native directories without submitting", async ({
   await dialog.getByRole("option", { name: /team\/flowrivet/ }).click();
   await dialog.getByRole("button", { name: "选择本地仓库文件夹" }).click();
   await expect(dialog.getByLabel("本地仓库绝对路径")).toHaveValue("C:\\workspace\\example");
+  await expect(dialog.getByRole("status")).toContainText("目录已选择");
   await expect(dialog.getByRole("button", { name: "确认关联" })).toBeEnabled();
   await dialog.getByRole("button", { name: "克隆到父目录" }).click();
   await dialog.getByRole("button", { name: "选择克隆父文件夹" }).click();
