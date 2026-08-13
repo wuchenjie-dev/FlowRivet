@@ -36,8 +36,8 @@ describe("ExecutionService", () => {
 
     expect(classified).toMatchObject({ executionKind: "development", state: "awaiting_repository" });
     expect(await service.classify(prepared.executionId, "development")).toEqual(classified);
-    await expect(service.classify(prepared.executionId, "requirement_analysis"))
-      .rejects.toMatchObject({ code: "execution_state_conflict" });
+    expect(await service.classify(prepared.executionId, "requirement_analysis"))
+      .toMatchObject({ executionKind: "requirement_analysis", workMode: "non_code", state: "ready" });
   });
 
   it.each(["requirement_analysis", "requirement_breakdown"] as const)(
@@ -56,6 +56,64 @@ describe("ExecutionService", () => {
     },
   );
 
+  it("lets users change work mode before handoff and removes an unused repository", async () => {
+    const service = new ExecutionService({
+      store: new InMemoryExecutionStore(), createId: () => "execution-mode",
+    });
+    const prepared = await service.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-mode",
+      taskLaunchMode: "handoff", executionKind: "pending_classification",
+    });
+
+    expect(await service.setMode(prepared.executionId, "code"))
+      .toMatchObject({ workMode: "code", state: "awaiting_repository" });
+    await service.bindRepository(prepared.executionId, repository("cc/one"));
+    expect(await service.setMode(prepared.executionId, "non_code"))
+      .toMatchObject({ workMode: "non_code", state: "ready", gitlab: undefined });
+    expect(await service.setMode(prepared.executionId, "code"))
+      .toMatchObject({ workMode: "code", state: "awaiting_repository" });
+  });
+
+  it("locks work mode after a handoff is dispatched", async () => {
+    const service = new ExecutionService({
+      store: new InMemoryExecutionStore(),
+      clock: () => new Date("2026-08-13T00:00:00.000Z"),
+      createId: () => "execution-handoff",
+    });
+    const prepared = await service.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-handoff",
+      taskLaunchMode: "handoff", executionKind: "pending_classification",
+    });
+    await service.setMode(prepared.executionId, "non_code");
+    await service.attachHandoff(prepared.executionId, "handoff-1");
+
+    expect(await service.markHandoffDispatched(prepared.executionId, "handoff-1"))
+      .toMatchObject({ handoffDispatchedAt: "2026-08-13T00:00:00.000Z" });
+    await expect(service.setMode(prepared.executionId, "code"))
+      .rejects.toMatchObject({ code: "execution_mode_locked" });
+    await expect(service.markHandoffDispatched(prepared.executionId, "other-handoff"))
+      .rejects.toMatchObject({ code: "execution_handoff_conflict" });
+  });
+
+  it("creates the next attempt after the previous execution completes", async () => {
+    let nextId = 0;
+    const service = new ExecutionService({
+      store: new InMemoryExecutionStore(), createId: () => `execution-${++nextId}`,
+    });
+    const input = {
+      providerId: "feishu-project" as const, accountKey: "user-1", workItemKey: "item-repeat",
+      taskLaunchMode: "handoff" as const, executionKind: "pending_classification" as const,
+    };
+    const first = await service.prepare(input);
+    await service.setMode(first.executionId, "non_code");
+    await service.transition(first.executionId, "running");
+    await service.transition(first.executionId, "completed");
+
+    expect(await service.prepare(input)).toMatchObject({
+      executionId: "execution-2", attempt: 2, workMode: "pending", state: "prepared",
+    });
+  });
+
   it("rejects repository replacement after branch or merge request activity", async () => {
     const store = new InMemoryExecutionStore();
     const service = new ExecutionService({ store, createId: () => "execution-1" });
@@ -63,6 +121,7 @@ describe("ExecutionService", () => {
       providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
       taskLaunchMode: "handoff", executionKind: "development",
     });
+    await service.setMode(prepared.executionId, "code");
     await service.bindRepository(prepared.executionId, repository("cc/one", { branch: "codex/item-1" }));
 
     await expect(service.bindRepository(prepared.executionId, repository("cc/two")))
@@ -80,6 +139,7 @@ describe("ExecutionService", () => {
       providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
       taskLaunchMode: "handoff", executionKind: "development",
     });
+    await service.setMode(prepared.executionId, "code");
     const bound = await service.bindRepository(
       prepared.executionId,
       repository("cc/one", activity),
@@ -98,6 +158,7 @@ describe("ExecutionService", () => {
       providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
       taskLaunchMode: "handoff", executionKind: "development",
     });
+    await service.setMode(prepared.executionId, "code");
     const repositoryBinding = repository("cc/one", { branch: "codex/item-1" });
     const bound = await service.bindRepository(prepared.executionId, repositoryBinding);
 

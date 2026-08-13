@@ -2,15 +2,19 @@ import { randomUUID } from "node:crypto";
 
 import {
   executionRecordSchema,
+  type ExecutionRecord,
   type ExecutionKind,
   type ExecutionArtifact,
   type ExecutionRepository,
   type ExecutionState,
+  type ExecutionWorkMode,
 } from "../contracts/executions.js";
 import { ExecutionStoreError, type ExecutionIdentity, type ExecutionStore } from "./execution-store.js";
 
 export type ExecutionServiceErrorCode =
   | "execution_repository_locked"
+  | "execution_mode_locked"
+  | "execution_handoff_conflict"
   | "execution_not_found"
   | "execution_state_conflict"
   | "execution_transition_invalid";
@@ -35,6 +39,7 @@ export class ExecutionService {
   }) {
     const existing = await this.store.findCurrent(input);
     if (existing) return existing;
+    const latest = await this.store.findLatest(input);
     const timestamp = this.clock().toISOString();
     const record = executionRecordSchema.parse({
       schemaVersion: 2,
@@ -44,7 +49,7 @@ export class ExecutionService {
       workItemKey: input.workItemKey,
       ...(input.workItemUpdatedAt ? { workItemUpdatedAt: input.workItemUpdatedAt } : {}),
       taskLaunchMode: input.taskLaunchMode,
-      attempt: 1,
+      attempt: (latest?.attempt ?? 0) + 1,
       workMode: "pending",
       executionKind: "pending_classification",
       state: "prepared",
@@ -66,21 +71,47 @@ export class ExecutionService {
     executionId: string,
     executionKind: Exclude<ExecutionKind, "pending_classification">,
   ) {
+    const updated = await this.setMode(
+      executionId,
+      executionKind === "development" ? "code" : "non_code",
+    );
+    if (updated.executionKind === executionKind) return updated;
+    const labeled = executionRecordSchema.parse({
+      ...updated, executionKind, updatedAt: this.clock().toISOString(),
+    });
+    await this.store.save(labeled);
+    return labeled;
+  }
+
+  async setMode(executionId: string, workMode: Exclude<ExecutionWorkMode, "pending">) {
     const record = await this.store.getById(executionId);
     if (!record) throw new ExecutionServiceError("execution_not_found");
-    if (record.executionKind !== "pending_classification") {
-      if (record.executionKind === executionKind) return record;
-      throw new ExecutionServiceError("execution_state_conflict");
+    if (record.workMode === workMode) return record;
+    if (!canChangeMode(record)) throw new ExecutionServiceError("execution_mode_locked");
+    const updated = executionRecordSchema.parse({
+      ...record,
+      workMode,
+      ...(workMode === "non_code" ? { gitlab: undefined } : {}),
+      state: workMode === "code" && !record.gitlab ? "awaiting_repository" : "ready",
+      updatedAt: this.clock().toISOString(),
+    });
+    await this.store.save(updated);
+    return updated;
+  }
+
+  async markHandoffDispatched(executionId: string, handoffId: string) {
+    const record = await this.store.getById(executionId);
+    if (!record) throw new ExecutionServiceError("execution_not_found");
+    if (record.codexHandoffId !== handoffId) {
+      throw new ExecutionServiceError("execution_handoff_conflict");
     }
-    if (record.state !== "prepared") {
+    if (record.handoffDispatchedAt) return record;
+    if (record.workMode === "pending" || record.state !== "ready") {
       throw new ExecutionServiceError("execution_state_conflict");
     }
     const updated = executionRecordSchema.parse({
       ...record,
-      executionKind,
-      state: executionKind === "development" && !record.gitlab
-        ? "awaiting_repository"
-        : "ready",
+      handoffDispatchedAt: this.clock().toISOString(),
       updatedAt: this.clock().toISOString(),
     });
     await this.store.save(updated);
@@ -90,6 +121,7 @@ export class ExecutionService {
   async bindRepository(executionId: string, repository: ExecutionRepository) {
     const record = await this.store.getById(executionId);
     if (!record) throw new ExecutionServiceError("execution_not_found");
+    if (record.workMode !== "code") throw new ExecutionServiceError("execution_state_conflict");
     if (record.gitlab && (record.gitlab.branch || record.gitlab.mergeRequestIid)) {
       if (sameRepository(record.gitlab, repository)) return record;
       throw new ExecutionServiceError("execution_repository_locked");
@@ -175,4 +207,12 @@ function sameRepository(left: ExecutionRepository, right: ExecutionRepository) {
     && left.mergeRequestIid === right.mergeRequestIid
     && left.mergeRequestUrl === right.mergeRequestUrl
     && left.pipelineId === right.pipelineId;
+}
+
+function canChangeMode(record: ExecutionRecord) {
+  if (record.handoffDispatchedAt || record.artifacts.length > 0) return false;
+  if (record.gitlab?.branch || record.gitlab?.mergeRequestIid) return false;
+  return record.state === "prepared"
+    || record.state === "awaiting_repository"
+    || record.state === "ready";
 }
