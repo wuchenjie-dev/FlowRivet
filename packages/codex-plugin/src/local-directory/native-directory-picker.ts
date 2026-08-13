@@ -14,8 +14,17 @@ import {
 } from "./directory-picker.js";
 
 const WINDOWS_SCRIPT = String.raw`
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class FlowRivetNativeWindow {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+}
+"@
+$owner = [FlowRivetNativeWindow]::GetForegroundWindow().ToInt64()
 $shell = New-Object -ComObject Shell.Application
-$folder = $shell.BrowseForFolder(0, 'Select a folder', 0x51, 0)
+$folder = $shell.BrowseForFolder($owner, 'Select a folder', 0x51, 0)
 if ($null -ne $folder) {
   [Console]::Out.Write($folder.Self.Path)
   exit 0
@@ -56,7 +65,7 @@ export class NativeDirectoryPicker implements DirectoryPicker {
         timeoutMs: 600_000,
         allowExitCodes: [0, 1],
         signal: input.signal,
-        windowsHide: this.platform === "win32" ? false : undefined,
+        windowsHide: this.platform === "win32" ? true : undefined,
       });
       return this.parseResult(result);
     } catch (error) {
@@ -79,8 +88,6 @@ export class NativeDirectoryPicker implements DirectoryPicker {
           "-NoProfile",
           "-STA",
           "-NonInteractive",
-          "-WindowStyle",
-          "Hidden",
           "-EncodedCommand",
           Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64"),
         ],
