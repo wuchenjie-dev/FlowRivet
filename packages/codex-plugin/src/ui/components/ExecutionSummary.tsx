@@ -1,4 +1,4 @@
-import { Check, Copy, ExternalLink } from "lucide-react";
+import { Check, Copy, ExternalLink, LockKeyhole } from "lucide-react";
 
 import type { WorkExecutionHandoff } from "../../contracts/executions.js";
 
@@ -12,11 +12,12 @@ export function ExecutionSummary({
   allowCompatibilityCopy?: boolean;
 }) {
   const gitlab = value.execution.gitlab;
+  const repositoryLocked = Boolean(gitlab?.branch || gitlab?.mergeRequestIid);
   const mergeRequestUrl = safeGitLabUrl(gitlab?.mergeRequestUrl);
   return (
     <section className="execution-summary" aria-labelledby="execution-summary-heading">
       <h3 id="execution-summary-heading">Codex 处理任务</h3>
-      <p role="status"><Check size={14} aria-hidden="true" />已创建可恢复的 Codex 执行</p>
+      <p role="status"><Check size={14} aria-hidden="true" />{gitlab ? "仓库已关联" : "已创建可恢复的 Codex 执行"}</p>
       <dl>
         <div><dt>执行 ID</dt><dd>{value.execution.executionId}</dd></div>
         <div><dt>任务类型</dt><dd>{kindLabel(value.execution.executionKind)}</dd></div>
@@ -35,7 +36,14 @@ export function ExecutionSummary({
           <Copy size={14} aria-hidden="true" />兼容复制到 Codex
         </button>
       ) : null}
-      {!gitlab && onSelectRepository ? <button type="button" onClick={onSelectRepository}>关联研发仓库</button> : null}
+      {onSelectRepository ? gitlab ? (
+        <div className="execution-repository-action">
+          <button type="button" disabled={repositoryLocked} onClick={onSelectRepository}>
+            {repositoryLocked ? <><LockKeyhole size={14} aria-hidden="true" />仓库关联已锁定</> : "修改仓库关联"}
+          </button>
+          {repositoryLocked ? <small>已创建研发分支，仓库关联不可修改</small> : null}
+        </div>
+      ) : <button type="button" onClick={onSelectRepository}>关联研发仓库</button> : null}
     </section>
   );
 }

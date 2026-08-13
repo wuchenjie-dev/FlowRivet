@@ -545,11 +545,16 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       {selectedItem && workExecution.repositoryOpen ? (
         <RepositoryDialog
           projects={workExecution.projects}
+          initialProject={workExecution.repositoryProject}
+          initialRepository={workExecution.result?.execution.gitlab}
           pending={workExecution.pending}
           error={workExecution.error}
           onCancel={() => workExecution.setRepositoryOpen(false)}
-          onSelectDirectory={async (purpose) => {
-            const response = await bridge.callTool("select_local_directory", { purpose });
+          onSelectDirectory={async (purpose, initialDirectory) => {
+            const response = await bridge.callTool("select_local_directory", {
+              purpose,
+              ...(initialDirectory ? { initialDirectory } : {}),
+            });
             return directorySelectionSchema.parse(response.structuredContent);
           }}
           onBind={(project, paths) => void workExecution.bindRepository(project, paths)}

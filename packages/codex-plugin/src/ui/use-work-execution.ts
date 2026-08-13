@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { workExecutionHandoffSchema, type WorkExecutionHandoff } from "../contracts/executions.js";
 import type { WorkItem } from "../contracts/taskboard.js";
 import type { McpAppsBridge } from "./bridge.js";
-import { gitLabProjectPageSchema, type GitLabProject } from "../contracts/gitlab.js";
+import { gitLabProjectPageSchema, gitLabProjectSchema, type GitLabProject } from "../contracts/gitlab.js";
 import { executionRecordSchema } from "../contracts/executions.js";
 
 export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendUserMessage" | "onToolResult">) {
@@ -12,6 +12,7 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
   const [error, setError] = useState<string>();
   const [projects, setProjects] = useState<GitLabProject[]>([]);
   const [repositoryOpen, setRepositoryOpen] = useState(false);
+  const [repositoryProject, setRepositoryProject] = useState<GitLabProject>();
   const resultRef = useRef<WorkExecutionHandoff | undefined>(undefined);
   const recoverySequence = useRef(0);
   resultRef.current = result;
@@ -71,12 +72,31 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
     setResult(undefined);
     setError(undefined);
     setRepositoryOpen(false);
+    setRepositoryProject(undefined);
   }
   async function loadRepositories() {
     setPending(true); setError(undefined);
     try {
       const response = await bridge.callTool("list_gitlab_projects", { page: 1, perPage: 50 });
-      setProjects(gitLabProjectPageSchema.parse(response.structuredContent).projects);
+      const listed = gitLabProjectPageSchema.parse(response.structuredContent).projects;
+      const currentRepository = resultRef.current?.execution.gitlab;
+      let currentProject = currentRepository
+        ? listed.find((project) => project.projectId === currentRepository.projectId)
+        : undefined;
+      if (currentRepository && !currentProject) {
+        try {
+          const projectResponse = await bridge.callTool("get_gitlab_project", {
+            projectId: currentRepository.projectId,
+          });
+          currentProject = gitLabProjectSchema.parse(projectResponse.structuredContent);
+        } catch {
+          setError("当前关联项目无法读取，请重新选择");
+        }
+      }
+      setProjects(currentProject && !listed.some((project) => project.projectId === currentProject.projectId)
+        ? [currentProject, ...listed]
+        : listed);
+      setRepositoryProject(currentProject);
       setRepositoryOpen(true);
     } catch { setError("无法读取 GitLab 项目，请检查连接"); }
     finally { setPending(false); }
@@ -102,5 +122,5 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
     } catch { setError("仓库无法关联：请检查路径、remote 和工作树状态"); }
     finally { setPending(false); }
   }
-  return { result, pending, error, prepareAndSend, restore, clear, projects, repositoryOpen, setRepositoryOpen, openRepositoryPicker, bindRepository };
+  return { result, pending, error, prepareAndSend, restore, clear, projects, repositoryProject, repositoryOpen, setRepositoryOpen, openRepositoryPicker, bindRepository };
 }

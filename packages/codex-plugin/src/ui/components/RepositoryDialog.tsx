@@ -2,22 +2,28 @@ import { FolderOpen, GitBranch, LoaderCircle, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { GitLabProject } from "../../contracts/gitlab.js";
+import type { ExecutionRepository } from "../../contracts/executions.js";
 import type { DirectoryPurpose, DirectorySelection } from "../../local-directory/directory-picker.js";
 
 export function RepositoryDialog(props: {
   projects: GitLabProject[];
+  initialProject?: GitLabProject;
+  initialRepository?: ExecutionRepository;
   pending: boolean;
   error?: string;
   onBind: (project: GitLabProject, paths: { localPath?: string; parentDirectory?: string }) => void;
-  onSelectDirectory: (purpose: DirectoryPurpose) => Promise<DirectorySelection>;
+  onSelectDirectory: (purpose: DirectoryPurpose, initialDirectory?: string) => Promise<DirectorySelection>;
   onCancel: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const openerRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<GitLabProject>();
+  const [selected, setSelected] = useState<GitLabProject | undefined>(props.initialProject);
   const [mode, setMode] = useState<"existing" | "clone">("existing");
-  const [paths, setPaths] = useState({ existing: "", clone: "" });
+  const [paths, setPaths] = useState({
+    existing: props.initialRepository?.localPath ?? "",
+    clone: "",
+  });
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const [directoryError, setDirectoryError] = useState<string>();
   const directoryRequest = useRef(0);
@@ -51,6 +57,7 @@ export function RepositoryDialog(props: {
     try {
       const selection = await props.onSelectDirectory(
         requestedMode === "existing" ? "existing_repository" : "clone_parent",
+        paths[requestedMode] || undefined,
       );
       if (request !== directoryRequest.current) return;
       if (selection.outcome === "selected") {
@@ -76,36 +83,36 @@ export function RepositoryDialog(props: {
       <section className="repository-panel">
         <header className="repository-header">
           <div><GitBranch size={17} aria-hidden="true" /><h2 id="repository-dialog-heading">选择研发仓库</h2></div>
-          <button type="button" className="icon-button" aria-label="关闭仓库选择" onClick={props.onCancel}><X size={17} /></button>
+          <button type="button" className="icon-button" aria-label="关闭仓库选择" disabled={props.pending} onClick={props.onCancel}><X size={17} /></button>
         </header>
         <div className="repository-body">
-          <label>搜索 GitLab 项目<input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="项目名称或路径" /></label>
+          <label>搜索 GitLab 项目<input autoFocus disabled={props.pending} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="项目名称或路径" /></label>
           <div className="repository-list" role="listbox" aria-label="GitLab 项目">
             {filtered.map((project) => (
-              <button key={project.projectId} type="button" role="option" aria-selected={selected?.projectId === project.projectId} onClick={() => setSelected(project)}>
+              <button key={project.projectId} type="button" role="option" disabled={props.pending} aria-selected={selected?.projectId === project.projectId} onClick={() => setSelected(project)}>
                 <strong>{project.displayName}</strong><span>{project.pathWithNamespace}</span>
               </button>
             ))}
             {filtered.length === 0 ? <p>没有匹配的项目</p> : null}
           </div>
           <div className="repository-modes" aria-label="仓库准备方式">
-            <button type="button" aria-pressed={mode === "existing"} onClick={() => changeMode("existing")}>复用本地仓库</button>
-            <button type="button" aria-pressed={mode === "clone"} onClick={() => changeMode("clone")}>克隆到父目录</button>
+            <button type="button" disabled={props.pending} aria-pressed={mode === "existing"} onClick={() => changeMode("existing")}>复用本地仓库</button>
+            <button type="button" disabled={props.pending} aria-pressed={mode === "clone"} onClick={() => changeMode("clone")}>克隆到父目录</button>
           </div>
           <label>
             {mode === "existing" ? "本地仓库绝对路径" : "父目录绝对路径"}
             <span className="repository-path-field">
-              <input value={path} onChange={(event) => setPaths((current) => ({ ...current, [mode]: event.target.value }))} placeholder={mode === "existing" ? "C:\\workspace\\project" : "C:\\workspace"} />
+              <input disabled={props.pending} value={path} onChange={(event) => setPaths((current) => ({ ...current, [mode]: event.target.value }))} placeholder={mode === "existing" ? "C:\\workspace\\project" : "C:\\workspace"} />
               <button
                 type="button"
-                className="icon-button repository-directory-button"
+                className="repository-directory-button"
                 aria-label={mode === "existing" ? "选择本地仓库文件夹" : "选择克隆父文件夹"}
                 title={mode === "existing" ? "选择本地仓库文件夹" : "选择克隆父文件夹"}
-                disabled={selectingDirectory}
+                disabled={selectingDirectory || props.pending}
                 aria-busy={selectingDirectory}
                 onClick={() => void selectDirectory()}
               >
-                {selectingDirectory ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <FolderOpen size={16} aria-hidden="true" />}
+                {selectingDirectory ? <><LoaderCircle size={16} className="spin" aria-hidden="true" />等待系统选择...</> : <><FolderOpen size={16} aria-hidden="true" />选择文件夹</>}
               </button>
             </span>
           </label>
@@ -113,9 +120,9 @@ export function RepositoryDialog(props: {
           {props.error ? <p role="alert">{props.error}</p> : null}
         </div>
         <footer className="repository-actions">
-          <button type="button" onClick={props.onCancel}>取消</button>
+          <button type="button" disabled={props.pending} onClick={props.onCancel}>取消</button>
           <button type="button" disabled={!selected || !path.trim() || props.pending} onClick={() => selected && props.onBind(selected, mode === "existing" ? { localPath: path.trim() } : { parentDirectory: path.trim() })}>
-            {props.pending ? "正在准备..." : "确认关联"}
+            {props.pending ? <><LoaderCircle size={15} className="spin" aria-hidden="true" />正在关联...</> : "确认关联"}
           </button>
         </footer>
       </section>

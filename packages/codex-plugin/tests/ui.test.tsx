@@ -12,6 +12,7 @@ import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
 import { App } from "../src/ui/App.js";
 import type { McpAppsBridge } from "../src/ui/bridge.js";
 import { RepositoryDialog } from "../src/ui/components/RepositoryDialog.js";
+import { ExecutionSummary } from "../src/ui/components/ExecutionSummary.js";
 
 afterEach(() => {
   cleanup();
@@ -584,6 +585,74 @@ describe("FlowRivet taskboard", () => {
 
     expect((screen.getByLabelText("父目录绝对路径") as HTMLInputElement).value).toBe("");
     expect(screen.getByRole("button", { name: "选择克隆父文件夹" }).getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("restores an existing repository and reopens the picker at its current path", async () => {
+    const user = userEvent.setup();
+    const project = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" } as const;
+    const onSelectDirectory = vi.fn().mockResolvedValue({ outcome: "cancelled" });
+    render(<RepositoryDialog
+      projects={[project]}
+      initialProject={project}
+      initialRepository={{ host: project.host, projectId: "1", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" }}
+      pending={false}
+      onBind={vi.fn()}
+      onCancel={vi.fn()}
+      onSelectDirectory={onSelectDirectory}
+    />);
+
+    expect(screen.getByRole("option", { name: /cc\/flowrivet/ }).getAttribute("aria-selected")).toBe("true");
+    expect((screen.getByLabelText("本地仓库绝对路径") as HTMLInputElement).value).toBe("C:\\work\\flowrivet");
+    await user.click(screen.getByRole("button", { name: "选择本地仓库文件夹" }));
+    expect(onSelectDirectory).toHaveBeenCalledWith("existing_repository", "C:\\work\\flowrivet");
+  });
+
+  it("allows repository changes before activity and explains the locked state afterwards", () => {
+    const base = {
+      execution: {
+        schemaVersion: 1 as const, executionId: "execution-lock", providerId: "feishu-project" as const,
+        accountKey: "user-1", workItemKey: "item-1", taskLaunchMode: "handoff" as const,
+        executionKind: "development" as const, state: "ready" as const, artifacts: [],
+        createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z",
+        gitlab: { host: "gitlab-aiabu.ruijie.com.cn" as const, projectId: "1", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" },
+      },
+      handoff: { handoffId: "handoff-1", prompt: "Continue" },
+    };
+    const onSelectRepository = vi.fn();
+    const { rerender } = render(<ExecutionSummary value={base} onSelectRepository={onSelectRepository} />);
+    expect(screen.getByRole("status").textContent).toContain("仓库已关联");
+    expect(screen.getByRole("button", { name: "修改仓库关联" }).hasAttribute("disabled")).toBe(false);
+
+    rerender(<ExecutionSummary value={{ ...base, execution: { ...base.execution, gitlab: { ...base.execution.gitlab, branch: "codex/item-1" } } }} onSelectRepository={onSelectRepository} />);
+    expect(screen.getByRole("button", { name: "仓库关联已锁定" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("已创建研发分支，仓库关联不可修改")).toBeTruthy();
+  });
+
+  it("recovers an associated project that is missing from the first project page", async () => {
+    const user = userEvent.setup();
+    const snapshot = snapshotWithFeishuState("connected");
+    const associatedProject = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "75", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" };
+    const execution = {
+      schemaVersion: 1, executionId: "execution-recovery", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
+      executionKind: "development", state: "ready", artifacts: [],
+      createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z",
+      gitlab: { host: associatedProject.host, projectId: "75", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" },
+    };
+    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
+      name === "get_work_item_execution" ? { execution }
+        : name === "prepare_work_item_execution" ? { execution, handoff: { handoffId: "handoff-recovery", prompt: "Continue" } }
+          : name === "list_gitlab_projects" ? { page: 1, hasMore: true, projects: [] }
+            : name === "get_gitlab_project" ? associatedProject
+              : { ...snapshot.items[0], assignees: [], descriptionTruncated: false } }));
+    render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool })} />);
+    await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
+
+    await user.click(await screen.findByRole("button", { name: "修改仓库关联" }));
+
+    expect(callTool).toHaveBeenCalledWith("get_gitlab_project", { projectId: "75" });
+    expect((await screen.findByRole("option", { name: /cc\/flowrivet/ })).getAttribute("aria-selected")).toBe("true");
+    expect((screen.getByLabelText("本地仓库绝对路径") as HTMLInputElement).value).toBe("C:\\work\\flowrivet");
   });
 
   it("shows GitLab progress and an explicit local-only writeback state", async () => {

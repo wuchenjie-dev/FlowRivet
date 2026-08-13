@@ -372,6 +372,12 @@ function DemoHarness() {
                       defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/team/flowrivet.git",
                     }],
                   }
+              : toolName === "get_gitlab_project"
+                ? {
+                    host: "gitlab-aiabu.ruijie.com.cn", projectId: "1",
+                    pathWithNamespace: "team/flowrivet", displayName: "FlowRivet",
+                    defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/team/flowrivet.git",
+                  }
               : toolName === "select_local_directory" && directoryOutcome === "selected"
                 ? { outcome: "selected", absolutePath: "C:\\workspace\\example" }
               : toolName === "select_local_directory" && directoryOutcome === "cancelled"
