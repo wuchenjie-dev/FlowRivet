@@ -87,6 +87,45 @@ export function registerExecutionTools(server: McpServer, options: {
         : [],
     };
   });
+  registerAppTool(server, "set_work_item_execution_mode", {
+    title: "选择处理方式",
+    description: "由用户确认本次执行是否需要修改代码。",
+    inputSchema: {
+      executionId: z.string().min(1),
+      workMode: z.enum(["non_code", "code"]),
+    },
+    outputSchema: executionRecordSchema.shape,
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false }, _meta: {},
+  }, async ({ executionId, workMode }) => {
+    const current = await options.service.getById(executionId);
+    if (!current || current.accountKey !== await options.resolveAccountKey()) {
+      throw new Error("execution_not_found");
+    }
+    const execution = await options.service.setMode(executionId, workMode);
+    return {
+      structuredContent: execution,
+      content: execution.state === "awaiting_repository"
+        ? [{ type: "text" as const, text: "repository_required" }]
+        : [],
+    };
+  });
+  registerAppTool(server, "mark_execution_handoff_dispatched", {
+    title: "确认 Codex 交接",
+    description: "在消息成功送达当前 Codex 对话后锁定本次执行方式。",
+    inputSchema: {
+      executionId: z.string().min(1),
+      handoffId: z.string().min(1),
+    },
+    outputSchema: executionRecordSchema.shape,
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false }, _meta: {},
+  }, async ({ executionId, handoffId }) => {
+    const current = await options.service.getById(executionId);
+    if (!current || current.accountKey !== await options.resolveAccountKey()) {
+      throw new Error("execution_not_found");
+    }
+    const execution = await options.service.markHandoffDispatched(executionId, handoffId);
+    return { structuredContent: execution, content: [] };
+  });
   if (options.repositoryWorkflow) registerAppTool(server, "bind_execution_repository", {
     title: "关联研发仓库",
     description: "复用精确匹配的本地仓库，或在用户指定父目录下安全克隆。",

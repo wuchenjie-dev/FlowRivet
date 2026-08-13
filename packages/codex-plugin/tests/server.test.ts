@@ -444,6 +444,8 @@ describe("taskboard MCP app", () => {
         "get_gitlab_project",
         "prepare_work_item_execution",
         "get_work_item_execution",
+        "set_work_item_execution_mode",
+        "mark_execution_handoff_dispatched",
         "classify_work_item_execution",
         "get_work_item_detail",
       ]));
@@ -508,10 +510,19 @@ describe("taskboard MCP app", () => {
         structuredContent: { execution: { executionId: "execution-example", state: "prepared" } },
       });
       await expect(client.callTool({
-        name: "classify_work_item_execution",
-        arguments: { executionId: "execution-example", executionKind: "development" },
+        name: "set_work_item_execution_mode",
+        arguments: { executionId: "execution-example", workMode: "non_code" },
       })).resolves.toMatchObject({
-        structuredContent: { executionKind: "development", state: "awaiting_repository" },
+        structuredContent: { workMode: "non_code", state: "ready" },
+      });
+      await expect(client.callTool({
+        name: "mark_execution_handoff_dispatched",
+        arguments: {
+          executionId: "execution-example",
+          handoffId: "flowrivet-execution-example",
+        },
+      })).resolves.toMatchObject({
+        structuredContent: { handoffDispatchedAt: "2026-08-12T00:00:00.000Z" },
       });
       expect(synced.service.sync).toHaveBeenCalledWith({
         accountDisplayName: "Example User",
