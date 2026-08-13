@@ -79,6 +79,26 @@ describe("shared bounded command runner", () => {
     );
   });
 
+  it("keeps windows hidden by default but allows an explicit GUI process", async () => {
+    const hiddenChild = new FakeChild();
+    const hiddenSpawn = fakeSpawn(hiddenChild, () => hiddenChild.emit("close", 0, null));
+    const hiddenRunner = new BoundedCommandRunner({ spawn: hiddenSpawn, platform: "win32" });
+    await hiddenRunner.run({ executablePath: "C:\\tool.exe", args: [], timeoutMs: 1_000 });
+    expect(hiddenSpawn).toHaveBeenCalledWith(
+      "C:\\tool.exe", [], expect.objectContaining({ windowsHide: true }),
+    );
+
+    const visibleChild = new FakeChild();
+    const visibleSpawn = fakeSpawn(visibleChild, () => visibleChild.emit("close", 0, null));
+    const visibleRunner = new BoundedCommandRunner({ spawn: visibleSpawn, platform: "win32" });
+    await visibleRunner.run({
+      executablePath: "C:\\gui-tool.exe", args: [], timeoutMs: 1_000, windowsHide: false,
+    });
+    expect(visibleSpawn).toHaveBeenCalledWith(
+      "C:\\gui-tool.exe", [], expect.objectContaining({ windowsHide: false }),
+    );
+  });
+
   it("rejects an argument containing a line break before spawning", async () => {
     const spawn = vi.fn();
     const runner = new BoundedCommandRunner({ spawn: spawn as SpawnProcess });

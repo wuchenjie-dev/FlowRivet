@@ -56,6 +56,7 @@ export class NativeDirectoryPicker implements DirectoryPicker {
         timeoutMs: 600_000,
         allowExitCodes: [0, 1],
         signal: input.signal,
+        windowsHide: this.platform === "win32" ? false : undefined,
       });
       return this.parseResult(result);
     } catch (error) {

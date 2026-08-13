@@ -63,7 +63,9 @@ describe("NativeDirectoryPicker", () => {
     expect(script).toContain("BrowseForFolder");
     expect(script).not.toContain("System.Windows.Forms");
     expect(input.args.join(" ")).not.toContain("existing_repository");
-    expect(input).toMatchObject({ timeoutMs: 600_000, allowExitCodes: [0, 1] });
+    expect(input).toMatchObject({
+      timeoutMs: 600_000, allowExitCodes: [0, 1], windowsHide: false,
+    });
     expect(input.signal).toBeInstanceOf(AbortSignal);
   });
 

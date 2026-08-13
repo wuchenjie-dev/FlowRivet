@@ -37,6 +37,7 @@ export interface CommandRunInput {
   stdin?: string;
   cwd?: string;
   environment?: Record<string, string>;
+  windowsHide?: boolean;
 }
 
 export interface CommandRunResult {
@@ -135,7 +136,7 @@ export class BoundedCommandRunner {
       try {
         child = this.spawn(invocation.command, invocation.args, {
           shell: invocation.shell,
-          windowsHide: true,
+          windowsHide: input.windowsHide ?? true,
           stdio: "pipe",
           detached: this.platform !== "win32",
           windowsVerbatimArguments: this.platform === "win32"
