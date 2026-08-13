@@ -187,6 +187,37 @@ function deferred<T>() {
 }
 
 describe("FlowRivet taskboard", () => {
+  it("refreshes a connected Feishu board once when an existing app is reopened", async () => {
+    const initial = snapshotWithFeishuState("connected");
+    initial.items = initial.items.map((item, index) => ({
+      ...item,
+      title: `旧待办 ${index + 1}`,
+    }));
+    const refreshed = snapshotWithFeishuState("connected");
+    refreshed.items = refreshed.items.map((item, index) => ({
+      ...item,
+      title: `最新待办 ${index + 1}`,
+    }));
+    const callTool = vi.fn(async (name: string) => ({
+      content: [],
+      structuredContent: name === "refresh_my_work_items"
+        ? refreshed
+        : { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" },
+    }));
+
+    render(<App
+      initialSnapshot={initial}
+      bridge={createBridge({ callTool }, {
+        get: vi.fn().mockResolvedValue({ refreshIntervalSeconds: 0 }),
+      })}
+    />);
+
+    expect(screen.getByText("旧待办 1")).toBeTruthy();
+    expect(await screen.findByText("最新待办 1")).toBeTruthy();
+    expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
+      .toHaveLength(1);
+  });
+
   it("starts one-click Feishu authorization without a token or verification code", async () => {
     const user = userEvent.setup();
     const callTool = vi.fn(async (name: string) => {

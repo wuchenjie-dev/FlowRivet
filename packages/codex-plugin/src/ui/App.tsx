@@ -72,6 +72,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
+  const refreshConnectedFeishuOnEntry = useRef(
+    initialSnapshot.connection.provider.providerId === "feishu-project"
+      && initialSnapshot.connection.provider.state === "connected",
+  );
   const providerState = connection.provider.state;
   const isFeishuProject = connection.provider.providerId === "feishu-project";
   const runtime = useRuntimeVersion({
@@ -124,6 +128,12 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         : {}),
     });
   }, [initialSnapshot, refreshCoordinator.markAttemptCompleted]);
+
+  useEffect(() => {
+    if (!refreshConnectedFeishuOnEntry.current) return;
+    refreshConnectedFeishuOnEntry.current = false;
+    void refreshCoordinator.requestRefresh().catch(() => undefined);
+  }, [refreshCoordinator.requestRefresh]);
 
   useEffect(() => {
     let active = true;
