@@ -315,9 +315,11 @@ Provider 选择、复制安装命令、连接、取消、重新打开授权页�
 
 ### 11.2 直接交给 Codex
 
-详情抽屉提供单一主操作“交给 Codex 处理”。UI 先调用 `prepare_work_item_execution` 幂等创建或恢复执行，再通过 MCP Apps `App.sendMessage()` 发送 `role: "user"` 的 `ui/message` 到当前 Codex 对话。消息只包含最小结构化 handoff 和 `executionId`，不得包含凭据、CLI 原始输出或环境变量。
+详情抽屉提供单一主操作“交给 Codex 处理”。UI 先调用 `prepare_work_item_execution` 幂等创建或恢复执行，但不立即发送 handoff；页面先让用户选择本次“仅处理当前事项”或“需要修改代码”。选择仅对当前执行轮次有效，不永久写回飞书工作项或记为默认值。
 
-Codex 通过 `classify_work_item_execution` 将执行归类为分析、拆解或研发。分析和拆解直接继续；仅研发任务在没有仓库绑定时返回 `repository_required`。正常流程不显示复制按钮；宿主不支持或拒绝 `ui/message` 时保留执行记录并提供重试，仅在错误详情兼容区提供复制降级。
+UI 通过 `set_work_item_execution_mode` 写入 `non_code | code`。`non_code` 直接通过 MCP Apps `App.sendMessage()` 发送 `role: "user"` 的最小结构化 handoff；`code` 在没有仓库绑定时返回 `repository_required`，关联仓库后再发送。Codex 不再根据标题强制猜测分析、拆解或研发分类。正常流程不显示复制按钮；宿主不支持或拒绝 `ui/message` 时保留执行记录并提供重试，仅在错误详情兼容区提供复制降级。
+
+在 `prepared`、`awaiting_repository` 和 handoff 尚未成功送达的 `ready` 状态，用户可修改执行模式；切换为 `non_code` 时关闭仓库弹窗并继续同一执行。handoff 成功送达、创建 Git 分支、产生 MR 或执行产物，或进入运行及后续状态后，模式锁定并返回 `execution_mode_locked`。
 
 bridge 必须独立暴露 `sendMessage` 与 `callTool`，并在发送前检查宿主 `message` capability。UI 使用明确的 `handoff_sending`、`processing`、`repository_required`、`failed` 和 `completed` 状态。刷新或重新打开看板后通过 `get_work_item_execution` 恢复未终止执行。
 
@@ -354,7 +356,9 @@ bridge 必须独立暴露 `sendMessage` 与 `callTool`，并在发送前检查�
 | `codex_handoff_unsupported` | 当前宿主不支持 `ui/message` |
 | `codex_handoff_failed` | 消息未送达当前 Codex 对话 |
 | `execution_state_conflict` | 执行状态版本已变化或请求重复冲突 |
-| `repository_required` | 研发执行尚未绑定代码仓库 |
+| `execution_mode_locked` | handoff 已送达或执行已开始，不能修改是否需要代码 |
+| `execution_handoff_conflict` | handoff 确认 ID 与当前执行不一致 |
+| `repository_required` | 用户选择修改代码，但执行尚未绑定代码仓库 |
 | `repository_path_invalid` | 本地仓库路径无效或远程不匹配 |
 
 每个授权 MCP 工具调用生成 `requestId`，授权工具结果合同显式返回该字段；不为本次改造无关的工具批量改变响应 Schema。每个授权会话生成非敏感 `correlationId`，用于串联状态迁移日志。错误快照包含稳定错误码、是否可重试、唯一恢复动作和最近一次 `requestId`。CLI 的非零退出码必须结合结构化错误、退出码和 `auth status` 分类，禁止依赖本地化 stderr 的模糊字符串匹配。只有经过探针验证的结构化状态可以映射 `provider_login_denied`；未知授权终态映射 `provider_login_failed`，其他未知失败统一降级为 `provider_unavailable` 或 `work_item_sync_failed`，不得误报未登录。
@@ -371,7 +375,7 @@ bridge 必须独立暴露 `sendMessage` 与 `callTool`，并在发送前检查�
 6. 本地 MCP 被远程调用后触发浏览器或授权副作用：含授权副作用的 Companion 只允许绑定回环地址；若配置为非回环地址则启动失败，直到未来实现独立的客户端认证与授权机制。HTTP 层继续拒绝非回环 Origin，授权工具不得放宽该限制。
 7. 工作项正文对 Codex 进行提示注入：handoff 明确将详情标记为不可信业务数据；正文不能改变工具权限、仓库边界、系统指令或确认策略。
 8. 仓库路径或项目名称注入命令：所有 Git、`glab` 和 Meegle 调用使用类型化参数数组，不把用户输入拼接到 Shell 字符串。
-9. 重复消息产生重复执行：prepare、分类、仓库绑定和恢复均使用 `executionId`、幂等键和状态版本校验。
+9. 重复消息产生重复执行：prepare、执行模式选择、仓库绑定和恢复均使用 `executionId`、幂等键和状态版本校验。
 
 ## 13. 测试策略
 
@@ -425,8 +429,8 @@ bridge 必须独立暴露 `sendMessage` 与 `callTool`，并在发送前检查�
 7. 验证跨项目侧栏、重复项合并和最近 7 天完成过滤。
 8. 模拟首次任务同步失败，验证仍保持 `connected`；模拟断网、Token 失效和 CLI 升级不兼容，验证缓存与错误状态。
 9. 点击真实飞书工作项，核对详情中的状态、人员、时间、描述和原始链接。
-10. 选择分析或拆解任务，确认当前 Codex 对话直接收到并开始处理，且不要求仓库。
-11. 选择研发任务，确认仓库模态框自动出现；绑定内网 GitLab 仓库后，Codex 自动继续同一执行。
+10. 对流程、分析或拆解事项选择“仅处理当前事项”，确认当前 Codex 对话直接收到并开始处理，且不要求仓库。
+11. 对需要修改代码的事项选择“需要修改代码”，确认仓库模态框出现；绑定内网 GitLab 仓库后，Codex 自动继续同一执行。
 12. 刷新并重新打开插件，确认未结束执行状态可恢复且未重复创建执行。
 
 真实验收记录不得保存 stdout、用户、项目、工作项或授权信息。

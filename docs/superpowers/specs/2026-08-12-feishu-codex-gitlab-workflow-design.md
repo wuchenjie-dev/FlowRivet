@@ -12,9 +12,9 @@ FlowRivet 已能通过官方 Meegle CLI 登录飞书项目、读取当前账号�
 
 - 在工作项详情中提供统一的“开始处理”入口。
 - 一条飞书工作项稳定关联一个 Codex 任务；再次进入时恢复同一任务。
-- Codex 根据工作项类型、描述和关联资料判断执行需求拆解、需求分析或代码开发，并在执行前展示计划。
-- 需求拆解和需求分析不强制选择代码仓库。
-- 代码开发时让用户从其有权限的 GitLab 仓库中选择，不维护固定的飞书项目到仓库映射。
+- 用户在每次执行开始前明确选择“仅处理当前事项”或“需要修改代码”，不由 Codex 根据标题强制猜测执行分类。
+- 流程梳理、需求分析、需求拆解和文档输出等非代码事项不要求代码仓库。
+- 仅当用户明确选择需要修改代码时，才让用户从其有权限的 GitLab 仓库中选择；不维护固定的飞书项目到仓库映射。
 - 优先复用当前 Codex 工作区或已有本地仓库；没有匹配仓库时由用户选择父目录并自动克隆。
 - 允许 Codex 自动创建功能分支、修改和测试代码、推送分支并创建 Merge Request。
 - 合并 MR、重试 Pipeline 和关闭飞书工作项必须获得用户逐次确认。
@@ -37,8 +37,9 @@ FlowRivet 已能通过官方 Meegle CLI 登录飞书项目、读取当前账号�
 
 | 决策 | 结果 |
 | --- | --- |
-| 任务入口 | 统一“开始处理”，由 Codex 判断执行类型 |
+| 任务入口 | 统一“开始处理”，用户先选择本次是否需要修改代码 |
 | Codex 任务模型 | 一条飞书工作项对应一个稳定 Codex 任务 |
+| 执行模式 | 每个执行轮次独立选择 `non_code` 或 `code`，不永久记忆 |
 | GitLab 登录 | `glab` 浏览器 OAuth 登录 |
 | GitLab 集成 | 只使用 `git + glab`，不接 GitLab API |
 | 仓库选择 | 首次进入代码开发时由用户选择；创建研发分支前可修改，创建后锁定 |
@@ -163,16 +164,19 @@ Companion 启动和打开 GitLab 功能时检查：
 
 ```ts
 interface ExecutionRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
   executionId: string;
   providerId: "feishu-project";
   accountKey: string;
   workItemKey: string;
+  attempt: number;
   workItemUpdatedAt?: string;
   taskLaunchMode: "direct" | "handoff";
   codexTaskId?: string;
   codexHandoffId?: string;
-  executionKind: "pending_classification" | "requirement_breakdown" | "requirement_analysis" | "development";
+  handoffDispatchedAt?: string;
+  workMode: "pending" | "non_code" | "code";
+  executionKind?: "requirement_breakdown" | "requirement_analysis" | "development";
   state: "prepared" | "awaiting_repository" | "ready" | "running" |
     "awaiting_confirmation" | "writeback_pending" | "completed" | "failed";
   gitlab?: {
@@ -191,9 +195,15 @@ interface ExecutionRecord {
 }
 ```
 
-稳定唯一键为 `providerId + accountKey + workItemKey`。首次“开始处理”创建记录和 Codex 任务，重复点击恢复已有记录。用户切换飞书账号后不能看到或恢复其他账号的执行关联。
+`workMode` 是仓库门禁的唯一依据。`executionKind` 只作为可选的描述性标签，用于结果模板和统计，不参与状态流转，也不阻止用户纠正判断。
 
-仓库只在该工作项首次进入开发时选择。选择结果保存到该 `ExecutionRecord`，再次恢复同一任务不重复询问；用户可显式执行“更换仓库”，该操作必须先检查未推送提交和活动 MR，避免把同一执行错误关联到两个仓库。
+执行轮次唯一键为 `providerId + accountKey + workItemKey + attempt`，`attempt` 从 1 单调递增。首次“开始处理”创建记录和 Codex 任务，重复点击恢复最新未终止执行。终态执行保留为历史；用户显式重新处理同一工作项时创建下一轮，`workMode` 重置为 `pending`。新轮次可以继承上一轮的 `codexTaskId`，但使用新的 `executionId`、handoff 和产物集合，防止不同轮次的确认、仓库或结果串线。用户切换飞书账号后不能看到或恢复其他账号的执行关联。
+
+SQLite schema version 2 移除旧的三字段唯一约束，增加非空 `attempt` 列和四字段唯一索引；迁移时每个旧记录写入 `attempt=1`，必须在单个事务中复制、校验行数并替换表。`findCurrent` 按 `attempt DESC` 读取最新未终止记录，`findLatest` 可读取包含终态的最新轮次；并发创建下一轮依赖四字段唯一约束冲突后重新读取，不用先读后写猜测轮次。
+
+Payload 读取器兼容 Schema version 1：`pending_classification + prepared` 推导为 `workMode=pending`；`executionKind=development` 推导为 `code`；其他记录推导为 `non_code`。兼容读取不立即批量改 payload；记录下次保存时升级为 version 2。数据库迁移与 payload 惰性升级是两个独立版本边界，不得把任一失败静默当作空执行。
+
+仓库只在当前执行首次选择 `workMode=code` 时选择。选择结果保存到该 `ExecutionRecord`，再次恢复同一执行不重复询问；用户可显式执行“更换仓库”，该操作必须先检查未推送提交和活动 MR，避免把同一执行错误关联到两个仓库。
 
 每个有副作用的操作使用唯一 `operationId`。进程重启或用户重试时先检查本地记录和远端可观察结果，避免重复创建分支、MR、子任务或评论。
 
@@ -202,10 +212,15 @@ interface ExecutionRecord {
 ### 9.1 统一开始处理
 
 1. 用户在看板打开工作项详情并点击“开始处理”。
-2. FlowRivet 创建或恢复 `ExecutionRecord`。宿主支持直接任务 API 时创建或恢复 Codex 任务；否则生成并恢复同一条结构化 handoff，由用户显式打开 Codex 任务。
-3. Codex 读取工作项详情、关联资料和已有执行产物。
-4. Codex 判断执行类型，并展示目标、计划、拟使用权限和预期产物。
-5. 用户确认计划后开始执行；用户也可修正执行类型。
+2. FlowRivet 创建或恢复 `workMode=pending + state=prepared` 的 `ExecutionRecord`，在详情抽屉展示“仅处理当前事项”和“需要修改代码”。此时不向 Codex 发送 handoff。
+3. 用户选择“仅处理当前事项”后记录变为 `workMode=non_code + state=ready`，FlowRivet 创建或恢复 Codex 任务并发送 handoff；流程梳理、分析、拆解和文档均走此路径。
+4. 用户选择“需要修改代码”后记录变为 `workMode=code + state=awaiting_repository`，先完成仓库选择；关联成功后变为 `state=ready` 并发送 handoff。
+5. Codex 读取用户已经确认的 `workMode`、工作项详情、关联资料和已有执行产物，展示目标、计划、拟使用权限和预期产物，不再调用工具猜测三分类。
+6. 用户确认计划后开始执行。
+
+`prepared`、`awaiting_repository`，以及 `handoffDispatchedAt` 为空的 `ready` 状态允许双向修改 `workMode`。从 `code` 改为 `non_code` 时关闭仓库对话框并撤销仓库要求；尚未产生 Git 活动的临时仓库关联可以移除。从 `non_code` 改为 `code` 时进入仓库选择。`App.sendMessage()` 成功后，UI 立即调用 `mark_execution_handoff_dispatched(executionId, handoffId)` 写入 `handoffDispatchedAt`；从此即使 Codex 尚未回报 `running`，执行模式也锁定。创建分支、产生 MR 或产物，或进入 `running`、`awaiting_confirmation`、`writeback_pending`、`completed` 后同样锁定并返回 `execution_mode_locked`。消息发送失败不调用确认工具，用户可重试或修改模式。
+
+宿主消息发送与本地确认不是原子事务，因此不承诺 exactly-once。两步之间崩溃时，恢复页展示“交接状态待确认”，使用稳定 `handoffId` 重新发送一条明确的恢复消息，再幂等调用确认工具；Codex 侧按 `handoffId` 识别同一交接，不创建新的执行或扩大权限。日志记录发送尝试和确认结果，但不记录 prompt 正文。
 
 需求文本、评论、附件和代码均视为不可信输入。它们不能改变系统门禁、申请额外凭据、自动确认破坏性操作或扩大允许目录。
 
@@ -298,7 +313,7 @@ interface DirectoryPicker {
 ```text
 FlowRivet 执行摘要
 - executionId / requestId
-- 执行类型与当前状态
+- 执行模式、可选描述标签与当前状态
 - 分析或拆解摘要
 - 子任务与验收标准链接
 - GitLab 项目、分支、MR
@@ -316,8 +331,10 @@ FlowRivet 执行摘要
 ### 11.1 看板 UI
 
 - 工作项详情新增主要命令“开始处理”。已有执行时显示“继续处理”。
-- 执行摘要显示 Codex 任务、执行类型、仓库、分支、MR、Pipeline 和回写状态。
-- 代码开发首次进入时打开仓库选择对话框，不在连接菜单中维护全局仓库映射。
+- 点击开始后先显示两个互斥选项：“仅处理当前事项”和“需要修改代码”；选项仅对本次执行有效，确认前不发送 Codex handoff。
+- 执行摘要显示 Codex 任务、执行模式、可选描述标签、仓库、分支、MR、Pipeline 和回写状态。
+- 只有 `workMode=code` 时打开仓库选择对话框，不在连接菜单中维护全局仓库映射。
+- 预执行阶段提供“修改执行方式”；切换为非代码模式后立即关闭仓库对话框并继续同一执行。
 - 本地路径输入框提供文件夹图标按钮并配有可访问名称；选择中禁用重复操作，取消或失败不清空已有输入，再次选择从当前路径开始。
 - 已关联仓库在分支创建前可重新打开并预选项目与路径；分支或 MR 创建后显示锁定原因且不能替换。
 - 目录选择、仓库关联、关联成功和关联锁定均提供可见且可访问的状态反馈，按钮宽度与文案变化不造成布局跳动。
@@ -330,6 +347,8 @@ FlowRivet 执行摘要
 
 - `prepare_work_item_execution`
 - `get_work_item_execution`
+- `set_work_item_execution_mode`
+- `mark_execution_handoff_dispatched`
 - `list_gitlab_projects`
 - `select_local_directory`
 - `bind_execution_repository`
@@ -343,6 +362,10 @@ FlowRivet 执行摘要
 - `write_back_execution_result`
 
 读取工具标记 `readOnlyHint`。创建分支、推送、创建 MR 和回写标记为非只读；合并、重试和关闭只允许通过确认工具执行。任何工具都不能接受任意可执行文件路径、任意 Shell 字符串或调用方提供的 Token。
+
+`set_work_item_execution_mode` 只接受 `non_code | code`。相同模式请求幂等；handoff 发送前允许双向切换。`code` 且未绑定仓库时返回 `repository_required`；`non_code` 返回可发送给 Codex 的 ready 执行。handoff 已送达、Git 活动、产物或运行状态已经锁定时返回 `execution_mode_locked`。原 `classify_work_item_execution` 仅为旧插件兼容保留一个发布周期，不再出现在新 handoff 中，也不再作为仓库门禁来源。
+
+`mark_execution_handoff_dispatched` 只接受当前执行已保存的 `codexHandoffId`，不同 ID 返回 `execution_handoff_conflict`；相同 ID 重试幂等。工具只在 `workMode` 已确定且执行为 `ready` 时写入时间，不接受调用方提供时间戳。
 
 `select_local_directory` 仅接受稳定枚举 `existing_repository | clone_parent`，标记为只读且不接受起始路径。工具结果只包含 `selected + absolutePath` 或 `cancelled`；并发选择、平台不支持、选择器启动失败和返回非绝对路径分别映射为 `directory_picker_busy`、`directory_picker_unavailable`、`directory_picker_failed` 和 `directory_picker_invalid_result`。路径不得进入日志或错误文本。
 
@@ -360,6 +383,8 @@ FlowRivet 执行摘要
 - `merge_request_create_failed`、`pipeline_query_failed`
 - `confirmation_required`、`confirmation_expired`、`confirmation_stale`
 - `codex_task_create_failed`、`codex_task_unavailable`
+- `execution_mode_locked`
+- `execution_handoff_conflict`
 - `feishu_write_forbidden`、`feishu_writeback_failed`
 
 GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令超时和网络异常可重试，但鉴权失败必须引导重新登录。不得把 `glab` 失败静默改为 API 调用。
@@ -393,7 +418,9 @@ GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令�
 
 - `git`/`glab` 发现、版本检查、超时、输出限制和跨平台启动。
 - `glab` JSON Schema 校验、分页和错误映射。
-- 工作项到 ExecutionRecord 的唯一键和账号隔离。
+- 工作项执行轮次的四字段唯一键、当前/最新读取语义、并发创建和账号隔离。
+- `pending/non_code/code` 模式选择、幂等、handoff 前双向切换、发送失败恢复、发送/确认崩溃窗口和 handoff 送达后锁定。
+- version 1 执行记录的模式推导、惰性升级和终态后新执行轮次重置。
 - 重复开始、重复推送、重复创建 MR 和重复回写的幂等性。
 - 仓库 remote 精确匹配、脏工作树保护和分支命名。
 - 目录选择目的枚举、可选初始目录、无效初始目录回退、取消、并发选择、结果非绝对路径拒绝和无路径日志。
@@ -415,19 +442,20 @@ GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令�
 在隔离的飞书测试工作项和 GitLab 测试项目中验证：
 
 1. 普通 Developer 使用浏览器 OAuth 登录 `glab`。
-2. 从“我的待办”启动需求分析，恢复同一 Codex 任务并回写摘要。
-3. 启动代码开发，选择仓库，复用本地 checkout。
-4. 在无本地仓库时选择父目录并克隆。
-5. Windows 原生目录选择器可分别选择已有仓库和克隆父目录；再次打开从当前路径开始，全程不显示 PowerShell；取消保持原输入，失败可手工输入。
-6. 关联成功后重新打开对话框，确认项目和路径已预选；创建分支前可修改关联。
-7. 创建 `codex/*` 分支后仓库关联显示锁定原因，UI 与服务端均拒绝替换。
-8. 目录选择、关联中、关联成功和关联失败提供明确反馈；桌面与窄屏无文字溢出或布局跳动。
-9. 创建 `codex/*` 分支、提交、推送并创建 MR。
-10. 读取 Pipeline 状态并回写链接与测试结论。
-11. 未确认时拒绝合并、重试 Pipeline 和关闭飞书任务。
-12. 确认过期或目标变化时拒绝执行。
-13. 用户无仓库权限、分支受保护、飞书写权限不足时给出准确恢复动作。
-14. Windows 完成真实全链路；Linux 和 macOS 至少完成自动化 CLI、路径和进程合同，具备对应环境后补真实 E2E。
+2. 从“我的待办”启动流程、分析或拆解事项，选择“仅处理当前事项”，不选择仓库并直接进入 Codex，恢复同一执行时不重复发送 handoff。
+3. 在 handoff 前将执行方式从“需要修改代码”改为“仅处理当前事项”，确认仓库要求被撤销并继续同一执行。
+4. 启动代码开发，选择“需要修改代码”，选择仓库并复用本地 checkout。
+5. 在无本地仓库时选择父目录并克隆。
+6. Windows 原生目录选择器可分别选择已有仓库和克隆父目录；再次打开从当前路径开始，全程不显示 PowerShell；取消保持原输入，失败可手工输入。
+7. 关联成功后重新打开对话框，确认项目和路径已预选；创建分支前可修改关联。
+8. 创建 `codex/*` 分支后执行模式和仓库关联显示锁定原因，UI 与服务端均拒绝替换。
+9. 目录选择、关联中、关联成功和关联失败提供明确反馈；桌面与窄屏无文字溢出或布局跳动。
+10. 创建 `codex/*` 分支、提交、推送并创建 MR。
+11. 读取 Pipeline 状态并回写链接与测试结论。
+12. 未确认时拒绝合并、重试 Pipeline 和关闭飞书任务。
+13. 确认过期或目标变化时拒绝执行。
+14. 用户无仓库权限、分支受保护、飞书写权限不足时给出准确恢复动作。
+15. Windows 完成真实全链路；Linux 和 macOS 至少完成自动化 CLI、路径和进程合同，具备对应环境后补真实 E2E。
 
 ## 15. 分阶段交付
 
@@ -436,9 +464,9 @@ GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令�
 - GitLab Adapter、`git/glab` 探针、能力状态、OAuth 登录入口和连接 UI。
 - 只读项目发现与分页搜索。
 
-### Phase 2：执行关联与 Codex 任务
+### Phase 2：执行模式、执行关联与 Codex 任务
 
-- ExecutionRecord 存储、开始/继续处理、执行类型判断合同。
+- ExecutionRecord version 2、开始/继续处理、用户确认执行模式和旧记录兼容合同。
 - Codex Task Bridge 探针、创建或恢复任务、执行摘要 UI。
 
 ### Phase 3：代码开发链路
@@ -468,7 +496,8 @@ GitLab 功能阻塞不影响飞书看板、已有缓存或需求分析。命令�
 ### 准出标准
 
 - 用户能从一条真实飞书待办创建并恢复唯一 Codex 任务。
-- 需求分析无需 GitLab 即可完成并结构化回写。
+- 用户选择“仅处理当前事项”后无需 GitLab 即可处理流程、分析、拆解或文档并结构化回写。
+- 用户选择“需要修改代码”后才要求仓库；预执行阶段可纠正选择，执行开始后安全锁定。
 - 研发任务能选择仓库、复用或克隆、创建功能分支、推送并创建 MR。
 - Pipeline 状态和测试结果能够回写飞书项目。
 - 三类高风险操作未经确认绝不执行，确认失效机制通过测试。
