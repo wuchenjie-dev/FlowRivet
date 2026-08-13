@@ -79,6 +79,8 @@ export class NativeDirectoryPicker implements DirectoryPicker {
           "-NoProfile",
           "-STA",
           "-NonInteractive",
+          "-WindowStyle",
+          "Hidden",
           "-EncodedCommand",
           Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64"),
         ],

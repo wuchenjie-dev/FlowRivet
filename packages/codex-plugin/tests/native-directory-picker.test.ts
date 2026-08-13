@@ -54,11 +54,11 @@ describe("NativeDirectoryPicker", () => {
 
     const input = commandRunner.run.mock.calls[0]![0];
     expect(input.executablePath).toMatch(/powershell\.exe$/iu);
-    expect(input.args.slice(0, 4)).toEqual([
-      "-NoProfile", "-STA", "-NonInteractive", "-EncodedCommand",
+    expect(input.args.slice(0, 6)).toEqual([
+      "-NoProfile", "-STA", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand",
     ]);
-    expect(input.args[4]).toMatch(/^[A-Za-z0-9+/]+=*$/u);
-    const script = Buffer.from(input.args[4]!, "base64").toString("utf16le");
+    expect(input.args[6]).toMatch(/^[A-Za-z0-9+/]+=*$/u);
+    const script = Buffer.from(input.args[6]!, "base64").toString("utf16le");
     expect(script).toContain("New-Object -ComObject Shell.Application");
     expect(script).toContain("BrowseForFolder");
     expect(script).not.toContain("System.Windows.Forms");
