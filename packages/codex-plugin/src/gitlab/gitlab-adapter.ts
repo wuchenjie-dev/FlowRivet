@@ -1,5 +1,6 @@
 import type {
   GitLabConnection,
+  GitLabProject,
   GitLabProjectPage,
 } from "../contracts/gitlab.js";
 
@@ -20,4 +21,5 @@ export class GitLabAdapterError extends Error {
 export interface GitLabAdapter {
   getConnection(): Promise<GitLabConnection>;
   listProjects(input: { page: number; perPage: number }): Promise<GitLabProjectPage>;
+  getProject(projectId: string): Promise<GitLabProject>;
 }

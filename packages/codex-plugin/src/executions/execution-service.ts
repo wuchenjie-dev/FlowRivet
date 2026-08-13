@@ -88,8 +88,8 @@ export class ExecutionService {
   async bindRepository(executionId: string, repository: ExecutionRepository) {
     const record = await this.store.getById(executionId);
     if (!record) throw new ExecutionServiceError("execution_not_found");
-    if (record.gitlab && record.gitlab.projectPath !== repository.projectPath
-      && (record.gitlab.branch || record.gitlab.mergeRequestIid)) {
+    if (record.gitlab && (record.gitlab.branch || record.gitlab.mergeRequestIid)) {
+      if (sameRepository(record.gitlab, repository)) return record;
       throw new ExecutionServiceError("execution_repository_locked");
     }
     const updated = executionRecordSchema.parse({
@@ -163,3 +163,14 @@ const allowedTransitions: Record<ExecutionState, ExecutionState[]> = {
   completed: [],
   failed: ["prepared", "awaiting_repository", "ready", "running"],
 };
+
+function sameRepository(left: ExecutionRepository, right: ExecutionRepository) {
+  return left.host === right.host
+    && left.projectId === right.projectId
+    && left.projectPath === right.projectPath
+    && left.localPath === right.localPath
+    && left.branch === right.branch
+    && left.mergeRequestIid === right.mergeRequestIid
+    && left.mergeRequestUrl === right.mergeRequestUrl
+    && left.pipelineId === right.pipelineId;
+}

@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   gitLabConnectionSchema,
   gitLabLoginResultSchema,
+  gitLabProjectSchema,
   gitLabProjectPageSchema,
 } from "../../contracts/gitlab.js";
 import type { GitLabOperations } from "../../gitlab/gitlab-service.js";
@@ -39,5 +40,14 @@ export function registerGitLabTools(server: McpServer, service: GitLabOperations
     annotations: { readOnlyHint: true, openWorldHint: true }, _meta: {},
   }, async ({ page, perPage }) => ({
     structuredContent: await service.listProjects({ page, perPage }), content: [],
+  }));
+  registerAppTool(server, "get_gitlab_project", {
+    title: "读取 GitLab 项目",
+    description: "按数字项目 ID 读取一个当前用户可访问的 GitLab 项目。",
+    inputSchema: { projectId: z.string().regex(/^\d+$/u) },
+    outputSchema: gitLabProjectSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: true }, _meta: {},
+  }, async ({ projectId }) => ({
+    structuredContent: await service.getProject(projectId), content: [],
   }));
 }

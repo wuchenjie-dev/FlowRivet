@@ -69,6 +69,41 @@ describe("ExecutionService", () => {
       .rejects.toMatchObject({ code: "execution_repository_locked" });
   });
 
+  it.each([
+    [{ branch: "codex/item-1" }, { localPath: "C:\\work\\replacement" }],
+    [{ mergeRequestIid: 9 }, { projectId: "different" }],
+  ])("locks every repository identity field after GitLab activity", async (activity, replacement) => {
+    const service = new ExecutionService({
+      store: new InMemoryExecutionStore(), createId: () => "execution-1",
+    });
+    const prepared = await service.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
+      taskLaunchMode: "handoff", executionKind: "development",
+    });
+    const bound = await service.bindRepository(
+      prepared.executionId,
+      repository("cc/one", activity),
+    );
+
+    await expect(service.bindRepository(prepared.executionId, {
+      ...bound.gitlab!,
+      ...replacement,
+    })).rejects.toMatchObject({ code: "execution_repository_locked" });
+  });
+
+  it("returns the existing record for an identical locked repository binding", async () => {
+    const store = new InMemoryExecutionStore();
+    const service = new ExecutionService({ store, createId: () => "execution-1" });
+    const prepared = await service.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "item-1",
+      taskLaunchMode: "handoff", executionKind: "development",
+    });
+    const repositoryBinding = repository("cc/one", { branch: "codex/item-1" });
+    const bound = await service.bindRepository(prepared.executionId, repositoryBinding);
+
+    expect(await service.bindRepository(prepared.executionId, repositoryBinding)).toEqual(bound);
+  });
+
   it("rejects a reverse state transition", async () => {
     const service = new ExecutionService({
       store: new InMemoryExecutionStore(), createId: () => "execution-1",

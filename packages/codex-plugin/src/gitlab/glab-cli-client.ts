@@ -1,7 +1,9 @@
 import {
   gitLabConnectionSchema,
+  gitLabProjectSchema,
   gitLabProjectPageSchema,
   type GitLabConnection,
+  type GitLabProject,
   type GitLabProjectPage,
 } from "../contracts/gitlab.js";
 import {
@@ -10,7 +12,7 @@ import {
   type CommandRunInput,
   type CommandRunResult,
 } from "../process/bounded-command-runner.js";
-import { glabProjectListSchema } from "./contracts.js";
+import { glabProjectListSchema, glabProjectSchema, type GlabProject } from "./contracts.js";
 import {
   GitLabAdapterError,
   type GitLabAdapter,
@@ -66,7 +68,7 @@ export class GlabCliClient implements GitLabAdapter {
     try {
       authResult = await this.run([
         "api", "user", "--hostname", this.host, "--method", "GET",
-      ]);
+      ], undefined, true);
     } catch (error) {
       if (error instanceof GitLabAdapterError && error.code === "gitlab_not_connected") {
         return gitLabConnectionSchema.parse({
@@ -120,18 +122,31 @@ export class GlabCliClient implements GitLabAdapter {
       return gitLabProjectPageSchema.parse({
         page: input.page,
         hasMore: parsed.data.length === input.perPage,
-        projects: parsed.data.map((project) => ({
-          host: this.host,
-          projectId: String(project.id),
-          pathWithNamespace: project.path_with_namespace,
-          displayName: project.name,
-          defaultBranch: project.default_branch,
-          httpUrl: project.http_url_to_repo,
-        })),
+        projects: parsed.data.map((project) => this.mapProject(project)),
       });
     } catch {
       throw new GitLabAdapterError("gitlab_output_invalid");
     }
+  }
+
+  async getProject(projectId: string): Promise<GitLabProject> {
+    if (!/^\d+$/u.test(projectId)) {
+      throw new GitLabAdapterError("gitlab_output_invalid");
+    }
+    const result = await this.run([
+      "api", `projects/${projectId}`, "--hostname", this.host, "--method", "GET",
+    ]);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(result.stdout);
+    } catch {
+      throw new GitLabAdapterError("gitlab_output_invalid");
+    }
+    const parsed = glabProjectSchema.safeParse(raw);
+    if (!parsed.success || String(parsed.data.id) !== projectId) {
+      throw new GitLabAdapterError("gitlab_output_invalid");
+    }
+    return this.mapProject(parsed.data);
   }
 
   async findMergeRequest(projectPath: string, branch: string) {
@@ -164,7 +179,7 @@ export class GlabCliClient implements GitLabAdapter {
     return { id: String(first.id), status: first.status, sha: first.sha, webUrl: credentialFreeUrl(first.web_url) };
   }
 
-  private async run(args: string[], stdin?: string) {
+  private async run(args: string[], stdin?: string, authenticationProbe = false) {
     try {
       return await this.runner.run({
         executablePath: this.executablePath,
@@ -173,7 +188,22 @@ export class GlabCliClient implements GitLabAdapter {
         ...(stdin !== undefined ? { stdin } : {}),
       });
     } catch (error) {
-      throw mapRunnerError(error, args[0] === "api");
+      throw mapRunnerError(error, authenticationProbe);
+    }
+  }
+
+  private mapProject(project: GlabProject): GitLabProject {
+    try {
+      return gitLabProjectSchema.parse({
+        host: this.host,
+        projectId: String(project.id),
+        pathWithNamespace: project.path_with_namespace,
+        displayName: project.name,
+        defaultBranch: project.default_branch,
+        httpUrl: project.http_url_to_repo,
+      });
+    } catch {
+      throw new GitLabAdapterError("gitlab_output_invalid");
     }
   }
 }
@@ -221,13 +251,13 @@ function isSupportedVersion(value: string) {
   return true;
 }
 
-function mapRunnerError(error: unknown, authCommand: boolean) {
+function mapRunnerError(error: unknown, authenticationProbe: boolean) {
   if (error instanceof GitLabAdapterError) return error;
   if (error instanceof CommandRunnerError) {
     if (error.code === "provider_cli_missing") {
       return new GitLabAdapterError("gitlab_cli_missing");
     }
-    if (authCommand && error.code === "provider_command_failed") {
+    if (authenticationProbe && error.code === "provider_command_failed") {
       return new GitLabAdapterError("gitlab_not_connected");
     }
   }

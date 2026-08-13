@@ -5,6 +5,7 @@ import {
   GitLabAdapterError,
   type GlabCommandRunner,
 } from "../src/gitlab/glab-cli-client.js";
+import { CommandRunnerError } from "../src/process/bounded-command-runner.js";
 
 function runner(outputs: Array<{ stdout: string; exitCode?: number }>): GlabCommandRunner {
   return {
@@ -84,6 +85,59 @@ describe("GlabCliClient", () => {
     expect(commandRunner.run).toHaveBeenCalledWith(expect.objectContaining({
       args: ["repo", "list", "--member", "--page", "2", "--per-page", "20", "--output", "json"],
     }));
+  });
+
+  it("gets one project by numeric id with fixed glab api arguments", async () => {
+    const commandRunner = runner([{ stdout: JSON.stringify({
+      id: 75,
+      name: "FlowRivet",
+      path_with_namespace: "cc/flowrivet",
+      default_branch: "main",
+      http_url_to_repo: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git",
+    }) }]);
+    const client = new GlabCliClient({
+      executablePath: "C:\\tools\\glab.exe",
+      runner: commandRunner,
+      host: "gitlab-aiabu.ruijie.com.cn",
+    });
+
+    await expect(client.getProject("75")).resolves.toMatchObject({
+      projectId: "75",
+      pathWithNamespace: "cc/flowrivet",
+    });
+    expect(commandRunner.run).toHaveBeenCalledWith(expect.objectContaining({
+      args: [
+        "api", "projects/75", "--hostname", "gitlab-aiabu.ruijie.com.cn",
+        "--method", "GET",
+      ],
+    }));
+  });
+
+  it("rejects unsafe project ids before invoking glab", async () => {
+    const commandRunner: GlabCommandRunner = { run: vi.fn() };
+    const client = new GlabCliClient({
+      executablePath: "C:\\tools\\glab.exe",
+      runner: commandRunner,
+      host: "gitlab-aiabu.ruijie.com.cn",
+    });
+
+    await expect(client.getProject("cc/flowrivet"))
+      .rejects.toMatchObject({ code: "gitlab_output_invalid" });
+    expect(commandRunner.run).not.toHaveBeenCalled();
+  });
+
+  it("does not misreport a failed project lookup as a disconnected account", async () => {
+    const commandRunner: GlabCommandRunner = {
+      run: vi.fn().mockRejectedValue(new CommandRunnerError("provider_command_failed")),
+    };
+    const client = new GlabCliClient({
+      executablePath: "C:\\tools\\glab.exe",
+      runner: commandRunner,
+      host: "gitlab-aiabu.ruijie.com.cn",
+    });
+
+    await expect(client.getProject("75"))
+      .rejects.toMatchObject({ code: "gitlab_unavailable" });
   });
 
   it("rejects invalid JSON without leaking the response", async () => {

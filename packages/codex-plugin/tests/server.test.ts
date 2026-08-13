@@ -393,6 +393,14 @@ describe("taskboard MCP app", () => {
             httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git",
           }],
         }),
+        getProject: vi.fn().mockResolvedValue({
+          host: "gitlab-aiabu.ruijie.com.cn",
+          projectId: "1",
+          pathWithNamespace: "cc/flowrivet",
+          displayName: "flowrivet",
+          defaultBranch: "main",
+          httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git",
+        }),
       },
       executionService: new ExecutionService({
         store: new InMemoryExecutionStore(),
@@ -433,6 +441,7 @@ describe("taskboard MCP app", () => {
         "recheck_gitlab_connection",
         "select_local_directory",
         "list_gitlab_projects",
+        "get_gitlab_project",
         "prepare_work_item_execution",
         "get_work_item_execution",
         "classify_work_item_execution",
@@ -450,6 +459,8 @@ describe("taskboard MCP app", () => {
         .resolves.toMatchObject({ structuredContent: { state: "connected" } });
       await expect(client.callTool({ name: "list_gitlab_projects", arguments: { page: 1, perPage: 50 } }))
         .resolves.toMatchObject({ structuredContent: { projects: [{ pathWithNamespace: "cc/flowrivet" }] } });
+      await expect(client.callTool({ name: "get_gitlab_project", arguments: { projectId: "1" } }))
+        .resolves.toMatchObject({ structuredContent: { pathWithNamespace: "cc/flowrivet" } });
 
       const board = await client.callTool({ name: "open_my_taskboard", arguments: {} });
       expect(board.structuredContent).toMatchObject({

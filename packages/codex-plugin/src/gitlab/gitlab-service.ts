@@ -2,6 +2,7 @@ import {
   gitLabLoginResultSchema,
   type GitLabConnection,
   type GitLabLoginResult,
+  type GitLabProject,
   type GitLabProjectPage,
 } from "../contracts/gitlab.js";
 import {
@@ -18,6 +19,7 @@ export interface GitLabOperations {
   getConnection(): Promise<GitLabConnection>;
   startLogin(): Promise<GitLabLoginResult>;
   listProjects(input: { page: number; perPage: number }): Promise<GitLabProjectPage>;
+  getProject(projectId: string): Promise<GitLabProject>;
 }
 
 export class GitLabService implements GitLabOperations {
@@ -71,6 +73,12 @@ export class GitLabService implements GitLabOperations {
     if (connection.state !== "connected") throw new GitLabAdapterError("gitlab_not_connected");
     return this.adapter.listProjects(input);
   }
+
+  async getProject(projectId: string) {
+    const connection = await this.getConnection();
+    if (connection.state !== "connected") throw new GitLabAdapterError("gitlab_not_connected");
+    return this.adapter.getProject(projectId);
+  }
 }
 
 export function createDefaultGitLabService(): GitLabService {
@@ -94,6 +102,9 @@ export function createDefaultGitLabService(): GitLabService {
     },
     async listProjects(input) {
       return (await resolveClient()).listProjects(input);
+    },
+    async getProject(projectId) {
+      return (await resolveClient()).getProject(projectId);
     },
   };
   return new GitLabService({
