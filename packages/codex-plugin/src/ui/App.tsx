@@ -72,6 +72,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const detailRequestSequence = useRef(0);
   const detailOpener = useRef<HTMLButtonElement | undefined>(undefined);
   const reconnectOpener = useRef<HTMLButtonElement>(null);
+  const appliedHostSnapshot = useRef(initialSnapshot);
   const refreshConnectedFeishuOnEntry = useRef(
     initialSnapshot.connection.provider.providerId === "feishu-project"
       && initialSnapshot.connection.provider.state === "connected",
@@ -127,6 +128,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         ? { retryAfterSeconds: initialSnapshot.retryAfterSeconds }
         : {}),
     });
+    if (appliedHostSnapshot.current !== initialSnapshot) {
+      appliedHostSnapshot.current = initialSnapshot;
+      applySnapshot(initialSnapshot);
+    }
   }, [initialSnapshot, refreshCoordinator.markAttemptCompleted]);
 
   useEffect(() => {

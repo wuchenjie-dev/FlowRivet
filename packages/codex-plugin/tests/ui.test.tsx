@@ -218,6 +218,36 @@ describe("FlowRivet taskboard", () => {
       .toHaveLength(1);
   });
 
+  it("applies a newer host snapshot to an already mounted taskboard", async () => {
+    const initial = snapshotWithFeishuState("connected");
+    initial.items = initial.items.map((item, index) => ({
+      ...item,
+      title: `旧工具结果 ${index + 1}`,
+    }));
+    const updated = snapshotWithFeishuState("connected");
+    updated.items = updated.items.map((item, index) => ({
+      ...item,
+      title: `新工具结果 ${index + 1}`,
+    }));
+    const refresh = deferred<{
+      content: never[];
+      structuredContent: TaskboardSnapshot;
+    }>();
+    const callTool = vi.fn(async (name: string) => name === "refresh_my_work_items"
+      ? refresh.promise
+      : {
+          content: [],
+          structuredContent: { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" },
+        });
+    const bridge = createBridge({ callTool });
+    const view = render(<App initialSnapshot={initial} bridge={bridge} />);
+
+    expect(screen.getByText("旧工具结果 1")).toBeTruthy();
+    view.rerender(<App initialSnapshot={updated} bridge={bridge} />);
+
+    expect(await screen.findByText("新工具结果 1")).toBeTruthy();
+  });
+
   it("starts one-click Feishu authorization without a token or verification code", async () => {
     const user = userEvent.setup();
     const callTool = vi.fn(async (name: string) => {
