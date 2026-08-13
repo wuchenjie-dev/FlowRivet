@@ -399,6 +399,9 @@ describe("taskboard MCP app", () => {
         clock: () => new Date("2026-08-12T00:00:00.000Z"),
         createId: () => "execution-example",
       }),
+      directoryPicker: {
+        selectDirectory: vi.fn().mockResolvedValue({ outcome: "cancelled" }),
+      },
     } as RuntimeServices;
     const server = createTaskboardMcpServer({
       uiBundlePath: await createBundle(),
@@ -428,6 +431,7 @@ describe("taskboard MCP app", () => {
         "get_gitlab_connection",
         "start_gitlab_login",
         "recheck_gitlab_connection",
+        "select_local_directory",
         "list_gitlab_projects",
         "prepare_work_item_execution",
         "get_work_item_execution",

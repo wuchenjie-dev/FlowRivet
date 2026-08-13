@@ -29,6 +29,8 @@ import { DevelopmentWorkflow, type DevelopmentOperations } from "../gitlab/devel
 import { GlabCliClient } from "../gitlab/glab-cli-client.js";
 import { FLOWRIVET_GITLAB_HOST } from "../gitlab/gitlab-service.js";
 import { ConfirmationService } from "../executions/confirmation-service.js";
+import type { DirectoryPicker } from "../local-directory/directory-picker.js";
+import { NativeDirectoryPicker } from "../local-directory/native-directory-picker.js";
 
 export interface RuntimeServices {
   registry: ProviderRegistry;
@@ -42,6 +44,7 @@ export interface RuntimeServices {
   repositoryWorkflow?: RepositoryPreparer;
   developmentWorkflow?: DevelopmentOperations;
   confirmationService?: ConfirmationService;
+  directoryPicker?: DirectoryPicker;
 }
 
 export function createDefaultRuntimeServices(
@@ -132,5 +135,6 @@ export function createDefaultRuntimeServices(
     repositoryWorkflow,
     developmentWorkflow,
     confirmationService: new ConfirmationService(),
+    directoryPicker: new NativeDirectoryPicker(),
   };
 }

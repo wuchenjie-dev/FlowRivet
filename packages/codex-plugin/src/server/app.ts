@@ -20,6 +20,7 @@ import { workItemNotificationListSchema } from "../contracts/notifications.js";
 import type { RuntimeServices } from "./runtime-services.js";
 import { registerGitLabTools } from "./tools/gitlab-tools.js";
 import { registerExecutionTools } from "./tools/execution-tools.js";
+import { registerDirectoryPickerTools } from "./tools/directory-picker-tools.js";
 import {
   resolveRuntimeVersion,
   runtimeVersionSchema,
@@ -192,6 +193,10 @@ export function createTaskboardMcpServer(
     ?? new JsonStderrNotificationOperationLogger();
   const server = new McpServer({ name: "flowrivet", version: runtimeVersion.version });
   if (runtimeServices?.gitLabService) registerGitLabTools(server, runtimeServices.gitLabService);
+  if (runtimeServices?.directoryPicker) registerDirectoryPickerTools(server, {
+    picker: runtimeServices.directoryPicker,
+    now,
+  });
   if (runtimeServices?.executionService) registerExecutionTools(server, {
     service: runtimeServices.executionService,
     repositoryWorkflow: runtimeServices.repositoryWorkflow,
