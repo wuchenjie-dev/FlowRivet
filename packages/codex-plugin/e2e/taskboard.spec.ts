@@ -257,6 +257,46 @@ test("execution drawer shows GitLab progress and local writeback fallback", asyn
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
+test("repository dialog selects native directories without submitting", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/src/ui/demo-harness.html?scenario=repository&directory=selected");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", {
+    name: "打开工作项：统一检索结果的排序与筛选体验",
+  }).click();
+  await board.getByRole("button", { name: "交给 Codex 处理" }).click();
+  await board.getByRole("button", { name: "关联研发仓库" }).click();
+  const dialog = board.getByRole("dialog", { name: "选择研发仓库" });
+  await dialog.getByRole("option", { name: /team\/flowrivet/ }).click();
+  await dialog.getByRole("button", { name: "选择本地仓库文件夹" }).click();
+  await expect(dialog.getByLabel("本地仓库绝对路径")).toHaveValue("C:\\workspace\\example");
+  await expect(dialog.getByRole("button", { name: "确认关联" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "克隆到父目录" }).click();
+  await dialog.getByRole("button", { name: "选择克隆父文件夹" }).click();
+  await expect(dialog.getByLabel("父目录绝对路径")).toHaveValue("C:\\workspace\\example");
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test("repository directory cancellation preserves a manual path on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/src/ui/demo-harness.html?scenario=repository&directory=cancelled");
+  const board = boardFrame(page);
+
+  await board.getByRole("button", {
+    name: "打开工作项：统一检索结果的排序与筛选体验",
+  }).click();
+  await board.getByRole("button", { name: "交给 Codex 处理" }).click();
+  await board.getByRole("button", { name: "关联研发仓库" }).click();
+  const dialog = board.getByRole("dialog", { name: "选择研发仓库" });
+  const input = dialog.getByLabel("本地仓库绝对路径");
+  await input.fill("C:\\manual\\repository");
+  await dialog.getByRole("button", { name: "选择本地仓库文件夹" }).click();
+  await expect(input).toHaveValue("C:\\manual\\repository");
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
 test("opens all accessible projects without a selection step", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);

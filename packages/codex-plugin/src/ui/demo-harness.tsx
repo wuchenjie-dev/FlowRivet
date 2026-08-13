@@ -25,7 +25,8 @@ type Scenario =
   | "offline"
   | "offline-detail-error"
   | "manual-browser"
-  | "expired-login";
+  | "expired-login"
+  | "repository";
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";
@@ -139,8 +140,8 @@ function scenarioSnapshot(scenario: Scenario): TaskboardSnapshot {
         ...feishuDemoTaskboardSnapshot.connection.provider,
         state: scenario === "manual-browser" || scenario === "expired-login"
           ? "disconnected"
-          : scenario,
-        ...(scenario !== "connected"
+          : scenario === "repository" ? "connected" : scenario,
+        ...(scenario !== "connected" && scenario !== "repository"
           ? { accountDisplayName: undefined, tenantDisplayName: undefined }
           : {}),
       },
@@ -169,6 +170,7 @@ function DemoHarness() {
   });
   const [refreshCallCount, setRefreshCallCount] = useState(0);
   const scenario = (new URLSearchParams(location.search).get("scenario") ?? "connected") as Scenario;
+  const directoryOutcome = new URLSearchParams(location.search).get("directory") ?? "selected";
 
   useEffect(() => {
     const frameWindow = frameRef.current?.contentWindow;
@@ -361,8 +363,28 @@ function DemoHarness() {
               : toolName === "get_work_item_detail" && detailReference.success
                 ? demoWorkItemDetail(detailReference.data)
               : toolName === "prepare_work_item_execution"
-                ? demoExecution(message.params?.arguments)
+                ? demoExecution(message.params?.arguments, scenario === "repository")
+              : toolName === "list_gitlab_projects"
+                ? {
+                    page: 1, hasMore: false, projects: [{
+                      host: "gitlab-aiabu.ruijie.com.cn", projectId: "1",
+                      pathWithNamespace: "team/flowrivet", displayName: "FlowRivet",
+                      defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/team/flowrivet.git",
+                    }],
+                  }
+              : toolName === "select_local_directory" && directoryOutcome === "selected"
+                ? { outcome: "selected", absolutePath: "C:\\workspace\\example" }
+              : toolName === "select_local_directory" && directoryOutcome === "cancelled"
+                ? { outcome: "cancelled" }
               : undefined;
+        if (toolName === "select_local_directory" && directoryOutcome === "unavailable") {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32000, message: "directory_picker_unavailable" },
+          });
+          return;
+        }
         send({
           jsonrpc: "2.0",
           id: message.id,
@@ -376,7 +398,7 @@ function DemoHarness() {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [scenario]);
+  }, [directoryOutcome, scenario]);
 
   return (
     <>
@@ -406,7 +428,7 @@ function DemoHarness() {
   );
 }
 
-function demoExecution(argumentsValue: unknown) {
+function demoExecution(argumentsValue: unknown, awaitRepository = false) {
   const item = argumentsValue && typeof argumentsValue === "object" && "item" in argumentsValue
     ? (argumentsValue as { item?: { key?: string } }).item
     : undefined;
@@ -415,15 +437,15 @@ function demoExecution(argumentsValue: unknown) {
       schemaVersion: 1, executionId: "demo-execution-1", providerId: "feishu-project",
       accountKey: "demo-user", workItemKey: item?.key ?? "demo-item", taskLaunchMode: "handoff",
       codexHandoffId: "flowrivet-demo-execution-1", executionKind: "development",
-      state: "writeback_pending", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
+      state: awaitRepository ? "awaiting_repository" : "writeback_pending", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
-      gitlab: {
+      ...(awaitRepository ? {} : { gitlab: {
         host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", projectPath: "cc/flowrivet",
         localPath: "C:\\workspace\\a-very-long-directory-name\\flowrivet",
         branch: "codex/feishu-work-item-123", mergeRequestIid: 9,
         mergeRequestUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/merge_requests/9",
         pipelineId: "42",
-      },
+      } }),
     },
     handoff: { handoffId: "flowrivet-demo-execution-1", prompt: "Continue FlowRivet demo execution" },
   };
