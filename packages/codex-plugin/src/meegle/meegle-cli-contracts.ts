@@ -63,7 +63,7 @@ const meegleDetailUserSchema = z.object({
   email: z.string(),
   key: z.string().min(1),
   name: z.string().min(1),
-}).strict();
+}).strip();
 
 export const meegleWorkItemDetailSchema = z.object({
   pagination: z.object({
@@ -71,7 +71,7 @@ export const meegleWorkItemDetailSchema = z.object({
     page_size: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     next_page_token: z.string().min(1).optional(),
-  }).strict(),
+  }).strip(),
   work_item_attribute: z.object({
     create_by: meegleDetailUserSchema,
     create_time: z.string().min(1),
@@ -79,25 +79,29 @@ export const meegleWorkItemDetailSchema = z.object({
       key: z.string().min(1),
       name: z.string().min(1),
       simple_name: z.string().min(1),
-    }).strict(),
+    }).strip(),
     template: z.object({
       id: z.union([z.number().int().nonnegative(), z.string().min(1)]),
       name: z.string().min(1),
-    }).strict(),
+    }).strip(),
     update_time: z.string().min(1),
     updated_by: meegleDetailUserSchema,
     work_item_id: z.union([z.number().int().nonnegative(), z.string().min(1)]),
     work_item_mod: z.string().min(1),
     work_item_name: z.string().min(1),
-    work_item_status: z.object({ key: z.string().min(1), name: z.string().min(1) }).strict(),
-    work_item_type: z.object({ key: z.string().min(1), name: z.string().min(1) }).strict(),
-  }).strict(),
+    work_item_status: z.object({ key: z.string().min(1), name: z.string().min(1) }).strip(),
+    work_item_type: z.object({ key: z.string().min(1), name: z.string().min(1) }).strip(),
+  }).strip(),
   work_item_fields: z.array(z.object({
     key: z.string().min(1),
     name: z.string().min(1),
-    value: z.string().nullable(),
-  }).strict()),
-}).strict();
+    value: z.unknown().transform((value) => value === null
+      ? null
+      : typeof value === "string"
+        ? value
+        : JSON.stringify(value)),
+  }).strip()),
+}).strip();
 
 export const meegleDeviceInitSchema = z.object({
   client_id: cliOpaqueTokenSchema,

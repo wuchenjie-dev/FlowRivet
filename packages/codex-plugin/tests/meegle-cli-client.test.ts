@@ -143,6 +143,48 @@ describe("Meegle CLI client", () => {
     expect(runner.run.mock.calls[0]![0].args).not.toContain("--page-size");
   });
 
+  it("accepts additive detail fields from newer official CLI responses", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        pagination: { has_more: false, page_size: 100, total: 0 },
+        work_item_attribute: {
+          create_by: { email: "creator@example.invalid", key: "creator", name: "Creator" },
+          create_time: "2026-08-10T01:00:00Z",
+          owned_project: { key: "PROJ", name: "Example Project", simple_name: "example-project" },
+          role_members: [{ key: "owner", name: "Example Owner" }],
+          template: { id: 1, name: "Template" },
+          update_time: "2026-08-12T01:00:00Z",
+          updated_by: { email: "updater@example.invalid", key: "updater", name: "Updater" },
+          work_item_id: "10001", work_item_mod: "work_item", work_item_name: "Example",
+          work_item_status: { key: "planning", name: "Planning" },
+          work_item_type: { key: "story", name: "Requirement" },
+        },
+        work_item_current_node: [{
+          actual_begin_time: "2026-08-11T01:00:00Z",
+          id: "node-1",
+          name: "Planning",
+          owners: [{ email: "owner@example.invalid", key: "owner", name: "Example Owner" }],
+        }],
+        work_item_fields: [
+          { key: "priority", name: "Priority", value: { label: "High", value: "high" } },
+          { key: "current_status_operator", name: "Assignee", value: [{ key: "owner", name: "Example Owner" }] },
+        ],
+      }),
+      exitCode: 0,
+    });
+
+    const detail = await client(runner).getWorkItem("default", "PROJ", "10001");
+
+    expect(detail.work_item_attribute.work_item_name).toBe("Example");
+    expect(detail.work_item_fields.map((field) => field.value)).toEqual([
+      '{"label":"High","value":"high"}',
+      '[{"key":"owner","name":"Example Owner"}]',
+    ]);
+    expect(detail).not.toHaveProperty("work_item_current_node");
+    expect(detail.work_item_attribute).not.toHaveProperty("role_members");
+  });
+
   it("accepts structured unauthenticated status on exit one", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({
