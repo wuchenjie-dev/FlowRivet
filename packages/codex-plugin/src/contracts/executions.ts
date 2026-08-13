@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  fieldProposalSchema,
+  inspectClientString,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_LINK_LENGTH,
+  MAX_SUBMISSION_STRING_BYTES,
+} from "./writeback.js";
 
 export const executionKinds = [
   "pending_classification", "requirement_breakdown", "requirement_analysis", "development",
@@ -79,6 +86,88 @@ export type ExecutionKind = z.infer<typeof executionRecordSchema>["executionKind
 export type ExecutionWorkMode = z.infer<typeof executionRecordSchema>["workMode"];
 export type ExecutionState = z.infer<typeof executionRecordSchema>["state"];
 export type WorkExecutionHandoff = z.infer<typeof workExecutionHandoffSchema>;
+
+const clientTextSchema = (maximum: number) => z.string().min(1).max(maximum);
+
+export const submitExecutionResultSchema = z.object({
+  executionId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  revision: z.number().int().positive(),
+  summary: clientTextSchema(2_000),
+  resultMarkdown: clientTextSchema(8_000),
+  verification: z.object({
+    status: z.enum(["passed", "failed", "not_applicable"]),
+    summary: clientTextSchema(2_000),
+  }).strict(),
+  artifacts: z.array(z.object({
+    type: z.enum(["document", "branch", "merge_request", "pipeline"]),
+    title: z.string().min(1).max(500),
+    url: z.url().max(MAX_LINK_LENGTH)
+      .refine((value) => new URL(value).protocol === "https:").optional(),
+  }).strict()).max(100),
+  fieldProposals: z.array(fieldProposalSchema).max(100),
+}).strict().superRefine((submission, context) => {
+  const proposalIds = new Set<string>();
+  for (const [index, proposal] of submission.fieldProposals.entries()) {
+    if (proposalIds.has(proposal.proposalId)) {
+      context.addIssue({
+        code: "custom",
+        message: "proposal_id_duplicate",
+        path: ["fieldProposals", index, "proposalId"],
+      });
+    }
+    proposalIds.add(proposal.proposalId);
+  }
+  for (const issue of inspectSubmissionStrings(submission)) {
+    context.addIssue({
+      code: "custom",
+      message: issue.message,
+      path: issue.path,
+    });
+  }
+  if (totalStringBytes(submission) > MAX_SUBMISSION_STRING_BYTES) {
+    context.addIssue({
+      code: "custom",
+      message: "submission_string_bytes_exceeded",
+      path: [],
+    });
+  }
+});
+
+export type SubmitExecutionResult = z.infer<typeof submitExecutionResultSchema>;
+
+function inspectSubmissionStrings(
+  value: unknown,
+  path: PropertyKey[] = [],
+): Array<{ message: "writeback_marker_forbidden" | "client_string_encoding_invalid"; path: PropertyKey[] }> {
+  if (typeof value === "string") {
+    const inspection = inspectClientString(value);
+    if (inspection.hasServerWritebackMarker) {
+      return [{ message: "writeback_marker_forbidden", path }];
+    }
+    return inspection.hasInvalidPercentEncoding
+      ? [{ message: "client_string_encoding_invalid", path }]
+      : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((child, index) => inspectSubmissionStrings(child, [...path, index]));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, child]) =>
+      inspectSubmissionStrings(child, [...path, key]));
+  }
+  return [];
+}
+
+function totalStringBytes(value: unknown): number {
+  if (typeof value === "string") return new TextEncoder().encode(value).length;
+  if (Array.isArray(value)) {
+    return value.reduce((total, child) => total + totalStringBytes(child), 0);
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).reduce((total, child) => total + totalStringBytes(child), 0);
+  }
+  return 0;
+}
 
 export const confirmationChallengeSchema = z.object({
   challengeId: z.string().min(1), operationId: z.string().min(1),
