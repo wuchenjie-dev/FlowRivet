@@ -1,0 +1,18 @@
+{
+  "cliVersion": "1.0.19",
+  "probeVersion": "1",
+  "comment": {
+    "enabled": false,
+    "list": false,
+    "create": false,
+    "read": false,
+    "update": false,
+    "repeat": false,
+    "cleanup": false
+  },
+  "fieldTypes": {},
+  "state": { "enabled": false },
+  "node": { "enabled": false },
+  "role": { "enabled": false },
+  "verifiedAt": null
+}

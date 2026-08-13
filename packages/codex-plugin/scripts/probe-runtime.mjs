@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 export async function resolveCommand(command, options = {}) {
   const platform = options.platform ?? process.platform;
@@ -12,6 +12,10 @@ export async function resolveCommand(command, options = {}) {
       const candidate = join(directory, `${command}${extension}`);
       try {
         await access(candidate);
+        if (platform === "win32" && command === "meegle" && /\.(cmd|ps1)$/iu.test(candidate)) {
+          const cliEntry = await resolvePackageBin(directory, "@lark-project/meegle", command);
+          if (cliEntry) return cliEntry;
+        }
         return candidate;
       } catch {
         // Continue searching PATH.
@@ -75,27 +79,25 @@ export function runCommand(executablePath, args, options = {}) {
 }
 
 function spawnInvocation(executablePath, args) {
-  if (process.platform !== "win32" || !/\.(cmd|ps1)$/iu.test(executablePath)) {
-    return { command: executablePath, args, windowsVerbatimArguments: false };
+  if (/\.(?:c|m)?js$/iu.test(executablePath)) {
+    return { command: process.execPath, args: [executablePath, ...args], windowsVerbatimArguments: false };
   }
-  if (executablePath.toLowerCase().endsWith(".ps1")) {
-    return {
-      command: "powershell.exe",
-      args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", executablePath, ...args],
-      windowsVerbatimArguments: false,
-    };
-  }
-  const commandLine = [executablePath, ...args].map(quoteCmdToken).join(" ");
-  return {
-    command: process.env.ComSpec ?? "cmd.exe",
-    args: ["/d", "/s", "/c", `"${commandLine}"`],
-    windowsVerbatimArguments: true,
-  };
+  if (/\.(cmd|ps1)$/iu.test(executablePath)) return { command: "", args: [], windowsVerbatimArguments: false };
+  return { command: executablePath, args, windowsVerbatimArguments: false };
 }
 
-function quoteCmdToken(value) {
-  if (/[\0\r\n]/u.test(value)) throw new Error("invalid_command_argument");
-  return `"${value.replace(/%/gu, "%%").replace(/!/gu, "^^!").replace(/"/gu, '\\"')}"`;
+async function resolvePackageBin(directory, packageName, command) {
+  try {
+    const packageDirectory = join(directory, "node_modules", ...packageName.split("/"));
+    const packageJson = JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8"));
+    const relativeBin = typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin?.[command];
+    if (typeof relativeBin !== "string") return undefined;
+    const cliEntry = resolve(packageDirectory, relativeBin);
+    await access(cliEntry);
+    return cliEntry;
+  } catch {
+    return undefined;
+  }
 }
 
 export function isMain(importMetaUrl, entry = process.argv[1]) {

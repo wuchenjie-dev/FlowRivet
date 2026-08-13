@@ -23,7 +23,7 @@
     "probe:cache": "npm run --silent build:server && node --no-warnings scripts/probe-work-item-cache.mjs",
     "probe:glab": "node --no-warnings scripts/probe-glab-contract.mjs",
     "probe:codex-task": "node --no-warnings scripts/probe-codex-task-bridge.mjs",
-    "probe:meegle-write": "node --no-warnings scripts/probe-meegle-write-contract.mjs",
+    "probe:meegle-write": "node --no-warnings ../../scripts/probe-meegle-write-contract.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

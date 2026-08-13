@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { probeCodexTaskBridge } from "../scripts/probe-codex-task-bridge.mjs";
 import { probeGlabContract } from "../scripts/probe-glab-contract.mjs";
-import { probeMeegleWriteContract } from "../scripts/probe-meegle-write-contract.mjs";
+import { parseProbeArgs } from "../../../scripts/probe-meegle-write-contract.mjs";
 import { isMain } from "../scripts/probe-runtime.mjs";
 
 describe("integration capability probes", () => {
@@ -82,26 +82,7 @@ describe("integration capability probes", () => {
     });
   });
 
-  it("does not exercise unproven Meegle write commands", async () => {
-    const runCommand = vi.fn().mockResolvedValue({
-      exitCode: 0,
-      stdout: "workitem get\nmywork todo",
-      stderr: "",
-    });
-
-    const result = await probeMeegleWriteContract({
-      resolveCommand: vi.fn().mockResolvedValue("C:\\tools\\meegle.exe"),
-      runCommand,
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      capability: "meegle_write",
-      comments: "unsupported",
-      childItems: "unsupported",
-      fields: "unsupported",
-      transitions: "unsupported",
-    });
-    expect(runCommand).toHaveBeenCalledTimes(1);
+  it("does not start the Meegle write probe without an isolated fixture", () => {
+    expect(() => parseProbeArgs([])).toThrow("isolated_fixture_required");
   });
 });
