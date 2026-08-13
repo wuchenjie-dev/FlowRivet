@@ -89,6 +89,23 @@ describe("Meegle CLI client", () => {
     ]);
   });
 
+  it("requests the complete todo scope instead of the CLI in-progress default", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({ list: null, total: 0 }),
+      exitCode: 0,
+    });
+
+    await expect(client(runner).getMyWorkPage("default", "todo", 1)).resolves.toEqual({
+      list: null,
+      total: 0,
+    });
+    expect(runner.run.mock.calls[0]![0].args).toEqual([
+      "mywork", "todo", "--action", "todo", "--todo-scope", "all",
+      "--page-num", "1", "--profile", "default", "--format", "json",
+    ]);
+  });
+
   it("resolves a project key to the canonical URL simple name", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({

@@ -35,7 +35,7 @@ type ActionResult =
   | { action: MeegleMyWorkAction; outcome: "success"; items: RawItem[] }
   | { action: MeegleMyWorkAction; outcome: "error"; errorCode: WorkItemErrorCode };
 
-const actions: MeegleMyWorkAction[] = ["this_week", "overdue", "done"];
+const actions: MeegleMyWorkAction[] = ["todo", "this_week", "overdue", "done"];
 const kinds: WorkItemKind[] = ["requirement", "task", "defect", "other"];
 const pageSize = 50;
 const maximumPages = 1_000;
@@ -153,16 +153,23 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     projectSimpleNames: ReadonlyMap<string, string>,
   ): AccountWorkItemQueryResult {
     const cutoff = this.clock().getTime() - 7 * 24 * 60 * 60 * 1_000;
+    const nodeIdentities = collectNodeIdentities(results);
     const winners = new Map<string, { action: MeegleMyWorkAction; item: WorkItem }>();
     for (const result of results) {
       if (result.outcome === "error") continue;
       for (const raw of result.items) {
-        const item = normalizeItem(
+        let item = normalizeItem(
           raw,
           result.action,
           projectSimpleNames.get(raw.project_key.trim()),
         );
         if (!item) continue;
+        const nodeIdentity = itemNodeIdentity(raw);
+        const identities = nodeIdentities.get(item.key);
+        const primaryNodeIdentity = identities?.values().next().value;
+        if ((identities?.size ?? 0) > 1 && nodeIdentity !== primaryNodeIdentity) {
+          item = { ...item, key: `${item.key}:node:${encodeURIComponent(nodeIdentity)}` };
+        }
         if (result.action === "done") {
           const completed = item.completedAt ? new Date(item.completedAt).getTime() : Number.NaN;
           if (!Number.isFinite(completed) || completed < cutoff) continue;
@@ -252,6 +259,29 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
   }
 }
 
+function collectNodeIdentities(results: ActionResult[]) {
+  const identities = new Map<string, Set<string>>();
+  for (const result of results) {
+    if (result.outcome !== "success" || result.action === "done") continue;
+    for (const raw of result.items) {
+      const projectExternalId = raw.project_key.trim();
+      const providerItemType = raw.work_item_info.work_item_type_key.trim();
+      const externalId = String(raw.work_item_info.work_item_id).trim();
+      const nodeIdentity = itemNodeIdentity(raw);
+      if (!projectExternalId || !providerItemType || !externalId || !nodeIdentity) continue;
+      const key = `feishu-project:${projectExternalId}:${providerItemType}:${externalId}`;
+      const values = identities.get(key) ?? new Set<string>();
+      values.add(nodeIdentity);
+      identities.set(key, values);
+    }
+  }
+  return identities;
+}
+
+function itemNodeIdentity(raw: RawItem) {
+  return raw.node_info.node_state_key.trim() || raw.node_info.node_name.trim();
+}
+
 function normalizeItem(
   raw: RawItem,
   action: MeegleMyWorkAction,
@@ -305,6 +335,7 @@ function mapStage(action: MeegleMyWorkAction, state: string): CanonicalStage {
   const normalized = state.toLowerCase();
   if (/(done|closed|complete|finish|已完成|已关闭)/u.test(normalized)) return "done";
   if (/(review|test|verify|验收|评审|测试)/u.test(normalized)) return "in_review";
+  if (/(not[_ -]?started|未开始|待处理|待办)/u.test(normalized)) return "todo";
   if (/(progress|doing|started|develop|进行|处理|开发)/u.test(normalized)) return "in_progress";
   return "todo";
 }
@@ -338,7 +369,7 @@ function parseJson(value: string): unknown {
 }
 
 function actionPriority(action: MeegleMyWorkAction) {
-  return action === "overdue" ? 3 : action === "this_week" ? 2 : 1;
+  return action === "overdue" ? 4 : action === "this_week" ? 3 : action === "todo" ? 2 : 1;
 }
 
 function providerErrorCode(error: unknown): WorkItemErrorCode {

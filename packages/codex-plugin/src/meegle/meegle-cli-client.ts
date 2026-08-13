@@ -42,7 +42,7 @@ export interface MeegleCommandRunner {
   run(input: CommandRunInput): Promise<CommandRunResult>;
 }
 
-export type MeegleMyWorkAction = "this_week" | "overdue" | "done";
+export type MeegleMyWorkAction = "todo" | "this_week" | "overdue" | "done";
 
 export interface MeegleDeviceAttempt {
   profileName: string;
@@ -139,13 +139,17 @@ export class MeegleCliClient {
     if (!Number.isInteger(pageNum) || pageNum < 1 || pageNum > 1_000) {
       throw new MeegleCliError("provider_invalid_response");
     }
-    return this.runJson([
+    const args = [
       "mywork", "todo",
       "--action", action,
+    ];
+    if (action === "todo") args.push("--todo-scope", "all");
+    args.push(
       "--page-num", String(pageNum),
       "--profile", validateProfile(profile),
       "--format", "json",
-    ], meegleMyWorkPageSchema, { timeoutMs: 30_000 });
+    );
+    return this.runJson(args, meegleMyWorkPageSchema, { timeoutMs: 30_000 });
   }
 
   async getProjectSimpleName(profile: string, projectKey: string): Promise<string | undefined> {

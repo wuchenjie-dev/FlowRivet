@@ -26,6 +26,7 @@ function rawItem(id: number, options: {
   project?: string;
   type?: string;
   node?: string;
+  nodeKey?: string;
   finish?: string;
   schedule?: [number, number];
 } = {}): NonNullable<MeegleMyWorkPage["list"]>[number] {
@@ -34,7 +35,7 @@ function rawItem(id: number, options: {
     ...(options.finish ? { finish_time: { finish_time: options.finish } } : {}),
     node_info: {
       node_name: options.node ?? "Planning",
-      node_state_key: options.node ?? "planning",
+      node_state_key: options.nodeKey ?? options.node ?? "planning",
     },
     project_key: project,
     project_name: `Project ${project}`,
@@ -54,6 +55,46 @@ function pages(entries: Partial<Record<MeegleMyWorkAction, MeegleMyWorkPage[]>>)
 }
 
 describe("Meegle work item provider", () => {
+  it("includes unscheduled work returned only by the complete todo query", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({
+      todo: [{ list: [rawItem(99, { node: "not_started" })], total: 1 }],
+    }));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(result.scopes.flatMap((scope) => scope.items)).toEqual([
+      expect.objectContaining({ externalId: "99", stage: "todo" }),
+    ]);
+    expect(client.getMyWorkPage).toHaveBeenCalledWith("default", "todo", 1);
+  });
+
+  it("keeps separate todo nodes from the same Feishu work item", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({
+      todo: [{
+        list: [
+          rawItem(99, { node: "Agreement", nodeKey: "agreement" }),
+          rawItem(99, { node: "Feedback", nodeKey: "feedback" }),
+        ],
+        total: 2,
+      }],
+    }));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+    const items = result.scopes.flatMap((scope) => scope.items);
+
+    expect(items).toHaveLength(2);
+    expect(new Set(items.map((item) => item.key)).size).toBe(2);
+    expect(items.map((item) => item.externalId)).toEqual(["99", "99"]);
+    expect(items.map((item) => item.key)).toEqual([
+      "feishu-project:PROJ:task:99",
+      "feishu-project:PROJ:task:99:node:feedback",
+    ]);
+  });
+
   it("maps the schedule end and canonical Feishu detail URL", async () => {
     const client = new FakeClient();
     client.getMyWorkPage.mockImplementation(pages({
