@@ -448,19 +448,25 @@ describe("FlowRivet taskboard", () => {
     expect(await screen.findByRole("button", { name: "连接飞书项目" })).toBeTruthy();
   });
 
-  it("starts and resumes a stable Codex handoff from a Feishu work item", async () => {
+  it("asks for work mode before sending a stable Codex handoff", async () => {
     const user = userEvent.setup();
     const snapshot = snapshotWithFeishuState("connected");
     const execution = {
       schemaVersion: 2, executionId: "execution-1", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      attempt: 1, workMode: "non_code", codexHandoffId: "flowrivet-execution-1", executionKind: "requirement_analysis",
+      attempt: 1, workMode: "pending", codexHandoffId: "flowrivet-execution-1",
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
-    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent: name === "prepare_work_item_execution"
-      ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue FlowRivet work" } }
-      : { ok: true } }));
+    const ready = { ...execution, workMode: "non_code" as const, state: "ready" as const };
+    const dispatched = { ...ready, handoffDispatchedAt: "2026-08-13T00:00:00.000Z" };
+    let selected = false;
+    const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
+      name === "set_work_item_execution_mode" ? (selected = true, ready)
+        : name === "mark_execution_handoff_dispatched" ? dispatched
+          : name === "prepare_work_item_execution"
+            ? { execution: selected ? ready : execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue FlowRivet work" } }
+            : { ok: true } }));
     const sendUserMessage = vi.fn().mockResolvedValue(undefined);
     render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool, sendUserMessage })} />);
 
@@ -477,9 +483,15 @@ describe("FlowRivet taskboard", () => {
     });
     await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
     expect(callTool).toHaveBeenCalledWith("prepare_work_item_execution", { item: snapshot.items[0] });
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("radio", { name: /仅处理当前事项/ }));
+    await user.click(screen.getByRole("button", { name: "确认执行方式" }));
     expect(sendUserMessage).toHaveBeenCalledOnce();
     expect(sendUserMessage).toHaveBeenCalledWith("Continue FlowRivet work");
-    expect(await screen.findByRole("button", { name: "继续由 Codex 处理" })).toBeTruthy();
+    expect(callTool).toHaveBeenCalledWith("mark_execution_handoff_dispatched", {
+      executionId: "execution-1",
+      handoffId: "flowrivet-execution-1",
+    });
     expect(screen.getByText("execution-1")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "兼容复制到 Codex" })).toBeNull();
   });
@@ -494,20 +506,25 @@ describe("FlowRivet taskboard", () => {
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
+    const ready = { ...execution, workMode: "non_code" as const, state: "ready" as const };
+    let selected = false;
     const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
-      name === "prepare_work_item_execution"
-        ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue safely" } }
-        : { ok: true } }));
+      name === "set_work_item_execution_mode" ? (selected = true, ready)
+        : name === "prepare_work_item_execution"
+          ? { execution: selected ? ready : execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue safely" } }
+          : { ok: true } }));
     const sendUserMessage = vi.fn().mockRejectedValue(new Error("codex_handoff_unsupported"));
     render(<App initialSnapshot={snapshot} bridge={createBridge({ callTool, sendUserMessage })} />);
     await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
 
     await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
+    await user.click(await screen.findByRole("radio", { name: /仅处理当前事项/ }));
+    await user.click(screen.getByRole("button", { name: "确认执行方式" }));
 
     expect(await screen.findByText("当前 Codex 版本不支持直接接管，可使用兼容复制")).toBeTruthy();
     expect(screen.getByRole("button", { name: "兼容复制到 Codex" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "继续由 Codex 处理" }));
-    expect(callTool.mock.calls.filter(([name]) => name === "prepare_work_item_execution")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "重试交给 Codex" }));
+    expect(callTool.mock.calls.filter(([name]) => name === "prepare_work_item_execution")).toHaveLength(2);
     expect(sendUserMessage).toHaveBeenCalledTimes(2);
   });
 
@@ -522,8 +539,11 @@ describe("FlowRivet taskboard", () => {
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
     const project = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "1", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" };
+    const awaitingRepository = { ...execution, workMode: "code" as const, state: "awaiting_repository" as const, executionKind: "development" as const };
+    let selected = false;
     const callTool = vi.fn(async (name: string) => ({ content: [], structuredContent:
-      name === "prepare_work_item_execution" ? { execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue" } }
+      name === "set_work_item_execution_mode" ? (selected = true, awaitingRepository)
+        : name === "prepare_work_item_execution" ? { execution: selected ? awaitingRepository : execution, handoff: { handoffId: "flowrivet-execution-1", prompt: "Continue" } }
         : name === "list_gitlab_projects" ? { page: 1, hasMore: false, projects: [project] }
           : { ...execution, state: "ready", gitlab: { host: project.host, projectId: "1", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" } } }));
     const sendUserMessage = vi.fn().mockResolvedValue(undefined);
@@ -531,7 +551,9 @@ describe("FlowRivet taskboard", () => {
     await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
     expect(screen.queryByText("选择研发仓库")).toBeNull();
     await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
-    await user.click(await screen.findByRole("button", { name: "关联研发仓库" }));
+    expect(screen.queryByRole("button", { name: "关联研发仓库" })).toBeNull();
+    await user.click(await screen.findByRole("radio", { name: /需要修改代码/ }));
+    await user.click(screen.getByRole("button", { name: "确认执行方式" }));
     const repositoryDialog = await screen.findByRole("dialog", { name: "选择研发仓库" });
     const detailDialog = screen.getByRole("dialog", { name: snapshot.items[0]!.title });
     expect(detailDialog.contains(repositoryDialog)).toBe(false);
@@ -539,7 +561,7 @@ describe("FlowRivet taskboard", () => {
     await user.type(screen.getByLabelText("本地仓库绝对路径"), "C:\\work\\flowrivet");
     await user.click(screen.getByRole("button", { name: "确认关联" }));
     expect(callTool).toHaveBeenCalledWith("bind_execution_repository", expect.objectContaining({ executionId: "execution-1", localPath: "C:\\work\\flowrivet" }));
-    expect(sendUserMessage).toHaveBeenLastCalledWith("继续 FlowRivet 执行：execution-1");
+    expect(sendUserMessage).toHaveBeenLastCalledWith("Continue");
   });
 
   it("selects existing repository and clone parent directories without submitting", async () => {
@@ -744,7 +766,7 @@ describe("FlowRivet taskboard", () => {
     await user.click(screen.getByRole("button", { name: `打开工作项：${snapshot.items[0]!.title}` }));
     await user.click(screen.getByRole("button", { name: "交给 Codex 处理" }));
 
-    expect(await screen.findByText("研发实现")).toBeTruthy();
+    expect(await screen.findByText("需要修改代码")).toBeTruthy();
     expect(screen.getByText("尚未写回，结果已保存在本地")).toBeTruthy();
     expect(screen.getByRole("link", { name: /查看 MR/ }).getAttribute("href")).toBe(mergeRequestUrl);
     expect(screen.getByText("codex/feishu-work-item-123")).toBeTruthy();

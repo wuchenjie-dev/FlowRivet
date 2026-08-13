@@ -5,6 +5,7 @@ import type { WorkItem } from "../contracts/taskboard.js";
 import type { McpAppsBridge } from "./bridge.js";
 import { gitLabProjectPageSchema, gitLabProjectSchema, type GitLabProject } from "../contracts/gitlab.js";
 import { executionRecordSchema } from "../contracts/executions.js";
+import type { ExecutionWorkMode } from "../contracts/executions.js";
 
 export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendUserMessage" | "onToolResult">) {
   const [result, setResult] = useState<WorkExecutionHandoff>();
@@ -14,6 +15,8 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
   const [repositoryOpen, setRepositoryOpen] = useState(false);
   const [repositoryProject, setRepositoryProject] = useState<GitLabProject>();
   const resultRef = useRef<WorkExecutionHandoff | undefined>(undefined);
+  const itemRef = useRef<WorkItem | undefined>(undefined);
+  const handoffMessageSent = useRef(false);
   const recoverySequence = useRef(0);
   resultRef.current = result;
 
@@ -29,7 +32,8 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
       void loadRepositories();
     }
   }), [bridge]);
-  async function prepareAndSend(item: WorkItem) {
+  async function prepare(item: WorkItem) {
+    itemRef.current = item;
     setPending(true); setError(undefined);
     try {
       const prepared = result ?? workExecutionHandoffSchema.parse((await bridge.callTool(
@@ -38,7 +42,6 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
       )).structuredContent);
       setResult(prepared);
       resultRef.current = prepared;
-      await bridge.sendUserMessage(prepared.handoff.prompt);
       return prepared;
     } catch (cause) {
       setError(cause instanceof Error && cause.message === "codex_handoff_unsupported"
@@ -47,7 +50,63 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
       return undefined;
     } finally { setPending(false); }
   }
+  async function sendAndConfirmHandoff(prepared: WorkExecutionHandoff) {
+    let messageSent = false;
+    try {
+      if (!handoffMessageSent.current) {
+        await bridge.sendUserMessage(prepared.handoff.prompt);
+        handoffMessageSent.current = true;
+      }
+      messageSent = handoffMessageSent.current;
+      const response = await bridge.callTool("mark_execution_handoff_dispatched", {
+        executionId: prepared.execution.executionId,
+        handoffId: prepared.handoff.handoffId,
+      });
+      const execution = executionRecordSchema.parse(response.structuredContent);
+      const next = { ...prepared, execution };
+      setResult(next);
+      resultRef.current = next;
+      handoffMessageSent.current = false;
+      return next;
+    } catch (cause) {
+      setError(messageSent
+        ? "任务已发送给 Codex，但交接状态未确认；请重试确认"
+        : cause instanceof Error && cause.message === "codex_handoff_unsupported"
+        ? "当前 Codex 版本不支持直接接管，可使用兼容复制"
+        : "未能交给 Codex，请重试");
+      return undefined;
+    }
+  }
+  async function chooseMode(item: WorkItem, workMode: Exclude<ExecutionWorkMode, "pending">) {
+    const current = resultRef.current ?? await prepare(item);
+    if (!current) return undefined;
+    setPending(true); setError(undefined);
+    try {
+      const modeResponse = await bridge.callTool("set_work_item_execution_mode", {
+        executionId: current.execution.executionId,
+        workMode,
+      });
+      const execution = executionRecordSchema.parse(modeResponse.structuredContent);
+      handoffMessageSent.current = false;
+      const prepared = workExecutionHandoffSchema.parse((await bridge.callTool(
+        "prepare_work_item_execution",
+        { item },
+      )).structuredContent);
+      const next = { ...prepared, execution };
+      setResult(next);
+      resultRef.current = next;
+      if (execution.state === "awaiting_repository") {
+        await loadRepositories();
+        return next;
+      }
+      return await sendAndConfirmHandoff(next);
+    } catch {
+      setError("无法确认执行方式，请重试");
+      return undefined;
+    } finally { setPending(false); }
+  }
   async function restore(item: WorkItem) {
+    itemRef.current = item;
     const sequence = recoverySequence.current;
     try {
       const response = await bridge.callTool("get_work_item_execution", { workItemKey: item.key });
@@ -69,6 +128,8 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
   function clear() {
     recoverySequence.current += 1;
     resultRef.current = undefined;
+    itemRef.current = undefined;
+    handoffMessageSent.current = false;
     setResult(undefined);
     setError(undefined);
     setRepositoryOpen(false);
@@ -103,24 +164,26 @@ export function useWorkExecution(bridge: Pick<McpAppsBridge, "callTool" | "sendU
   }
   async function openRepositoryPicker() { await loadRepositories(); }
   async function bindRepository(project: GitLabProject, paths: { localPath?: string; parentDirectory?: string }) {
-    if (!result) return;
+    const current = resultRef.current;
+    const item = itemRef.current;
+    if (!current || !item) return;
     setPending(true); setError(undefined);
     try {
       const response = await bridge.callTool("bind_execution_repository", {
-        executionId: result.execution.executionId, project, ...paths,
+        executionId: current.execution.executionId, project, ...paths,
       });
       const execution = executionRecordSchema.parse(response.structuredContent);
-      const next = { ...result, execution };
+      const prepared = workExecutionHandoffSchema.parse((await bridge.callTool(
+        "prepare_work_item_execution",
+        { item },
+      )).structuredContent);
+      const next = { ...prepared, execution };
       setResult(next);
       resultRef.current = next;
       setRepositoryOpen(false);
-      try {
-        await bridge.sendUserMessage(`继续 FlowRivet 执行：${execution.executionId}`);
-      } catch {
-        setError("仓库已关联，但未能通知 Codex 继续；请重试继续处理");
-      }
+      await sendAndConfirmHandoff(next);
     } catch { setError("仓库无法关联：请检查路径、remote 和工作树状态"); }
     finally { setPending(false); }
   }
-  return { result, pending, error, prepareAndSend, restore, clear, projects, repositoryProject, repositoryOpen, setRepositoryOpen, openRepositoryPicker, bindRepository };
+  return { result, pending, error, prepare, chooseMode, sendAndConfirmHandoff, restore, clear, projects, repositoryProject, repositoryOpen, setRepositoryOpen, openRepositoryPicker, bindRepository };
 }

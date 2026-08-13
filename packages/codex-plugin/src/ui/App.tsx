@@ -552,9 +552,19 @@ export function App({ initialSnapshot, bridge }: AppProps) {
           executionPending={workExecution.pending}
           executionError={workExecution.error}
           onStartExecution={selectedItem.providerId === "feishu-project"
-            ? () => void workExecution.prepareAndSend(selectedItem)
+            ? () => void (workExecution.error && workExecution.result
+              ? workExecution.sendAndConfirmHandoff(workExecution.result)
+              : workExecution.prepare(selectedItem))
             : undefined}
-          onSelectRepository={workExecution.result ? () => void workExecution.openRepositoryPicker() : undefined}
+          onSelectExecutionMode={selectedItem.providerId === "feishu-project"
+            ? (mode) => void workExecution.chooseMode(selectedItem, mode)
+            : undefined}
+          onChangeExecutionMode={selectedItem.providerId === "feishu-project"
+            ? () => workExecution.setRepositoryOpen(false)
+            : undefined}
+          onSelectRepository={workExecution.result?.execution.workMode === "code"
+            ? () => void workExecution.openRepositoryPicker()
+            : undefined}
         />
       ) : null}
       {selectedItem && workExecution.repositoryOpen ? (

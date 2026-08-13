@@ -191,3 +191,18 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
   .spin { animation: none !important; }
 }
+.execution-mode-choice {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.execution-mode-choice legend { padding: 0 0 8px; font-weight: 600; }
+.execution-mode-choice label { display: flex; gap: 8px; align-items: flex-start; }
+.execution-mode-choice label span { display: grid; gap: 2px; }
+.execution-mode-choice small { color: var(--muted-foreground); }
+.execution-mode-action { display: grid; gap: 4px; }
+.execution-mode-action small { color: #64748b; }

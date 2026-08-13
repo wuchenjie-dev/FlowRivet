@@ -5,14 +5,19 @@ import type { WorkExecutionHandoff } from "../../contracts/executions.js";
 export function ExecutionSummary({
   value,
   onSelectRepository,
+  onChangeMode,
   allowCompatibilityCopy = false,
 }: {
   value: WorkExecutionHandoff;
   onSelectRepository?: () => void;
+  onChangeMode?: () => void;
   allowCompatibilityCopy?: boolean;
 }) {
   const gitlab = value.execution.gitlab;
   const repositoryLocked = Boolean(gitlab?.branch || gitlab?.mergeRequestIid);
+  const modeLocked = Boolean(value.execution.handoffDispatchedAt || repositoryLocked
+    || value.execution.artifacts.length > 0
+    || ["running", "awaiting_confirmation", "writeback_pending", "completed"].includes(value.execution.state));
   const mergeRequestUrl = safeGitLabUrl(gitlab?.mergeRequestUrl);
   return (
     <section className="execution-summary" aria-labelledby="execution-summary-heading">
@@ -20,7 +25,7 @@ export function ExecutionSummary({
       <p role="status"><Check size={14} aria-hidden="true" />{gitlab ? "仓库已关联" : "已创建可恢复的 Codex 执行"}</p>
       <dl>
         <div><dt>执行 ID</dt><dd>{value.execution.executionId}</dd></div>
-        <div><dt>任务类型</dt><dd>{kindLabel(value.execution.executionKind)}</dd></div>
+        <div><dt>执行方式</dt><dd>{modeLabel(value.execution.workMode)}</dd></div>
         <div><dt>状态</dt><dd>{stateLabel(value.execution.state)}</dd></div>
         {gitlab ? <>
           <div><dt>仓库</dt><dd>{gitlab.projectPath}</dd></div>
@@ -35,6 +40,14 @@ export function ExecutionSummary({
         <button type="button" onClick={() => void navigator.clipboard?.writeText(value.handoff.prompt)}>
           <Copy size={14} aria-hidden="true" />兼容复制到 Codex
         </button>
+      ) : null}
+      {onChangeMode && value.execution.workMode !== "pending" ? (
+        <div className="execution-mode-action">
+          <button type="button" disabled={modeLocked} onClick={onChangeMode}>
+            {modeLocked ? <><LockKeyhole size={14} aria-hidden="true" />执行方式已锁定</> : "修改执行方式"}
+          </button>
+          {modeLocked ? <small>已交给 Codex 或已产生执行结果，不能修改</small> : null}
+        </div>
       ) : null}
       {onSelectRepository ? gitlab ? (
         <div className="execution-repository-action">
@@ -56,9 +69,8 @@ function safeGitLabUrl(value: string | undefined) {
   } catch { return undefined; }
 }
 
-function kindLabel(kind: WorkExecutionHandoff["execution"]["executionKind"]) {
-  if (!kind) return "未分类";
-  return { pending_classification: "待 Codex 判断", requirement_breakdown: "需求拆解", requirement_analysis: "需求分析", development: "研发实现" }[kind];
+function modeLabel(mode: WorkExecutionHandoff["execution"]["workMode"]) {
+  return { pending: "待选择", non_code: "仅处理当前事项", code: "需要修改代码" }[mode];
 }
 
 function stateLabel(state: WorkExecutionHandoff["execution"]["state"]) {

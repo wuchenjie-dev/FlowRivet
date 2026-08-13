@@ -1,10 +1,12 @@
 import { ExternalLink, Play, RefreshCw, X } from "lucide-react";
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import type { WorkItem } from "../../contracts/taskboard.js";
 import type { WorkItemDetail } from "../../contracts/work-item-detail.js";
 import type { WorkExecutionHandoff } from "../../contracts/executions.js";
 import { ExecutionSummary } from "./ExecutionSummary.js";
+import { ExecutionModeChoice } from "./ExecutionModeChoice.js";
+import type { ExecutionWorkMode } from "../../contracts/executions.js";
 
 interface WorkItemDetailDrawerProps {
   item: WorkItem;
@@ -18,6 +20,8 @@ interface WorkItemDetailDrawerProps {
   executionPending?: boolean;
   executionError?: string;
   onStartExecution?: () => void;
+  onSelectExecutionMode?: (mode: Exclude<ExecutionWorkMode, "pending">) => void;
+  onChangeExecutionMode?: () => void;
   onSelectRepository?: () => void;
 }
 
@@ -33,9 +37,12 @@ export function WorkItemDetailDrawer({
   executionPending = false,
   executionError,
   onStartExecution,
+  onSelectExecutionMode,
+  onChangeExecutionMode,
   onSelectRepository,
 }: WorkItemDetailDrawerProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const [changingMode, setChangingMode] = useState(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -97,18 +104,28 @@ export function WorkItemDetailDrawer({
             <MinimalDetail item={item} />
           </>
           ) : detail ? <DetailContent detail={detail} /> : <MinimalDetail item={item} />}
-          {onStartExecution ? (
+          {onStartExecution && (!execution || executionError) ? (
             <div className="execution-actions">
               <button type="button" className="execution-primary" onClick={onStartExecution} disabled={executionPending}>
                 <Play size={15} aria-hidden="true" />
-                {executionPending ? "正在交给 Codex..." : execution ? "继续由 Codex 处理" : "交给 Codex 处理"}
+                {executionPending ? "正在准备..." : execution ? "重试交给 Codex" : "交给 Codex 处理"}
               </button>
               {executionError ? <p role="alert">{executionError}</p> : null}
             </div>
           ) : null}
+          {(execution?.execution.workMode === "pending" || changingMode) && onSelectExecutionMode ? (
+            <ExecutionModeChoice pending={executionPending} onConfirm={(mode) => {
+              onSelectExecutionMode(mode);
+              setChangingMode(false);
+            }} />
+          ) : null}
           {execution ? <ExecutionSummary
             value={execution}
             onSelectRepository={onSelectRepository}
+            onChangeMode={onChangeExecutionMode ? () => {
+              onChangeExecutionMode();
+              setChangingMode(true);
+            } : undefined}
             allowCompatibilityCopy={Boolean(executionError)}
           /> : null}
         </div>
