@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import { executionRecordSchema, type ExecutionRecord } from "../contracts/executions.js";
+import { parsePersistedExecutionRecord } from "./execution-record-migration.js";
 import {
   ExecutionStoreError,
   type ExecutionIdentity,
@@ -10,7 +11,7 @@ import {
   type ExecutionStoreErrorCode,
 } from "./execution-store.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 type DatabaseSyncConstructor = typeof import("node:sqlite").DatabaseSync;
 interface ExecutionRow { payload_json: string }
 
@@ -38,10 +39,10 @@ export class SqliteExecutionStore implements ExecutionStore {
     this.write((database) => {
       try {
         database.prepare(`INSERT INTO executions(
-          execution_id, provider_id, account_key, work_item_key, payload_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          execution_id, provider_id, account_key, work_item_key, attempt, payload_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
           parsed.executionId, parsed.providerId, parsed.accountKey, parsed.workItemKey,
-          JSON.stringify(parsed), parsed.createdAt, parsed.updatedAt,
+          parsed.attempt, JSON.stringify(parsed), parsed.createdAt, parsed.updatedAt,
         );
       } catch (error) {
         if (String(error).includes("UNIQUE constraint failed")) {
@@ -52,10 +53,20 @@ export class SqliteExecutionStore implements ExecutionStore {
     });
   }
 
-  async find(identity: ExecutionIdentity) {
+  async findCurrent(identity: ExecutionIdentity) {
     return this.read((database) => this.parse(database.prepare(`
       SELECT payload_json FROM executions
       WHERE provider_id = ? AND account_key = ? AND work_item_key = ?
+        AND json_extract(payload_json, '$.state') <> 'completed'
+      ORDER BY attempt DESC LIMIT 1
+    `).get(identity.providerId, identity.accountKey, identity.workItemKey) as ExecutionRow | undefined));
+  }
+
+  async findLatest(identity: ExecutionIdentity) {
+    return this.read((database) => this.parse(database.prepare(`
+      SELECT payload_json FROM executions
+      WHERE provider_id = ? AND account_key = ? AND work_item_key = ?
+      ORDER BY attempt DESC LIMIT 1
     `).get(identity.providerId, identity.accountKey, identity.workItemKey) as ExecutionRow | undefined));
   }
 
@@ -76,7 +87,7 @@ export class SqliteExecutionStore implements ExecutionStore {
 
   private parse(row: ExecutionRow | undefined) {
     if (!row) return undefined;
-    try { return executionRecordSchema.parse(JSON.parse(row.payload_json)); }
+    try { return parsePersistedExecutionRecord(JSON.parse(row.payload_json)); }
     catch { throw new ExecutionStoreError("execution_store_read_failed"); }
   }
   private initialize(database: DatabaseSync) {
@@ -84,15 +95,51 @@ export class SqliteExecutionStore implements ExecutionStore {
     try {
       database.exec("CREATE TABLE IF NOT EXISTS execution_schema(version INTEGER NOT NULL) STRICT");
       const version = database.prepare("SELECT version FROM execution_schema LIMIT 1").get() as { version: number } | undefined;
-      if (!version) database.prepare("INSERT INTO execution_schema(version) VALUES (?)").run(SCHEMA_VERSION);
-      else if (version.version !== SCHEMA_VERSION) throw new ExecutionStoreError("execution_store_read_failed");
-      database.exec(`CREATE TABLE IF NOT EXISTS executions(
-        execution_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, account_key TEXT NOT NULL,
-        work_item_key TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL, UNIQUE(provider_id, account_key, work_item_key)
-      ) STRICT`);
+      if (!version) {
+        database.prepare("INSERT INTO execution_schema(version) VALUES (?)").run(SCHEMA_VERSION);
+        this.createVersionTwoTable(database);
+      } else if (version.version === 1) {
+        this.migrateVersionOne(database);
+      } else if (version.version === SCHEMA_VERSION) {
+        this.createVersionTwoTable(database);
+      } else {
+        throw new ExecutionStoreError("execution_store_read_failed");
+      }
       database.exec("COMMIT");
     } catch (error) { database.exec("ROLLBACK"); throw error; }
+  }
+  private createVersionTwoTable(database: DatabaseSync) {
+    database.exec(`CREATE TABLE IF NOT EXISTS executions(
+      execution_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, account_key TEXT NOT NULL,
+      work_item_key TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt > 0),
+      payload_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(provider_id, account_key, work_item_key, attempt)
+    ) STRICT`);
+  }
+  private migrateVersionOne(database: DatabaseSync) {
+    database.exec(`CREATE TABLE executions_v2(
+      execution_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, account_key TEXT NOT NULL,
+      work_item_key TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt > 0),
+      payload_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(provider_id, account_key, work_item_key, attempt)
+    ) STRICT`);
+    const rows = database.prepare("SELECT * FROM executions").all() as Array<{
+      execution_id: string; provider_id: string; account_key: string; work_item_key: string;
+      payload_json: string; created_at: string; updated_at: string;
+    }>;
+    const insert = database.prepare(`INSERT INTO executions_v2(
+      execution_id, provider_id, account_key, work_item_key, attempt, payload_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const row of rows) {
+      const migrated = parsePersistedExecutionRecord(JSON.parse(row.payload_json));
+      insert.run(row.execution_id, row.provider_id, row.account_key, row.work_item_key,
+        migrated.attempt, JSON.stringify(migrated), row.created_at, row.updated_at);
+    }
+    const copied = database.prepare("SELECT COUNT(*) AS count FROM executions_v2").get() as { count: number };
+    if (Number(copied.count) !== rows.length) throw new ExecutionStoreError("execution_store_write_failed");
+    database.exec("DROP TABLE executions");
+    database.exec("ALTER TABLE executions_v2 RENAME TO executions");
+    database.prepare("UPDATE execution_schema SET version = ?").run(SCHEMA_VERSION);
   }
   private read<T>(operation: (database: DatabaseSync) => T) {
     try { return this.withDatabase(operation); }

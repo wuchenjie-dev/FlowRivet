@@ -33,7 +33,7 @@ export class ExecutionService {
     executionKind: ExecutionKind;
     workItemUpdatedAt?: string;
   }) {
-    const existing = await this.store.find(input);
+    const existing = await this.store.findCurrent(input);
     if (existing) return existing;
     const timestamp = this.clock().toISOString();
     const record = executionRecordSchema.parse({
@@ -53,13 +53,13 @@ export class ExecutionService {
     try { await this.store.create(record); return record; }
     catch (error) {
       if (error instanceof ExecutionStoreError && error.code === "execution_already_exists") {
-        return (await this.store.find(input))!;
+        return (await this.store.findCurrent(input))!;
       }
       throw error;
     }
   }
 
-  get(identity: ExecutionIdentity) { return this.store.find(identity); }
+  get(identity: ExecutionIdentity) { return this.store.findCurrent(identity); }
   getById(executionId: string) { return this.store.getById(executionId); }
 
   async classify(

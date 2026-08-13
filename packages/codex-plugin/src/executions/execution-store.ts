@@ -16,7 +16,8 @@ export class ExecutionStoreError extends Error {
 
 export interface ExecutionStore {
   create(record: ExecutionRecord): Promise<void>;
-  find(identity: ExecutionIdentity): Promise<ExecutionRecord | undefined>;
+  findCurrent(identity: ExecutionIdentity): Promise<ExecutionRecord | undefined>;
+  findLatest(identity: ExecutionIdentity): Promise<ExecutionRecord | undefined>;
   getById(executionId: string): Promise<ExecutionRecord | undefined>;
   save(record: ExecutionRecord): Promise<void>;
 }
@@ -25,13 +26,19 @@ export class InMemoryExecutionStore implements ExecutionStore {
   private readonly records = new Map<string, ExecutionRecord>();
 
   async create(record: ExecutionRecord) {
-    if ([...this.records.values()].some((entry) => sameIdentity(entry, record))) {
+    if ([...this.records.values()].some((entry) =>
+      sameIdentity(entry, record) && entry.attempt === record.attempt)) {
       throw new ExecutionStoreError("execution_already_exists");
     }
     this.records.set(record.executionId, structuredClone(record));
   }
-  async find(identity: ExecutionIdentity) {
-    const found = [...this.records.values()].find((entry) => sameIdentity(entry, identity));
+  async findCurrent(identity: ExecutionIdentity) {
+    const found = matchingRecords(this.records, identity)
+      .find((entry) => !terminalStates.has(entry.state));
+    return found ? structuredClone(found) : undefined;
+  }
+  async findLatest(identity: ExecutionIdentity) {
+    const found = matchingRecords(this.records, identity)[0];
     return found ? structuredClone(found) : undefined;
   }
   async getById(executionId: string) {
@@ -42,6 +49,14 @@ export class InMemoryExecutionStore implements ExecutionStore {
     if (!this.records.has(record.executionId)) throw new ExecutionStoreError("execution_not_found");
     this.records.set(record.executionId, structuredClone(record));
   }
+}
+
+const terminalStates = new Set<ExecutionRecord["state"]>(["completed"]);
+
+function matchingRecords(records: Map<string, ExecutionRecord>, identity: ExecutionIdentity) {
+  return [...records.values()]
+    .filter((entry) => sameIdentity(entry, identity))
+    .sort((left, right) => right.attempt - left.attempt);
 }
 
 function sameIdentity(a: ExecutionIdentity, b: ExecutionIdentity) {
