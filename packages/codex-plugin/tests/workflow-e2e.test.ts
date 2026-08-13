@@ -6,8 +6,49 @@ import { ResultWriter } from "../src/executions/result-writer.js";
 import { WritebackWorkflow } from "../src/executions/writeback-workflow.js";
 import { DevelopmentWorkflow, branchForExecution } from "../src/gitlab/development-workflow.js";
 import { RepositoryWorkflow } from "../src/gitlab/repository-workflow.js";
+import { migrateExecutionRecordV1 } from "../src/executions/execution-record-migration.js";
 
 describe("Feishu Codex GitLab workflow", () => {
+  it("handles a process or analysis item without touching a repository", async () => {
+    const store = new InMemoryExecutionStore();
+    const executionService = new ExecutionService({
+      store,
+      clock: () => new Date("2026-08-12T00:00:00.000Z"),
+      createId: () => "execution-analysis",
+    });
+    const prepared = await executionService.prepare({
+      providerId: "feishu-project", accountKey: "user-1", workItemKey: "fei-process",
+      taskLaunchMode: "handoff", executionKind: "pending_classification",
+    });
+    const ready = await executionService.setMode(prepared.executionId, "non_code");
+    await executionService.attachHandoff(ready.executionId, "handoff-analysis");
+    const dispatched = await executionService.markHandoffDispatched(ready.executionId, "handoff-analysis");
+    const stored = await executionService.recordArtifact(dispatched.executionId, {
+      artifactId: "execution-analysis:analysis:1", type: "analysis", revision: 1,
+      summary: "已梳理流程与准入准出标准", content: "分析结果",
+    });
+
+    expect(stored).toMatchObject({
+      executionId: "execution-analysis", workMode: "non_code", state: "writeback_pending",
+      gitlab: undefined,
+    });
+  });
+
+  it("allows a migrated development classification to be corrected before handoff", async () => {
+    const store = new InMemoryExecutionStore();
+    await store.create(migrateExecutionRecordV1({
+      schemaVersion: 1, executionId: "legacy-execution", providerId: "feishu-project",
+      accountKey: "user-1", workItemKey: "fei-process", taskLaunchMode: "handoff",
+      executionKind: "development", state: "awaiting_repository", artifacts: [],
+      createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z",
+    }));
+    const executionService = new ExecutionService({ store });
+
+    await expect(executionService.setMode("legacy-execution", "non_code")).resolves.toMatchObject({
+      workMode: "non_code", state: "ready", gitlab: undefined,
+    });
+  });
+
   it("preserves one execution from a work item through MR, pipeline and local writeback", async () => {
     const executionService = new ExecutionService({
       store: new InMemoryExecutionStore(),
@@ -37,6 +78,7 @@ describe("Feishu Codex GitLab workflow", () => {
       providerId: "feishu-project", accountKey: "user-1", workItemKey: "fei-123",
       taskLaunchMode: "handoff", executionKind: "development",
     })).executionId).toBe(prepared.executionId);
+    await executionService.setMode(prepared.executionId, "code");
 
     const local = await repository.prepare({ project: project(), localPath: "C:\\work\\flowrivet" });
     await executionService.bindRepository(prepared.executionId, {

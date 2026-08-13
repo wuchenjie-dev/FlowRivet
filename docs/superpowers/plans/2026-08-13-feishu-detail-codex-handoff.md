@@ -1,5 +1,7 @@
 # 飞书详情与 Codex 自动接管 Implementation Plan
 
+> **已被替代（2026-08-13）：** 本计划中的 Codex 自动三分类与分类后仓库门禁，已由 `2026-08-13-user-selected-execution-mode.md` 替代。现行流程由用户仅选择“是否需要修改代码”，Codex 根据飞书任务正文完成具体工作；旧 `classify_work_item_execution` 只保留一个版本的兼容入口。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让用户从飞书项目待办卡片读取完整详情，并通过 MCP Apps `ui/message` 将任务直接交给当前 Codex 对话；只有 Codex 判定为研发任务时才打开独立的 GitLab 仓库选择模态框。
