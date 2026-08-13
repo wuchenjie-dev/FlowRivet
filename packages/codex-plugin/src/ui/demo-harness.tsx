@@ -440,9 +440,9 @@ function demoExecution(argumentsValue: unknown, awaitRepository = false) {
     : undefined;
   return {
     execution: {
-      schemaVersion: 1, executionId: "demo-execution-1", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "demo-execution-1", providerId: "feishu-project",
       accountKey: "demo-user", workItemKey: item?.key ?? "demo-item", taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-demo-execution-1", executionKind: "development",
+      attempt: 1, workMode: "code", codexHandoffId: "flowrivet-demo-execution-1", executionKind: "development",
       state: awaitRepository ? "awaiting_repository" : "writeback_pending", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
       ...(awaitRepository ? {} : { gitlab: {

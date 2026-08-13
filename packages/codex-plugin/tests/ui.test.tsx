@@ -452,9 +452,9 @@ describe("FlowRivet taskboard", () => {
     const user = userEvent.setup();
     const snapshot = snapshotWithFeishuState("connected");
     const execution = {
-      schemaVersion: 1, executionId: "execution-1", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-1", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-execution-1", executionKind: "requirement_analysis",
+      attempt: 1, workMode: "non_code", codexHandoffId: "flowrivet-execution-1", executionKind: "requirement_analysis",
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
@@ -488,9 +488,9 @@ describe("FlowRivet taskboard", () => {
     const user = userEvent.setup();
     const snapshot = snapshotWithFeishuState("connected");
     const execution = {
-      schemaVersion: 1, executionId: "execution-1", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-1", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-execution-1", executionKind: "pending_classification",
+      attempt: 1, workMode: "pending", codexHandoffId: "flowrivet-execution-1", executionKind: "pending_classification",
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
@@ -515,9 +515,9 @@ describe("FlowRivet taskboard", () => {
     const user = userEvent.setup();
     const snapshot = snapshotWithFeishuState("connected");
     const execution = {
-      schemaVersion: 1, executionId: "execution-1", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-1", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-execution-1", executionKind: "pending_classification",
+      attempt: 1, workMode: "pending", codexHandoffId: "flowrivet-execution-1", executionKind: "pending_classification",
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
@@ -546,9 +546,9 @@ describe("FlowRivet taskboard", () => {
     const user = userEvent.setup();
     const snapshot = snapshotWithFeishuState("connected");
     const execution = {
-      schemaVersion: 1, executionId: "execution-directory", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-directory", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-execution-directory", executionKind: "development",
+      attempt: 1, workMode: "code", codexHandoffId: "flowrivet-execution-directory", executionKind: "development",
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
@@ -592,9 +592,9 @@ describe("FlowRivet taskboard", () => {
     const user = userEvent.setup();
     const snapshot = snapshotWithFeishuState("connected");
     const execution = {
-      schemaVersion: 1, executionId: "execution-directory-error", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-directory-error", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-execution-directory-error", executionKind: "development",
+      attempt: 1, workMode: "code", codexHandoffId: "flowrivet-execution-directory-error", executionKind: "development",
       state: "prepared", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
     };
@@ -673,9 +673,9 @@ describe("FlowRivet taskboard", () => {
   it("allows repository changes before activity and explains the locked state afterwards", () => {
     const base = {
       execution: {
-        schemaVersion: 1 as const, executionId: "execution-lock", providerId: "feishu-project" as const,
+        schemaVersion: 2 as const, executionId: "execution-lock", providerId: "feishu-project" as const,
         accountKey: "user-1", workItemKey: "item-1", taskLaunchMode: "handoff" as const,
-        executionKind: "development" as const, state: "ready" as const, artifacts: [],
+        attempt: 1, workMode: "code" as const, executionKind: "development" as const, state: "ready" as const, artifacts: [],
         createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z",
         gitlab: { host: "gitlab-aiabu.ruijie.com.cn" as const, projectId: "1", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" },
       },
@@ -696,9 +696,9 @@ describe("FlowRivet taskboard", () => {
     const snapshot = snapshotWithFeishuState("connected");
     const associatedProject = { host: "gitlab-aiabu.ruijie.com.cn", projectId: "75", pathWithNamespace: "cc/flowrivet", displayName: "FlowRivet", defaultBranch: "main", httpUrl: "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet.git" };
     const execution = {
-      schemaVersion: 1, executionId: "execution-recovery", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-recovery", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      executionKind: "development", state: "ready", artifacts: [],
+      attempt: 1, workMode: "code", executionKind: "development", state: "ready", artifacts: [],
       createdAt: "2026-08-12T00:00:00.000Z", updatedAt: "2026-08-12T00:00:00.000Z",
       gitlab: { host: associatedProject.host, projectId: "75", projectPath: "cc/flowrivet", localPath: "C:\\work\\flowrivet" },
     };
@@ -723,9 +723,9 @@ describe("FlowRivet taskboard", () => {
     const snapshot = snapshotWithFeishuState("connected");
     const mergeRequestUrl = "https://gitlab-aiabu.ruijie.com.cn/cc/flowrivet/-/merge_requests/9";
     const execution = {
-      schemaVersion: 1, executionId: "execution-progress", providerId: "feishu-project",
+      schemaVersion: 2, executionId: "execution-progress", providerId: "feishu-project",
       accountKey: "user-1", workItemKey: snapshot.items[0]!.key, taskLaunchMode: "handoff",
-      codexHandoffId: "flowrivet-execution-progress", executionKind: "development",
+      attempt: 1, workMode: "code", codexHandoffId: "flowrivet-execution-progress", executionKind: "development",
       state: "writeback_pending", artifacts: [], createdAt: "2026-08-12T00:00:00.000Z",
       updatedAt: "2026-08-12T00:00:00.000Z",
       gitlab: {

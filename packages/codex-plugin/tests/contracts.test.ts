@@ -25,6 +25,7 @@ import {
   workItemSchema,
 } from "../src/contracts/taskboard.js";
 import { demoTaskboardSnapshot } from "../src/demo/fixtures.js";
+import { executionRecordSchema } from "../src/contracts/executions.js";
 
 describe("taskboard demo contract", () => {
   it("accepts off and bounded integer refresh intervals only", () => {
@@ -378,5 +379,31 @@ describe("taskboard demo contract", () => {
       ...notification,
       externalUrl: "http://project.feishu.cn/unsafe",
     }).success).toBe(false);
+  });
+
+  it("validates version 2 execution modes and attempts", () => {
+    const record = {
+      schemaVersion: 2,
+      executionId: "execution-1",
+      providerId: "feishu-project",
+      accountKey: "user-1",
+      workItemKey: "item-1",
+      attempt: 1,
+      taskLaunchMode: "handoff",
+      workMode: "pending",
+      state: "prepared",
+      artifacts: [],
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    } as const;
+
+    expect(executionRecordSchema.parse(record)).toMatchObject({
+      schemaVersion: 2,
+      attempt: 1,
+      workMode: "pending",
+    });
+    expect(executionRecordSchema.safeParse({ ...record, attempt: 0 }).success).toBe(false);
+    expect(executionRecordSchema.safeParse({ ...record, workMode: "automatic" }).success)
+      .toBe(false);
   });
 });

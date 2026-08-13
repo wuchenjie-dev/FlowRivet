@@ -39,12 +39,14 @@ describe("SQLite execution store", () => {
 
 function record(overrides: Record<string, unknown> = {}) {
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     executionId: "execution-1",
     providerId: "feishu-project",
     accountKey: "user-1",
     workItemKey: "item-1",
+    attempt: 1,
     taskLaunchMode: "handoff" as const,
+    workMode: "non_code" as const,
     executionKind: "requirement_analysis" as const,
     state: "prepared" as const,
     artifacts: [],

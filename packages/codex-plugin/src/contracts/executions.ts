@@ -3,6 +3,10 @@ import { z } from "zod";
 export const executionKinds = [
   "pending_classification", "requirement_breakdown", "requirement_analysis", "development",
 ] as const;
+export const executionLabels = [
+  "requirement_breakdown", "requirement_analysis", "development",
+] as const;
+export const executionWorkModes = ["pending", "non_code", "code"] as const;
 export const executionStates = [
   "prepared", "awaiting_repository", "ready", "running",
   "awaiting_confirmation", "writeback_pending", "completed", "failed",
@@ -29,8 +33,7 @@ export const executionRepositorySchema = z.object({
   pipelineId: z.string().min(1).optional(),
 }).strict();
 
-export const executionRecordSchema = z.object({
-  schemaVersion: z.literal(1),
+const executionRecordFields = {
   executionId: z.string().min(1),
   providerId: z.literal("feishu-project"),
   accountKey: z.string().min(1),
@@ -39,12 +42,26 @@ export const executionRecordSchema = z.object({
   taskLaunchMode: z.enum(["direct", "handoff"]),
   codexTaskId: z.string().min(1).optional(),
   codexHandoffId: z.string().min(1).optional(),
-  executionKind: z.enum(executionKinds),
   state: z.enum(executionStates),
   gitlab: executionRepositorySchema.optional(),
   artifacts: z.array(executionArtifactSchema),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+} as const;
+
+export const persistedExecutionRecordV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  ...executionRecordFields,
+  executionKind: z.enum(executionKinds),
+}).strict();
+
+export const executionRecordSchema = z.object({
+  schemaVersion: z.literal(2),
+  ...executionRecordFields,
+  attempt: z.number().int().positive(),
+  handoffDispatchedAt: z.iso.datetime().optional(),
+  workMode: z.enum(executionWorkModes),
+  executionKind: z.enum(executionKinds).optional(),
 }).strict();
 
 export const workExecutionHandoffSchema = z.object({
@@ -59,6 +76,7 @@ export type ExecutionRecord = z.infer<typeof executionRecordSchema>;
 export type ExecutionArtifact = z.infer<typeof executionArtifactSchema>;
 export type ExecutionRepository = z.infer<typeof executionRepositorySchema>;
 export type ExecutionKind = z.infer<typeof executionRecordSchema>["executionKind"];
+export type ExecutionWorkMode = z.infer<typeof executionRecordSchema>["workMode"];
 export type ExecutionState = z.infer<typeof executionRecordSchema>["state"];
 export type WorkExecutionHandoff = z.infer<typeof workExecutionHandoffSchema>;
 

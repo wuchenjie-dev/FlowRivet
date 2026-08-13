@@ -37,13 +37,15 @@ export class ExecutionService {
     if (existing) return existing;
     const timestamp = this.clock().toISOString();
     const record = executionRecordSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       executionId: this.createId(),
       providerId: input.providerId,
       accountKey: input.accountKey,
       workItemKey: input.workItemKey,
       ...(input.workItemUpdatedAt ? { workItemUpdatedAt: input.workItemUpdatedAt } : {}),
       taskLaunchMode: input.taskLaunchMode,
+      attempt: 1,
+      workMode: "pending",
       executionKind: "pending_classification",
       state: "prepared",
       artifacts: [], createdAt: timestamp, updatedAt: timestamp,

@@ -57,6 +57,7 @@ function safeGitLabUrl(value: string | undefined) {
 }
 
 function kindLabel(kind: WorkExecutionHandoff["execution"]["executionKind"]) {
+  if (!kind) return "未分类";
   return { pending_classification: "待 Codex 判断", requirement_breakdown: "需求拆解", requirement_analysis: "需求分析", development: "研发实现" }[kind];
 }
 
