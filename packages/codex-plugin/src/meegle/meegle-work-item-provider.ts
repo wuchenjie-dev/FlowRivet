@@ -40,6 +40,9 @@ export interface MeegleWorkItemClient {
   getProjectSimpleName(profile: string, projectKey: string): Promise<string | undefined>;
   listRecentProjects(profile: string): Promise<MeegleProject[]>;
   listWorkItemTypes(profile: string, projectKey: string): Promise<MeegleWorkItemType[]>;
+  hasCreatedOwnerField(
+    profile: string, projectKey: string, workItemType: string,
+  ): Promise<boolean>;
   queryCreatedBaseWorkItems(
     profile: string, project: MeegleProject, workItemType: MeegleWorkItemType,
   ): Promise<MeegleCreatedBaseQuery>;
@@ -495,6 +498,10 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     workItemType: MeegleWorkItemType,
     reserveCount: (count: number) => void,
   ): Promise<CreatedItemData[]> {
+    const hasOwner = await this.client.hasCreatedOwnerField(
+      profile, project.project_key, workItemType.type_key,
+    );
+    if (!hasOwner) return [];
     const baseQuery = await this.client.queryCreatedBaseWorkItems(profile, project, workItemType);
     const baseItems = parseCreatedQuery(baseQuery, false);
     reserveCount(baseItems.length);

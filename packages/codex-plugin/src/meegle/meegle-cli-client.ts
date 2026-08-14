@@ -13,6 +13,7 @@ import {
   meegleDevicePollSchema,
   meegleCreatedBaseQuerySchema,
   meegleCreatedCompletionQuerySchema,
+  meegleCreatedOwnerMetadataSchema,
   meegleMyWorkPageSchema,
   meegleProjectSearchSchema,
   meegleWorkItemTypeListSchema,
@@ -235,6 +236,21 @@ export class MeegleCliClient {
       "--profile", validateProfile(profile),
       "--format", "json",
     ], meegleCreatedBaseQuerySchema, { timeoutMs: 30_000 });
+  }
+
+  async hasCreatedOwnerField(
+    profile: string,
+    projectKey: string,
+    workItemType: string,
+  ): Promise<boolean> {
+    const result = await this.runJson([
+      "--profile", validateProfile(profile), "workitem", "meta-fields",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-type", validateOpaqueKey(workItemType),
+      "--field-keys", JSON.stringify(["owner"]),
+      "--page-num", "1", "--format", "json",
+    ], meegleCreatedOwnerMetadataSchema, { timeoutMs: 30_000 });
+    return result.list !== null;
   }
 
   async queryCreatedCompletionWorkItems(

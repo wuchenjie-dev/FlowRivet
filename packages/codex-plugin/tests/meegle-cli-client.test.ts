@@ -738,6 +738,43 @@ describe("Meegle CLI client", () => {
       .rejects.toMatchObject({ code: "provider_invalid_response" });
   });
 
+  it("checks the created owner field with the exact filtered metadata argv", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          pagination: { has_more: false },
+          list: [{ field_key: "owner", field_name: "Creator", field_type: "user" }],
+        }),
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ pagination: { has_more: false }, list: null }),
+        exitCode: 0,
+      });
+    const meegle = client(runner);
+
+    await expect(meegle.hasCreatedOwnerField("profile", "PROJ", "story")).resolves.toBe(true);
+    await expect(meegle.hasCreatedOwnerField("profile", "PROJ", "issue")).resolves.toBe(false);
+    expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
+      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "story", "--field-keys", JSON.stringify(["owner"]), "--page-num", "1", "--format", "json"],
+      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "issue", "--field-keys", JSON.stringify(["owner"]), "--page-num", "1", "--format", "json"],
+    ]);
+  });
+
+  it.each([
+    { pagination: { has_more: true }, list: null },
+    { pagination: { has_more: false }, list: [] },
+    { pagination: { has_more: false }, list: [{ field_key: "creator", field_name: "Creator", field_type: "user" }] },
+    { pagination: { has_more: false }, list: [{ field_key: "owner", field_name: "Creator", field_type: "text" }] },
+    { pagination: { has_more: false }, list: [{ field_key: "owner", field_name: "Creator", field_type: "user" }], extra: true },
+  ])("rejects unproved created owner metadata shapes", async (response) => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({ stdout: JSON.stringify(response), exitCode: 0 });
+    await expect(client(runner).hasCreatedOwnerField("profile", "PROJ", "story"))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
   it("uses the verified Meegle 1.0.19 write argv contracts", async () => {
     const runner = new FakeRunner();
     runner.run

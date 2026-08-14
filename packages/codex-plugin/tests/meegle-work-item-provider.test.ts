@@ -39,6 +39,7 @@ class FakeClient implements MeegleWorkItemClient {
     `space-${projectKey.toLowerCase()}`);
   readonly listRecentProjects = vi.fn(async () => [] as MeegleProject[]);
   readonly listWorkItemTypes = vi.fn(async () => [] as MeegleWorkItemType[]);
+  readonly hasCreatedOwnerField = vi.fn(async () => true);
   readonly queryCreatedBaseWorkItems = vi.fn<MeegleWorkItemClient["queryCreatedBaseWorkItems"]>();
   readonly queryCreatedCompletionWorkItems = vi.fn<MeegleWorkItemClient["queryCreatedCompletionWorkItems"]>();
   readonly queryCreatedBaseWorkItemsPage = vi.fn();
@@ -212,6 +213,128 @@ describe("Meegle work item provider", () => {
     expect(result.scopes).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ providerItemType: "created:solution-key", outcome: "error" }),
     ]));
+  });
+
+  it("treats a type without an owner field as an authoritative successful empty scope", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.hasCreatedOwnerField.mockResolvedValue(false);
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    expect(result.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
+      projectExternalId: "CREATED",
+      providerItemType: "created:solution-key",
+      outcome: "success",
+      items: [],
+    })]));
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available", mode: "manual", scannedTypeCount: 1, totalTypeCount: 1, complete: true,
+    });
+  });
+
+  it("preserves owner metadata errors and never guesses that a type is not applicable", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.hasCreatedOwnerField.mockRejectedValue(new MeegleCliError("provider_unauthorized"));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    expect(result.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
+      providerItemType: "created:solution-key",
+      outcome: "error",
+      errorCode: "provider_unauthorized",
+    })]));
+  });
+
+  it("propagates owner metadata cancellation and leaves the automatic batch uncommitted", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 47 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${String(index).padStart(2, "0")}`,
+    }));
+    const events: CreatedSyncDiagnosticEvent[] = [];
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.hasCreatedOwnerField.mockRejectedValue(new MeegleCliError("provider_cancelled"));
+    const provider = new MeegleWorkItemProvider({
+      client,
+      clock: () => now,
+      diagnosticLogger: { completed: (event) => events.push(event) },
+    });
+
+    await expect(provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    })).rejects.toMatchObject({ code: "provider_cancelled" });
+    expect(events).toEqual([expect.objectContaining({ batchCompleted: false })]);
+
+    client.hasCreatedOwnerField.mockReset();
+    client.hasCreatedOwnerField.mockResolvedValue(true);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(types.slice(0, 40).map(({ type_key }) => type_key));
+  });
+
+  it("keeps owner metadata and created queries inside the four-worker pool", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 8 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${index}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    let active = 0;
+    let maximumActive = 0;
+    const bounded = async <T>(value: T) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return value;
+    };
+    client.hasCreatedOwnerField.mockImplementation(async () => bounded(true));
+    client.queryCreatedBaseWorkItems.mockImplementation(async () => bounded(emptyCreatedQuery()));
+
+    await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(maximumActive).toBeLessThanOrEqual(4);
+    expect(maximumActive).toBeGreaterThan(1);
+  });
+
+  it("keeps all 132 no-owner types in complete coverage and authoritative inventory", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 132 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${String(index).padStart(3, "0")}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.hasCreatedOwnerField.mockResolvedValue(false);
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(132);
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available", mode: "manual", scannedTypeCount: 132, totalTypeCount: 132, complete: true,
+    });
+    expect(result.authoritativeScopeInventories?.[0]?.providerItemTypes).toHaveLength(132);
+    expect(result.scopes.filter(({ providerItemType }) =>
+      providerItemType.startsWith("created:") && providerItemType !== "created:catalog"))
+      .toHaveLength(132);
   });
 
   it("deduplicates a created result against mywork and preserves the richer mywork item", async () => {

@@ -215,6 +215,25 @@ export const meegleCreatedBaseQuerySchema = createdQuerySchema(meegleCreatedBase
 export const meegleCreatedCompletionQuerySchema = createdQuerySchema(meegleCreatedCompletionRowSchema);
 export const meegleCreatedWorkItemQuerySchema = meegleCreatedCompletionQuerySchema;
 
+const meegleCreatedOwnerPaginationSchema = z.object({
+  has_more: z.literal(false),
+}).strict();
+const meegleCreatedOwnerFieldSchema = z.object({
+  field_key: z.literal("owner"),
+  field_name: z.string().min(1),
+  field_type: z.literal("user"),
+}).strict();
+export const meegleCreatedOwnerMetadataSchema = z.union([
+  z.object({
+    pagination: meegleCreatedOwnerPaginationSchema,
+    list: z.null(),
+  }).strict(),
+  z.object({
+    pagination: meegleCreatedOwnerPaginationSchema,
+    list: z.tuple([meegleCreatedOwnerFieldSchema]),
+  }).strict(),
+]);
+
 const meegleDetailUserSchema = z.object({
   email: z.string(),
   key: z.string().min(1),
