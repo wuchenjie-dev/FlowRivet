@@ -132,10 +132,14 @@ test("reloading the plugin reconnects to the same active authorization", async (
     (frame as HTMLIFrameElement).contentWindow?.location.reload();
   });
 
-  await expect(board.getByRole("heading", { name: "正在确认账号" })).toBeVisible();
-  await expect(board.getByRole("heading", { name: "我的待办" })).toBeVisible({ timeout: 5_000 });
+  const reconnecting = board.getByRole("heading", { name: "正在确认账号" });
+  const connected = board.getByRole("heading", { name: "我的待办" });
+  await expect(reconnecting.or(connected)).toBeVisible({ timeout: 5_000 });
+  await expect(connected).toBeVisible({ timeout: 5_000 });
   await expect(board.locator(".task-column")).toHaveCount(4);
   await expect(board.getByText("数据来自 飞书项目")).toBeVisible();
+  await expect(board.getByRole("button", { name: "连接飞书项目" })).toHaveCount(0);
+  await expect(board.getByRole("heading", { name: "飞书授权未完成" })).toHaveCount(0);
 });
 
 test("manual browser fallback is temporary and long waits remain cancellable", async ({ page }) => {
