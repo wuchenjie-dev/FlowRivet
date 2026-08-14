@@ -438,6 +438,7 @@ export function createTaskboardMcpServer(
   async function buildTaskboardSnapshot(
     refreshMode: WorkItemRefreshMode = "manual",
   ): Promise<WorkItemToolRunResult> {
+    const requestCacheDiagnosticCodes: WorkItemToolRunResult["cacheDiagnosticCodes"] = [];
     const syncAttemptAt = now().toISOString();
     const session = await authService.getSession();
     const auth = session.result;
@@ -467,6 +468,7 @@ export function createTaskboardMcpServer(
       try {
         synchronized = await workItemService.loadCached("tapd");
       } catch (error) {
+        recordCacheDiagnostic(requestCacheDiagnosticCodes, error, "cache_read_failed");
         synchronized = {
           ...emptyWorkItemSnapshot(syncAttemptAt),
           ...(error instanceof WorkItemCacheError && error.code !== "cache_clear_failed"
@@ -519,7 +521,13 @@ export function createTaskboardMcpServer(
       lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
       connection: { provider: catalog.provider, gitlab: "not_configured" },
     });
-    return { snapshot, cacheDiagnosticCodes: [] };
+    return {
+      snapshot,
+      cacheDiagnosticCodes: [
+        ...requestCacheDiagnosticCodes,
+        ...(synchronized.cacheDiagnosticCodes ?? []),
+      ],
+    };
   }
 
   async function buildProviderTaskboardSnapshot(
@@ -536,6 +544,7 @@ export function createTaskboardMcpServer(
     const synchronizer = runtimeServices.workItemServices.get(registration.id);
     if (!synchronizer) throw new Error("provider_runtime_unavailable");
     let synchronized: WorkItemSyncSnapshot | undefined;
+    const requestCacheDiagnosticCodes: WorkItemToolRunResult["cacheDiagnosticCodes"] = [];
 
     if (connection.state === "connected") {
       const identity = registration.auth.getSessionIdentity?.();
@@ -571,6 +580,7 @@ export function createTaskboardMcpServer(
       try {
         synchronized = await synchronizer.loadCached(registration.id);
       } catch (error) {
+        recordCacheDiagnostic(requestCacheDiagnosticCodes, error, "cache_read_failed");
         synchronized = {
           ...emptyWorkItemSnapshot(syncAttemptAt),
           ...(error instanceof WorkItemCacheError && error.code !== "cache_clear_failed"
@@ -620,9 +630,10 @@ export function createTaskboardMcpServer(
     });
     return {
       snapshot,
-      cacheDiagnosticCodes: snapshot.dataFreshness === "offline"
-        ? []
-        : [...(synchronized.cacheDiagnosticCodes ?? [])],
+      cacheDiagnosticCodes: [
+        ...requestCacheDiagnosticCodes,
+        ...(synchronized.cacheDiagnosticCodes ?? []),
+      ],
     };
   }
 
@@ -1241,6 +1252,18 @@ function cacheOutcome(snapshot: z.infer<typeof taskboardSnapshotSchema>) {
   if (snapshot.dataFreshness === "mixed") return "write_success" as const;
   if (snapshot.cacheWarningCode) return "miss" as const;
   return snapshot.freshScopeCount === 0 ? "miss" as const : "write_success" as const;
+}
+
+function recordCacheDiagnostic(
+  codes: WorkItemToolRunResult["cacheDiagnosticCodes"],
+  error: unknown,
+  fallback: WorkItemToolRunResult["cacheDiagnosticCodes"][number],
+) {
+  const code = error instanceof WorkItemCacheError
+    && (error.code === "cache_read_failed" || error.code === "cache_write_failed")
+    ? error.code
+    : fallback;
+  codes.push(code);
 }
 
 function authToolResult(result: Awaited<ReturnType<TapdAuthenticator["login"]>>) {

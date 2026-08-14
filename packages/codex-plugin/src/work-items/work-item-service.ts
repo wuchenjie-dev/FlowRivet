@@ -170,7 +170,11 @@ export class WorkItemService implements WorkItemSynchronizer {
     state: AccountSynchronizationState,
     operation: Promise<WorkItemSyncSnapshot>,
   ) {
-    if (state.active?.promise === operation) state.active = undefined;
+    if (state.active?.promise === operation) {
+      state.active = state.queuedManual
+        ? { mode: "manual", promise: state.queuedManual }
+        : undefined;
+    }
     if (!state.active && !state.queuedManual
       && this.accountSynchronizations.get(key) === state) {
       this.accountSynchronizations.delete(key);

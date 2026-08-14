@@ -612,6 +612,18 @@ describe("taskboard MCP app", () => {
       await client.callTool({ name: "open_my_taskboard", arguments: {} });
 
       connectionState = "disconnected";
+      vi.mocked(synced.service.loadCached).mockRejectedValueOnce(
+        new WorkItemCacheError("cache_read_failed"),
+      );
+      const failedCachedBoard = await client.callTool({
+        name: "open_my_taskboard",
+        arguments: {},
+      });
+      expect(failedCachedBoard.structuredContent).not.toHaveProperty("cacheDiagnosticCodes");
+      expect(workItemEvents.at(-1)).toMatchObject({
+        tool: "open_my_taskboard",
+        cacheDiagnosticCodes: ["cache_read_failed"],
+      });
       const cachedBoard = await client.callTool({ name: "open_my_taskboard", arguments: {} });
       expect(cachedBoard.structuredContent).toMatchObject({
         connection: { provider: { providerId: "feishu-project", state: "disconnected" } },
@@ -1171,6 +1183,11 @@ describe("taskboard MCP app", () => {
   it("logs only aggregate work item operation data", async () => {
     const fixture = catalog([project("sensitive-project-id")]);
     const workItems = synchronizer(fixture.result.projects);
+    workItems.service.sync = vi.fn().mockResolvedValue({
+      ...workItems.result,
+      cacheWarningCode: "cache_write_failed",
+      cacheDiagnosticCodes: ["cache_read_failed", "cache_write_failed"],
+    });
     const events: Parameters<WorkItemOperationLogger["completed"]>[0][] = [];
     const logger: WorkItemOperationLogger = { completed: (event) => events.push(event) };
     const connection = await connectClient(
@@ -1191,8 +1208,14 @@ describe("taskboard MCP app", () => {
         dataFreshness: "live",
         freshScopeCount: 3,
         staleScopeCount: 0,
-        cacheOutcome: "write_success",
+        cacheOutcome: "write_error",
+        cacheDiagnosticCodes: ["cache_read_failed", "cache_write_failed"],
       })]);
+      const result = await connection.client.callTool({
+        name: "list_my_work_items",
+        arguments: {},
+      });
+      expect(result.structuredContent).not.toHaveProperty("cacheDiagnosticCodes");
       expect(JSON.stringify(events)).not.toMatch(
         /sensitive-project-id|Project sensitive-project-id|Work 1|吴晨杰|example\.test|accountKey|companyId|token/,
       );
@@ -1353,9 +1376,18 @@ describe("taskboard MCP app", () => {
   });
 
   it("returns an empty workspace when TAPD is disconnected", async () => {
+    const workItems = synchronizer();
+    workItems.service.loadCached = vi.fn().mockRejectedValue(
+      new WorkItemCacheError("cache_read_failed"),
+    );
+    const events: Parameters<WorkItemOperationLogger["completed"]>[0][] = [];
     const connection = await connectClient(
       await createBundle(),
       authenticator("disconnected"),
+      catalog().service,
+      undefined,
+      workItems.service,
+      { completed: (event) => events.push(event) },
     );
 
     try {
@@ -1369,7 +1401,13 @@ describe("taskboard MCP app", () => {
         },
         projects: [],
         items: [],
+        cacheWarningCode: "cache_read_failed",
       });
+      expect(result.structuredContent).not.toHaveProperty("cacheDiagnosticCodes");
+      expect(events).toEqual([expect.objectContaining({
+        tool: "open_my_taskboard",
+        cacheDiagnosticCodes: ["cache_read_failed"],
+      })]);
     } finally {
       await connection.close();
     }

@@ -614,6 +614,46 @@ describe("work item service", () => {
     expect(provider.listAccountWorkItems).toHaveBeenCalledTimes(3);
   });
 
+  it("atomically promotes a queued manual refresh when automatic work settles", async () => {
+    const provider = new FakeAccountProvider();
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maximumActive = 0;
+    provider.listAccountWorkItems.mockImplementation(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return accountResult([], []);
+    });
+    const service = new WorkItemService(provider, () => now);
+    const base = {
+      accountDisplayName: "Example User",
+      projects: [],
+      cacheAccount: feishuCacheAccount(),
+    };
+
+    const automatic = service.sync({ ...base, refreshMode: "automatic" });
+    const continuationManual = automatic.then(() =>
+      service.sync({ ...base, refreshMode: "manual" }));
+    const queuedManual = service.sync({ ...base, refreshMode: "manual" });
+    releases[0]!();
+
+    await vi.waitFor(() => expect(provider.listAccountWorkItems.mock.calls.length)
+      .toBeGreaterThanOrEqual(2));
+    await Promise.resolve();
+    await Promise.resolve();
+    const callCount = provider.listAccountWorkItems.mock.calls.length;
+    const observedMaximum = maximumActive;
+    releases.slice(1).forEach((release) => release());
+    await Promise.all([continuationManual, queuedManual]);
+
+    expect(callCount).toBe(2);
+    expect(observedMaximum).toBe(1);
+    expect(provider.listAccountWorkItems.mock.calls.map(([input]) => input.refreshMode))
+      .toEqual(["automatic", "manual"]);
+  });
+
   it("keeps unfinished items and only trusted completions from the last seven days", async () => {
     const provider = new FakeProvider();
     provider.listProjectWorkItems.mockResolvedValue(result("A", [
