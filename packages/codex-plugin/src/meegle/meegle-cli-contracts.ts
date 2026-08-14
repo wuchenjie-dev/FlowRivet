@@ -170,7 +170,29 @@ function createdQuerySchema<Row extends z.ZodType>(rowSchema: Row) {
         group_name: z.string().min(1).max(512),
       }).strict()]),
     }).strict()]),
-  }).strict();
+  }).strict().superRefine((query, context) => {
+    const rows = query.data["1"];
+    if (query.list[0].count !== rows.length) {
+      context.addIssue({
+        code: "custom",
+        message: "created query count must match row count",
+        path: ["list", 0, "count"],
+      });
+    }
+    const workItemIds = rows.map((row) => {
+      const fields = (row as {
+        moql_field_list: Array<{ key: string; value: { long_value?: number } }>;
+      }).moql_field_list;
+      return fields.find((field) => field.key === "work_item_id")!.value.long_value;
+    });
+    if (new Set(workItemIds).size !== workItemIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "created query work item IDs must be unique",
+        path: ["data", "1"],
+      });
+    }
+  });
   return z.union([nonEmptySchema, meegleCreatedWorkItemEmptySchema]);
 }
 

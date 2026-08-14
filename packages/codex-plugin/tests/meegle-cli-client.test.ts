@@ -132,6 +132,56 @@ describe("Meegle CLI client", () => {
     ]);
   });
 
+  for (const query of [
+    {
+      fixture: "created-base-query-page.json",
+      name: "base query",
+      run: (meegle: MeegleCliClient, project: Parameters<MeegleCliClient["queryCreatedBaseWorkItems"]>[1], type: Parameters<MeegleCliClient["queryCreatedBaseWorkItems"]>[2]) =>
+        meegle.queryCreatedBaseWorkItems("default", project, type),
+    },
+    {
+      fixture: "created-query-page.json",
+      name: "completion query",
+      run: (meegle: MeegleCliClient, project: Parameters<MeegleCliClient["queryCreatedCompletionWorkItems"]>[1], type: Parameters<MeegleCliClient["queryCreatedCompletionWorkItems"]>[2]) =>
+        meegle.queryCreatedCompletionWorkItems("default", project, type),
+    },
+    {
+      fixture: "created-query-page.json",
+      name: "legacy completion query",
+      run: (meegle: MeegleCliClient, project: Parameters<MeegleCliClient["queryCreatedWorkItems"]>[1], type: Parameters<MeegleCliClient["queryCreatedWorkItems"]>[2]) =>
+        meegle.queryCreatedWorkItems("default", project, type),
+    },
+  ]) {
+    it.each([
+      ["count/rows mismatch", 2, false],
+      ["reported count over 50", 51, false],
+      ["duplicate work item IDs", 2, true],
+    ] as const)(`rejects %s through the ${query.name} production parser`, async (
+      _failure, reportedCount, duplicateRow,
+    ) => {
+      const response = JSON.parse(await readFile(
+        new URL(`./fixtures/meegle/${query.fixture}`, import.meta.url), "utf8",
+      )) as {
+        data: { "1": Array<{ moql_field_list: Array<Record<string, unknown>> }> };
+        list: [{ count: number }];
+      };
+      if (duplicateRow) response.data["1"].push(response.data["1"][0]!);
+      response.list[0].count = reportedCount;
+      const runner = new FakeRunner();
+      runner.run.mockResolvedValue({ stdout: JSON.stringify(response), exitCode: 0 });
+      const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
+      const type = { api_name: "solution", enable_model_resource_lib: false, is_disable: 2, name: "Solution", type_key: "solution-key" };
+
+      await expect(query.run(client(runner), project, type))
+        .rejects.toMatchObject({ code: "provider_invalid_response" });
+      if (query.name === "legacy completion query") {
+        expect(runner.run.mock.calls[0]![0].args).toContain(
+          "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Solution` WHERE `·创建者` = current_login_user()",
+        );
+      }
+    });
+  }
+
   it("rejects malformed strict three-field created-base rows", async () => {
     const fixture = JSON.parse(await readFile(
       new URL("./fixtures/meegle/created-base-query-page.json", import.meta.url), "utf8",
