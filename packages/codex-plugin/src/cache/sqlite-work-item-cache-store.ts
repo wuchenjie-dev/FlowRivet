@@ -18,6 +18,10 @@ import {
   type WorkItemCacheErrorCode,
   type WorkItemCacheStore,
 } from "./work-item-cache-store.js";
+import {
+  isScopeDeletedByInventory,
+  normalizeAuthoritativeScopeInventories,
+} from "./merge-work-item-snapshot.js";
 
 const SCHEMA_VERSION = 1;
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -29,6 +33,10 @@ interface AccountRow {
   provider_id: string;
   account_display_name: string;
   tenant_display_name: string | null;
+}
+
+interface NamespaceRow {
+  namespace_key: string;
 }
 
 interface ProjectRow {
@@ -79,6 +87,9 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
 
   async mergeScopes(input: CacheMergeInput): Promise<CachedSnapshot> {
     return this.writeTransaction("cache_write_failed", (database) => {
+      const authoritativeScopeInventories = normalizeAuthoritativeScopeInventories(
+        input.authoritativeScopeInventories,
+      );
       const namespaceKey = this.activate(database, input.account);
       if (input.authoritativeProjects) {
         this.pruneProjects(database, namespaceKey, input.projects);
@@ -103,6 +114,11 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
       let hasSuccess = false;
 
       for (const authoritative of input.authoritativeScopePrefixes ?? []) {
+        if (authoritativeScopeInventories.some((inventory) =>
+          inventory.projectExternalId === authoritative.projectExternalId
+            && inventory.providerItemTypePrefix === authoritative.providerItemTypePrefix)) {
+          continue;
+        }
         const retainedTypes = new Set(input.scopes
           .filter((scope) => scope.projectExternalId === authoritative.projectExternalId
             && scope.providerItemType.startsWith(authoritative.providerItemTypePrefix))
@@ -122,9 +138,34 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
           `).run(namespaceKey, authoritative.projectExternalId, row.provider_item_type);
         }
       }
+      if (input.authoritativeScopePrefixes?.length) {
+        this.deleteProjectsWithoutScopes(database, namespaceKey);
+      }
+
+      if (authoritativeScopeInventories.length > 0) {
+        const rows = database.prepare(`
+          SELECT project_external_id, provider_item_type FROM cache_scopes
+          WHERE namespace_key = ?
+        `).all(namespaceKey) as unknown as Array<{
+          project_external_id: string;
+          provider_item_type: string;
+        }>;
+        for (const row of rows) {
+          if (!isScopeDeletedByInventory({
+            projectExternalId: row.project_external_id,
+            providerItemType: row.provider_item_type,
+          }, authoritativeScopeInventories)) continue;
+          database.prepare(`
+            DELETE FROM cache_scopes
+            WHERE namespace_key = ? AND project_external_id = ? AND provider_item_type = ?
+          `).run(namespaceKey, row.project_external_id, row.provider_item_type);
+        }
+        this.deleteProjectsWithoutScopes(database, namespaceKey);
+      }
 
       for (const scope of input.scopes) {
-        if (scope.outcome !== "success") continue;
+        if (scope.outcome !== "success"
+          || isScopeDeletedByInventory(scope, authoritativeScopeInventories)) continue;
         const project = projects.get(scope.projectExternalId);
         if (!project) throw new WorkItemCacheError("cache_write_failed");
         hasSuccess = true;
@@ -181,8 +222,18 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
         `).run(input.now.toISOString(), namespaceKey);
       }
       this.purgeExpiredInDatabase(database, input.now);
-      return this.readSnapshot(database, input.account.providerId, freshScopeKeys)
+      return this.readSnapshot(database, namespaceKey, freshScopeKeys)
         ?? emptySnapshot(input.account);
+    });
+  }
+
+  async loadAccount(
+    account: CacheAccount,
+    now: Date,
+  ): Promise<CachedSnapshot | undefined> {
+    return this.writeTransaction("cache_read_failed", (database) => {
+      this.purgeExpiredInDatabase(database, now);
+      return this.readSnapshot(database, namespaceFor(account), new Set());
     });
   }
 
@@ -192,7 +243,13 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
   ): Promise<CachedSnapshot | undefined> {
     return this.writeTransaction("cache_read_failed", (database) => {
       this.purgeExpiredInDatabase(database, now);
-      return this.readSnapshot(database, providerId, new Set());
+      const active = database.prepare(`
+        SELECT namespace_key FROM cache_accounts
+        WHERE provider_id = ? AND is_active = 1
+      `).get(providerId) as NamespaceRow | undefined;
+      return active
+        ? this.readSnapshot(database, active.namespace_key, new Set())
+        : undefined;
     });
   }
 
@@ -342,45 +399,36 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
 
   private readSnapshot(
     database: DatabaseSync,
-    providerId: string,
+    namespaceKey: string,
     freshScopeKeys: Set<string>,
   ): CachedSnapshot | undefined {
     try {
       const account = database.prepare(`
         SELECT provider_id, account_display_name, tenant_display_name
         FROM cache_accounts
-        WHERE provider_id = ? AND is_active = 1
-      `).get(providerId) as AccountRow | undefined;
+        WHERE namespace_key = ?
+      `).get(namespaceKey) as AccountRow | undefined;
       if (!account) return undefined;
 
       const scopeRows = database.prepare(`
         SELECT project_external_id, provider_item_type, kind, last_success_at
         FROM cache_scopes
-        WHERE namespace_key = (
-          SELECT namespace_key FROM cache_accounts
-          WHERE provider_id = ? AND is_active = 1
-        )
+        WHERE namespace_key = ?
         ORDER BY project_external_id, provider_item_type
-      `).all(providerId) as unknown as ScopeRow[];
+      `).all(namespaceKey) as unknown as ScopeRow[];
       if (scopeRows.length === 0) return undefined;
 
       const projectRows = database.prepare(`
         SELECT project_json FROM cache_projects
-        WHERE namespace_key = (
-          SELECT namespace_key FROM cache_accounts
-          WHERE provider_id = ? AND is_active = 1
-        )
+        WHERE namespace_key = ?
         ORDER BY project_external_id
-      `).all(providerId) as unknown as ProjectRow[];
+      `).all(namespaceKey) as unknown as ProjectRow[];
       const itemRows = database.prepare(`
         SELECT project_external_id, provider_item_type, item_json
         FROM cache_items
-        WHERE namespace_key = (
-          SELECT namespace_key FROM cache_accounts
-          WHERE provider_id = ? AND is_active = 1
-        )
+        WHERE namespace_key = ?
         ORDER BY project_external_id, provider_item_type, item_key
-      `).all(providerId) as unknown as ItemRow[];
+      `).all(namespaceKey) as unknown as ItemRow[];
 
       const itemsByScope = new Map<string, WorkItem[]>();
       for (const row of itemRows) {

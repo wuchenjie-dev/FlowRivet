@@ -30,6 +30,11 @@ export interface CacheMergeInput {
     projectExternalId: string;
     providerItemTypePrefix: string;
   }>;
+  authoritativeScopeInventories?: Array<{
+    projectExternalId: string;
+    providerItemTypePrefix: string;
+    providerItemTypes: string[];
+  }>;
   now: Date;
 }
 
@@ -56,6 +61,7 @@ export interface CachedSnapshot {
 export interface WorkItemCacheStore {
   activateAccount(input: CacheAccount): Promise<void>;
   mergeScopes(input: CacheMergeInput): Promise<CachedSnapshot>;
+  loadAccount(account: CacheAccount, now: Date): Promise<CachedSnapshot | undefined>;
   loadActive(providerId: string, now: Date): Promise<CachedSnapshot | undefined>;
   clearActive(providerId: string): Promise<void>;
   purgeExpired(now: Date): Promise<number>;

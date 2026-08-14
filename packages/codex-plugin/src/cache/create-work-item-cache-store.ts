@@ -36,6 +36,8 @@ export function createWorkItemCacheStore(options: {
   return {
     activateAccount: async (input) => (await getDelegate()).activateAccount(input),
     mergeScopes: async (input) => (await getDelegate()).mergeScopes(input),
+    loadAccount: async (account, now) =>
+      (await getDelegate()).loadAccount(account, now),
     loadActive: async (providerId, now) =>
       (await getDelegate()).loadActive(providerId, now),
     clearActive: async (providerId) => (await getDelegate()).clearActive(providerId),
@@ -50,6 +52,7 @@ function unavailableStore(): WorkItemCacheStore {
   return {
     activateAccount: reject,
     mergeScopes: reject,
+    loadAccount: reject,
     loadActive: reject,
     clearActive: reject,
     purgeExpired: reject,

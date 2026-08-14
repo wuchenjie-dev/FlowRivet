@@ -1,11 +1,11 @@
 import {
-  WorkItemCacheError,
   type CacheAccount,
   type CachedScope,
   type CachedSnapshot,
   type WorkItemCacheErrorCode,
   type WorkItemCacheStore,
 } from "../cache/work-item-cache-store.js";
+import { mergeWorkItemSnapshot } from "../cache/merge-work-item-snapshot.js";
 import type { ProjectRef } from "../contracts/projects.js";
 import type { WorkItem } from "../contracts/taskboard.js";
 import {
@@ -37,6 +37,7 @@ export interface WorkItemSyncSnapshot {
   lastSyncAttemptAt: string;
   cacheWarningCode?: Exclude<WorkItemCacheErrorCode, "cache_clear_failed">
     | "cache_identity_unavailable";
+  cacheDiagnosticCodes?: Array<"cache_read_failed" | "cache_write_failed">;
   freshnessReasonCode?: WorkItemErrorCode;
   retryAfterSeconds?: number;
 }
@@ -89,6 +90,19 @@ export class WorkItemService implements WorkItemSynchronizer {
 
   private async performSync(input: WorkItemSyncInput): Promise<WorkItemSyncSnapshot> {
     const attemptedAt = this.clock();
+    const cacheDiagnosticCodes: NonNullable<
+      WorkItemSyncSnapshot["cacheDiagnosticCodes"]
+    > = [];
+    let preloaded: CachedSnapshot | undefined;
+    let preloadSucceeded = false;
+    if (this.cache && input.cacheAccount) {
+      try {
+        preloaded = await this.cache.loadAccount(input.cacheAccount, attemptedAt);
+        preloadSucceeded = true;
+      } catch {
+        cacheDiagnosticCodes.push("cache_read_failed");
+      }
+    }
     const fresh = this.provider.queryMode === "account_scoped"
       ? await this.fetchAccountScoped(input)
       : await this.fetchProjectScoped(input);
@@ -103,26 +117,41 @@ export class WorkItemService implements WorkItemSynchronizer {
     let source: CachedSnapshot;
 
     if (this.cache && input.cacheAccount) {
+      const mergeInput = {
+        account: input.cacheAccount,
+        projects,
+        scopes,
+        ...(fresh.authoritativeProjects ? { authoritativeProjects: true } : {}),
+        ...(fresh.authoritativeProjectScopePrefixes
+          ? { authoritativeProjectScopePrefixes: fresh.authoritativeProjectScopePrefixes }
+          : {}),
+        ...(fresh.authoritativeProviderItemTypes
+          ? { authoritativeProviderItemTypes: fresh.authoritativeProviderItemTypes }
+          : {}),
+        ...(fresh.authoritativeScopePrefixes
+          ? { authoritativeScopePrefixes: fresh.authoritativeScopePrefixes }
+          : {}),
+        ...(fresh.authoritativeScopeInventories
+          ? { authoritativeScopeInventories: fresh.authoritativeScopeInventories }
+          : {}),
+        now: attemptedAt,
+      };
       try {
-        source = await this.cache.mergeScopes({
-          account: input.cacheAccount,
-          projects,
-          scopes,
-          ...(fresh.authoritativeProjects ? { authoritativeProjects: true } : {}),
-          ...(fresh.authoritativeProjectScopePrefixes
-            ? { authoritativeProjectScopePrefixes: fresh.authoritativeProjectScopePrefixes }
-            : {}),
-          ...(fresh.authoritativeProviderItemTypes
-            ? { authoritativeProviderItemTypes: fresh.authoritativeProviderItemTypes }
-            : {}),
-          ...(fresh.authoritativeScopePrefixes
-            ? { authoritativeScopePrefixes: fresh.authoritativeScopePrefixes }
-            : {}),
-          now: attemptedAt,
-        });
-      } catch (error) {
-        cacheWarningCode = cacheWarning(error);
+        source = await this.cache.mergeScopes(mergeInput);
+        if (cacheDiagnosticCodes.includes("cache_read_failed")) {
+          cacheWarningCode = "cache_read_failed";
+        }
+      } catch {
+        cacheWarningCode = "cache_write_failed";
+        cacheDiagnosticCodes.push("cache_write_failed");
         source = liveSnapshot(input.cacheAccount, projects, successfulScopes, attemptedAt);
+        if (preloadSucceeded && preloaded) {
+          try {
+            source = mergeWorkItemSnapshot(preloaded, mergeInput);
+          } catch {
+            // Invalid cache authority is a write failure; retain only validated live data.
+          }
+        }
       }
     } else {
       if (this.cache) cacheWarningCode = "cache_identity_unavailable";
@@ -152,6 +181,7 @@ export class WorkItemService implements WorkItemSynchronizer {
       failedProjects,
       lastSyncAttemptAt: attemptedAt.toISOString(),
       cacheWarningCode,
+      cacheDiagnosticCodes,
       freshnessReasonCode: reason,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     }, attemptedAt);
@@ -280,6 +310,9 @@ export class WorkItemService implements WorkItemSynchronizer {
       ...(result.authoritativeScopePrefixes
         ? { authoritativeScopePrefixes: result.authoritativeScopePrefixes }
         : {}),
+      ...(result.authoritativeScopeInventories
+        ? { authoritativeScopeInventories: result.authoritativeScopeInventories }
+        : {}),
       successfulProjects: successfulProjectIds.size,
       failedProjects: failedProjectIds.size,
       failureCodes: failedScopes.map((scope) => scope.errorCode ?? "work_item_sync_failed"),
@@ -306,6 +339,11 @@ interface FreshSyncResult {
   authoritativeScopePrefixes?: Array<{
     projectExternalId: string;
     providerItemTypePrefix: string;
+  }>;
+  authoritativeScopeInventories?: Array<{
+    projectExternalId: string;
+    providerItemTypePrefix: string;
+    providerItemTypes: string[];
   }>;
 }
 
@@ -346,6 +384,7 @@ function createSnapshot(
     failedProjects: number;
     lastSyncAttemptAt: string;
     cacheWarningCode?: WorkItemSyncSnapshot["cacheWarningCode"];
+    cacheDiagnosticCodes?: WorkItemSyncSnapshot["cacheDiagnosticCodes"];
     freshnessReasonCode?: WorkItemErrorCode;
     retryAfterSeconds?: number;
   },
@@ -387,6 +426,7 @@ function createSnapshot(
       ? { lastSuccessfulSyncAt: input.source.lastSuccessfulSyncAt }
       : {}),
     ...(input.cacheWarningCode ? { cacheWarningCode: input.cacheWarningCode } : {}),
+    cacheDiagnosticCodes: input.cacheDiagnosticCodes ?? [],
     ...(input.freshnessReasonCode
       ? { freshnessReasonCode: input.freshnessReasonCode }
       : {}),
@@ -464,13 +504,6 @@ function maximumRetryAfter(values: number[]) {
   const valid = values.filter((value) => Number.isInteger(value)
     && value >= 1 && value <= 86400);
   return valid.length > 0 ? Math.max(...valid) : undefined;
-}
-
-function cacheWarning(error: unknown): WorkItemSyncSnapshot["cacheWarningCode"] {
-  if (error instanceof WorkItemCacheError && error.code !== "cache_clear_failed") {
-    return error.code;
-  }
-  return "cache_write_failed";
 }
 
 function compareItems(left: WorkItem, right: WorkItem) {

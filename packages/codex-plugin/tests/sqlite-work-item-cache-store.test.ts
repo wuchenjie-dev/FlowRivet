@@ -266,6 +266,26 @@ describe("SQLite work item cache store", () => {
     await expect(store.loadActive("tapd", now)).resolves.toBeUndefined();
   });
 
+  it("loads only the exact account namespace without changing the active account", async () => {
+    const { store } = await fixture();
+    const alice = account();
+    await store.mergeScopes({
+      account: alice, projects: [project("A")], now,
+      scopes: [scope("A", "task", "task", [item("alice")])],
+    });
+
+    await expect(store.loadAccount(account({ accountKey: "user-2" }), now))
+      .resolves.toBeUndefined();
+    await expect(store.loadAccount(account({ tenantKey: undefined }), now))
+      .resolves.toBeUndefined();
+    await expect(store.loadActive("tapd", now)).resolves.toMatchObject({
+      items: [{ externalId: "alice" }],
+    });
+    await expect(store.loadAccount(alice, now)).resolves.toMatchObject({
+      items: [{ externalId: "alice", freshness: "cached" }],
+    });
+  });
+
   it("expires each scope only after its own seven-day boundary", async () => {
     const { store } = await fixture();
     await store.mergeScopes({
@@ -317,6 +337,58 @@ describe("SQLite work item cache store", () => {
     expect(pruned.scopes.map((value) => value.providerItemType).sort())
       .toEqual(["created:new", "mywork:todo:task"]);
     expect(pruned.items.map((value) => value.externalId)).toEqual(["mine"]);
+  });
+
+  it("uses metadata inventory instead of scanned scopes to retain unscanned created types", async () => {
+    const { store } = await fixture();
+    const previousScopes = Array.from({ length: 132 }, (_, index) =>
+      scope("A", `created:type-${index}`, "other", [
+        item(`old-${index}`, "A", `native-${index}`, "other"),
+      ]));
+    await store.mergeScopes({
+      account: account(), projects: [project("A")], scopes: previousScopes, now,
+    });
+
+    const providerItemTypes = Array.from({ length: 132 }, (_, index) => `created:type-${index}`);
+    const scanned = providerItemTypes.slice(0, 40).map((providerItemType, index) =>
+      scope("A", providerItemType, "other", [
+        item(`new-${index}`, "A", `native-${index}`, "other"),
+      ]));
+    const merged = await store.mergeScopes({
+      account: account(), projects: [project("A")], scopes: scanned,
+      authoritativeScopePrefixes: [{ projectExternalId: "A", providerItemTypePrefix: "created:" }],
+      authoritativeScopeInventories: [{
+        projectExternalId: "A",
+        providerItemTypePrefix: "created:",
+        providerItemTypes,
+      }],
+      now: new Date("2026-08-10T13:00:00.000Z"),
+    });
+
+    expect(merged.scopes).toHaveLength(132);
+    expect(merged.scopes.filter((value) => value.freshness === "fresh")).toHaveLength(40);
+    expect(merged.scopes.filter((value) => value.freshness === "cached")).toHaveLength(92);
+  });
+
+  it("rejects malformed inventory as a cache write failure and rolls back pruning", async () => {
+    const { store } = await fixture();
+    await store.mergeScopes({
+      account: account(), projects: [project("A")], now,
+      scopes: [scope("A", "created:old", "other", [item("old", "A", "native", "other")])],
+    });
+
+    await expect(store.mergeScopes({
+      account: account(), projects: [project("A")], scopes: [],
+      authoritativeScopeInventories: [{
+        projectExternalId: "A",
+        providerItemTypePrefix: "created:",
+        providerItemTypes: ["created:duplicate", "created:duplicate"],
+      }],
+      now: new Date("2026-08-10T13:00:00.000Z"),
+    })).rejects.toMatchObject({ code: "cache_write_failed" });
+    await expect(store.loadAccount(account(), now)).resolves.toMatchObject({
+      items: [{ externalId: "old" }],
+    });
   });
 
   it("rolls back a scope replacement when an item insert fails", async () => {
@@ -396,6 +468,22 @@ describe("SQLite work item cache store", () => {
     });
     await expect(unavailable.loadActive("tapd", now))
       .rejects.toMatchObject({ code: "cache_unavailable" });
+  });
+
+  it("forwards exact account loads through the lazy cache factory", async () => {
+    const { directory, store } = await fixture();
+    await store.mergeScopes({
+      account: account(), projects: [project("A")],
+      scopes: [scope("A", "task", "task", [item("exact")])], now,
+    });
+    const lazy = createWorkItemCacheStore({
+      directory,
+      loadSqlite: async () => ({ DatabaseSync } as typeof import("node:sqlite")),
+    });
+
+    await expect(lazy.loadAccount(account(), now)).resolves.toMatchObject({
+      items: [{ externalId: "exact", freshness: "cached" }],
+    });
   });
 
   it("preserves database initialization errors through the lazy factory", async () => {

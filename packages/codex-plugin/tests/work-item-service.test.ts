@@ -135,8 +135,19 @@ class FakeCache implements WorkItemCacheStore {
   readonly activateAccount = vi.fn<WorkItemCacheStore["activateAccount"]>();
   readonly mergeScopes = vi.fn<WorkItemCacheStore["mergeScopes"]>();
   readonly loadActive = vi.fn<WorkItemCacheStore["loadActive"]>();
+  readonly loadAccount = vi.fn<WorkItemCacheStore["loadAccount"]>();
   readonly clearActive = vi.fn<WorkItemCacheStore["clearActive"]>();
   readonly purgeExpired = vi.fn<WorkItemCacheStore["purgeExpired"]>();
+}
+
+function feishuCacheAccount(overrides: Partial<CacheAccount> = {}): CacheAccount {
+  return {
+    providerId: "feishu-project",
+    accountKey: "user-1",
+    tenantKey: "tenant-1",
+    accountDisplayName: "alice",
+    ...overrides,
+  };
 }
 
 const cacheAccount: CacheAccount = {
@@ -182,6 +193,126 @@ function cachedScope(
 }
 
 describe("work item service", () => {
+  it("preloads the exact account and pure-merges it when the cache write fails", async () => {
+    const provider = new FakeAccountProvider();
+    const cache = new FakeCache();
+    const cached = cachedSnapshot([
+      cachedScope("created:unscanned", "other", [item("cached", "todo")]),
+    ]);
+    cache.loadAccount.mockResolvedValue(cached);
+    cache.mergeScopes.mockRejectedValue(new WorkItemCacheError("cache_write_failed"));
+    provider.listAccountWorkItems.mockResolvedValue({
+      projects: [accountProject("A")],
+      scopes: [],
+      authoritativeScopeInventories: [{
+        projectExternalId: "A",
+        providerItemTypePrefix: "created:",
+        providerItemTypes: ["created:unscanned"],
+      }],
+    });
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "alice",
+      cacheAccount: feishuCacheAccount(),
+      projects: [],
+    });
+
+    expect(cache.loadAccount).toHaveBeenCalledWith(feishuCacheAccount(), now);
+    expect(cache.loadActive).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      cacheWarningCode: "cache_write_failed",
+      cacheDiagnosticCodes: ["cache_write_failed"],
+      staleScopeCount: 1,
+      items: [{ externalId: "cached" }],
+    });
+  });
+
+  it.each([
+    { readFails: false, writeFails: false, warning: undefined, diagnostics: [] },
+    { readFails: true, writeFails: false, warning: "cache_read_failed", diagnostics: ["cache_read_failed"] },
+    { readFails: false, writeFails: true, warning: "cache_write_failed", diagnostics: ["cache_write_failed"] },
+    { readFails: true, writeFails: true, warning: "cache_write_failed", diagnostics: ["cache_read_failed", "cache_write_failed"] },
+  ])("reports the cache read/write matrix: $diagnostics", async ({ readFails, writeFails, warning, diagnostics }) => {
+    const provider = new FakeAccountProvider();
+    const cache = new FakeCache();
+    const live = cachedSnapshot([], [accountProject("A")]);
+    if (readFails) cache.loadAccount.mockRejectedValue(new WorkItemCacheError("cache_read_failed"));
+    else cache.loadAccount.mockResolvedValue(undefined);
+    if (writeFails) cache.mergeScopes.mockRejectedValue(new WorkItemCacheError("cache_write_failed"));
+    else cache.mergeScopes.mockResolvedValue(live);
+    provider.listAccountWorkItems.mockResolvedValue(accountResult([accountProject("A")], []));
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "alice",
+      cacheAccount: feishuCacheAccount(),
+      projects: [],
+    });
+
+    expect(snapshot.cacheWarningCode).toBe(warning);
+    expect(snapshot.cacheDiagnosticCodes).toEqual(diagnostics);
+  });
+
+  it("uses live-only account B data when exact preload and cache write both fail", async () => {
+    const provider = new FakeAccountProvider();
+    const cache = new FakeCache();
+    cache.loadAccount.mockRejectedValue(new WorkItemCacheError("cache_read_failed"));
+    cache.mergeScopes.mockRejectedValue(new WorkItemCacheError("cache_write_failed"));
+    provider.listAccountWorkItems.mockResolvedValue({
+      projects: [accountProject("B")],
+      scopes: [{
+        projectExternalId: "B",
+        providerItemType: "created:task",
+        kind: "task",
+        outcome: "success",
+        items: [{ ...accountItem("B-live", "B"), projectName: "Feishu Project B" }],
+      }],
+    });
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const snapshot = await service.sync({
+      accountDisplayName: "bob",
+      cacheAccount: feishuCacheAccount({ accountKey: "user-B", accountDisplayName: "bob" }),
+      projects: [],
+    });
+
+    expect(snapshot.projects.map((entry) => entry.externalId)).toEqual(["B"]);
+    expect(snapshot.items.map((entry) => entry.externalId)).toEqual(["B-live"]);
+    expect(snapshot).toMatchObject({
+      cacheWarningCode: "cache_write_failed",
+      cacheDiagnosticCodes: ["cache_read_failed", "cache_write_failed"],
+    });
+  });
+
+  it("maps malformed inventory fallback to cache_write_failed without restoring deleted cache", async () => {
+    const provider = new FakeAccountProvider();
+    const cache = new FakeCache();
+    cache.loadAccount.mockResolvedValue(cachedSnapshot([
+      cachedScope("created:old", "other", [item("old", "todo")]),
+    ]));
+    cache.mergeScopes.mockRejectedValue(new WorkItemCacheError("cache_write_failed"));
+    provider.listAccountWorkItems.mockResolvedValue({
+      projects: [accountProject("A")],
+      scopes: [],
+      authoritativeScopeInventories: [{
+        projectExternalId: "A",
+        providerItemTypePrefix: "created:",
+        providerItemTypes: ["created:x", "created:x"],
+      }],
+    });
+    const service = new WorkItemService(provider, () => now, cache);
+
+    await expect(service.sync({
+      accountDisplayName: "alice",
+      cacheAccount: feishuCacheAccount(),
+      projects: [],
+    })).resolves.toMatchObject({
+      items: [],
+      cacheWarningCode: "cache_write_failed",
+      cacheDiagnosticCodes: ["cache_write_failed"],
+    });
+  });
   it("synchronizes one account-scoped query without prior project discovery", async () => {
     const provider = new FakeAccountProvider();
     provider.listAccountWorkItems.mockResolvedValue(accountResult(
