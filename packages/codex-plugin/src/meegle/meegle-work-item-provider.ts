@@ -86,6 +86,7 @@ interface CreatedDirectory {
   discoveredProjects: MeegleProject[];
   projects: Array<{ project: MeegleProject; workItemTypes: MeegleWorkItemType[] }>;
   errors: CreatedResult[];
+  ownerCapabilities: Map<string, boolean>;
 }
 class CreatedDirectoryCancelledError extends Error {
   constructor(
@@ -136,6 +137,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     expiresAt: number;
     discoveredProjects: MeegleProject[];
     successfulTypes: Map<string, MeegleWorkItemType[]>;
+    ownerCapabilities: Map<string, boolean>;
   };
 
   constructor(options: {
@@ -361,7 +363,8 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         }
         try {
           const items = await this.fetchCreatedType(
-            profile, request.project, request.workItemType, reserveCreatedCount,
+            profile, request.project, request.workItemType,
+            directory.ownerCapabilities, reserveCreatedCount,
           );
           results.push({ outcome: "success", ...request, items });
         } catch (error) {
@@ -434,6 +437,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         expiresAt: timestamp + directoryTtlMs,
         discoveredProjects,
         successfulTypes: new Map(),
+        ownerCapabilities: new Map(),
       };
     }
 
@@ -484,23 +488,35 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         discoveredProjects: recentProjects,
         projects,
         errors,
+        ownerCapabilities: cache.ownerCapabilities,
       });
     }
     const order = new Map(recentProjects.map((project, index) => [project.project_key, index]));
     projects.sort((left, right) =>
       (order.get(left.project.project_key) ?? 0) - (order.get(right.project.project_key) ?? 0));
-    return { discoveredProjects: recentProjects, projects, errors };
+    return {
+      discoveredProjects: recentProjects,
+      projects,
+      errors,
+      ownerCapabilities: cache.ownerCapabilities,
+    };
   }
 
   private async fetchCreatedType(
     profile: string,
     project: MeegleProject,
     workItemType: MeegleWorkItemType,
+    ownerCapabilities: Map<string, boolean>,
     reserveCount: (count: number) => void,
   ): Promise<CreatedItemData[]> {
-    const hasOwner = await this.client.hasCreatedOwnerField(
-      profile, project.project_key, workItemType.type_key,
-    );
+    const capabilityKey = createdScopeKey(project, workItemType);
+    let hasOwner = ownerCapabilities.get(capabilityKey);
+    if (hasOwner === undefined) {
+      hasOwner = await this.client.hasCreatedOwnerField(
+        profile, project.project_key, workItemType.type_key,
+      );
+      ownerCapabilities.set(capabilityKey, hasOwner);
+    }
     if (!hasOwner) return [];
     const baseQuery = await this.client.queryCreatedBaseWorkItems(profile, project, workItemType);
     const baseItems = parseCreatedQuery(baseQuery, false);

@@ -222,9 +222,11 @@ describe("Meegle work item provider", () => {
     client.listWorkItemTypes.mockResolvedValue([createdType]);
     client.hasCreatedOwnerField.mockResolvedValue(false);
 
-    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
-      .listAccountWorkItems({ accountDisplayName: "Example User" });
+    const provider = new MeegleWorkItemProvider({ client, clock: () => now });
+    const result = await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
 
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledOnce();
     expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
     expect(result.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
       projectExternalId: "CREATED",
@@ -253,6 +255,50 @@ describe("Meegle work item provider", () => {
       outcome: "error",
       errorCode: "provider_unauthorized",
     })]));
+  });
+
+  it("retries owner metadata after an error instead of caching an unknown capability", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.hasCreatedOwnerField
+      .mockRejectedValueOnce(new MeegleCliError("provider_timeout"))
+      .mockResolvedValueOnce(true);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    const provider = new MeegleWorkItemProvider({ client, clock: () => now });
+
+    const failed = await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    const recovered = await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(failed.scopes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerItemType: "created:solution-key", outcome: "error" }),
+    ]));
+    expect(recovered.scopes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerItemType: "created:solution-key", outcome: "success" }),
+    ]));
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(2);
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledOnce();
+  });
+
+  it("expires owner capabilities with the project and type directory", async () => {
+    const client = new FakeClient();
+    let currentTime = now.getTime();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    const provider = new MeegleWorkItemProvider({
+      client, clock: () => new Date(currentTime),
+    });
+
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    currentTime += 10 * 60 * 1_000 + 1;
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(2);
+    expect(client.listRecentProjects).toHaveBeenCalledTimes(2);
   });
 
   it("propagates owner metadata cancellation and leaves the automatic batch uncommitted", async () => {
@@ -450,6 +496,45 @@ describe("Meegle work item provider", () => {
 
     expect(client.listRecentProjects).toHaveBeenCalledTimes(2);
     expect(client.listWorkItemTypes).toHaveBeenCalledTimes(2);
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let an older identity write owner capability into a replacement cache", async () => {
+    const client = new FakeClient();
+    let currentIdentity = identity;
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const releaseFirstPromise = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let metadataCall = 0;
+    client.getCurrentUser.mockImplementation(async () => currentIdentity);
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    client.hasCreatedOwnerField.mockImplementation(async () => {
+      metadataCall += 1;
+      if (metadataCall === 1) {
+        firstStarted();
+        await releaseFirstPromise;
+        return false;
+      }
+      return true;
+    });
+    const provider = new MeegleWorkItemProvider({ client, clock: () => now });
+
+    const first = provider.listAccountWorkItems({ accountDisplayName: "User A" });
+    await firstStartedPromise;
+    currentIdentity = { ...identity, user_key: "user-b" };
+    await provider.listAccountWorkItems({ accountDisplayName: "User B" });
+    currentIdentity = identity;
+    releaseFirst();
+    await first;
+    currentIdentity = { ...identity, user_key: "user-b" };
+    await provider.listAccountWorkItems({ accountDisplayName: "User B" });
+
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(2);
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledTimes(2);
   });
 
   it("isolates a created type failure while preserving mywork and successful created types", async () => {
@@ -517,6 +602,7 @@ describe("Meegle work item provider", () => {
 
     expect(client.listRecentProjects).toHaveBeenCalledTimes(1);
     expect(client.listWorkItemTypes).toHaveBeenCalledTimes(1);
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(1);
     expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledTimes(2);
   });
 

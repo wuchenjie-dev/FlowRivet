@@ -247,7 +247,7 @@ export class MeegleCliClient {
       "--profile", validateProfile(profile), "workitem", "meta-fields",
       "--project-key", validateOpaqueKey(projectKey),
       "--work-item-type", validateOpaqueKey(workItemType),
-      "--field-keys", JSON.stringify(["owner"]),
+      "--field-keys", "owner",
       "--page-num", "1", "--format", "json",
     ], meegleCreatedOwnerMetadataSchema, { timeoutMs: 30_000 });
     return result.list !== null;

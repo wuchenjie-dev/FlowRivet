@@ -217,7 +217,9 @@ export const meegleCreatedWorkItemQuerySchema = meegleCreatedCompletionQuerySche
 
 const meegleCreatedOwnerPaginationSchema = z.object({
   has_more: z.literal(false),
-}).strict();
+  page_num: z.literal(1),
+  page_size: z.literal(50),
+});
 const meegleCreatedOwnerFieldSchema = z.object({
   field_key: z.literal("owner"),
   field_name: z.string().min(1),
@@ -225,11 +227,11 @@ const meegleCreatedOwnerFieldSchema = z.object({
 }).strict();
 export const meegleCreatedOwnerMetadataSchema = z.union([
   z.object({
-    pagination: meegleCreatedOwnerPaginationSchema,
+    pagination: meegleCreatedOwnerPaginationSchema.extend({ total: z.literal(0) }).strict(),
     list: z.null(),
   }).strict(),
   z.object({
-    pagination: meegleCreatedOwnerPaginationSchema,
+    pagination: meegleCreatedOwnerPaginationSchema.extend({ total: z.literal(1) }).strict(),
     list: z.tuple([meegleCreatedOwnerFieldSchema]),
   }).strict(),
 ]);

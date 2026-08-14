@@ -740,34 +740,34 @@ describe("Meegle CLI client", () => {
 
   it("checks the created owner field with the exact filtered metadata argv", async () => {
     const runner = new FakeRunner();
+    const present = await readFile(new URL(
+      "./fixtures/meegle/created-owner-metadata-present.json", import.meta.url,
+    ), "utf8");
+    const missing = await readFile(new URL(
+      "./fixtures/meegle/created-owner-metadata-missing.json", import.meta.url,
+    ), "utf8");
     runner.run
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify({
-          pagination: { has_more: false },
-          list: [{ field_key: "owner", field_name: "Creator", field_type: "user" }],
-        }),
-        exitCode: 0,
-      })
-      .mockResolvedValueOnce({
-        stdout: JSON.stringify({ pagination: { has_more: false }, list: null }),
-        exitCode: 0,
-      });
+      .mockResolvedValueOnce({ stdout: present, exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: missing, exitCode: 0 });
     const meegle = client(runner);
 
     await expect(meegle.hasCreatedOwnerField("profile", "PROJ", "story")).resolves.toBe(true);
     await expect(meegle.hasCreatedOwnerField("profile", "PROJ", "issue")).resolves.toBe(false);
     expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
-      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "story", "--field-keys", JSON.stringify(["owner"]), "--page-num", "1", "--format", "json"],
-      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "issue", "--field-keys", JSON.stringify(["owner"]), "--page-num", "1", "--format", "json"],
+      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "story", "--field-keys", "owner", "--page-num", "1", "--format", "json"],
+      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "issue", "--field-keys", "owner", "--page-num", "1", "--format", "json"],
     ]);
   });
 
   it.each([
-    { pagination: { has_more: true }, list: null },
-    { pagination: { has_more: false }, list: [] },
-    { pagination: { has_more: false }, list: [{ field_key: "creator", field_name: "Creator", field_type: "user" }] },
-    { pagination: { has_more: false }, list: [{ field_key: "owner", field_name: "Creator", field_type: "text" }] },
-    { pagination: { has_more: false }, list: [{ field_key: "owner", field_name: "Creator", field_type: "user" }], extra: true },
+    { pagination: { has_more: true, page_num: 1, page_size: 50, total: 0 }, list: null },
+    { pagination: { has_more: false, page_num: 2, page_size: 50, total: 0 }, list: null },
+    { pagination: { has_more: false, page_num: 1, page_size: 20, total: 0 }, list: null },
+    { pagination: { has_more: false, page_num: 1, page_size: 50, total: 1 }, list: null },
+    { pagination: { has_more: false, page_num: 1, page_size: 50, total: 0 }, list: [] },
+    { pagination: { has_more: false, page_num: 1, page_size: 50, total: 1 }, list: [{ field_key: "creator", field_name: "Creator", field_type: "user" }] },
+    { pagination: { has_more: false, page_num: 1, page_size: 50, total: 1 }, list: [{ field_key: "owner", field_name: "Creator", field_type: "text" }] },
+    { pagination: { has_more: false, page_num: 1, page_size: 50, total: 1 }, list: [{ field_key: "owner", field_name: "Creator", field_type: "user" }], extra: true },
   ])("rejects unproved created owner metadata shapes", async (response) => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({ stdout: JSON.stringify(response), exitCode: 0 });
