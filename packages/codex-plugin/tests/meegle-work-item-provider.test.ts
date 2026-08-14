@@ -430,6 +430,46 @@ describe("Meegle work item provider", () => {
     });
   });
 
+  it("accepts more than 200 discovered types when no more than 200 are active", async () => {
+    const client = new FakeClient();
+    const active = Array.from({ length: 200 }, (_, index) => ({
+      ...createdType, type_key: `active-${String(index).padStart(3, "0")}`,
+    }));
+    const disabled = [{ ...createdType, is_disable: 1, type_key: "disabled" }];
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([...active, ...disabled]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(200);
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(active.map(({ type_key }) => type_key));
+    expect(result.createdSyncCoverage).toMatchObject({
+      catalog: "available", scannedTypeCount: 200, totalTypeCount: 200, complete: true,
+    });
+  });
+
+  it("rejects a directory with more than 200 active types", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(Array.from({ length: 201 }, (_, index) => ({
+      ...createdType, type_key: `active-${String(index).padStart(3, "0")}`,
+    })));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField).not.toHaveBeenCalled();
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    expect(result.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
+      projectExternalId: "CREATED", providerItemType: "created:catalog", outcome: "error",
+    })]));
+  });
+
   it("rotates 110 active types in automatic batches of 40, 40, and 30", async () => {
     const client = new FakeClient();
     const active = Array.from({ length: 110 }, (_, index) => ({
@@ -529,7 +569,11 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes
-      .mockResolvedValueOnce([{ ...createdType, is_disable: 3 }])
+      .mockResolvedValueOnce([
+        { ...createdType, is_disable: 1, type_key: "disabled" },
+        { ...createdType, is_disable: 3, type_key: "unknown" },
+        createdType,
+      ])
       .mockResolvedValueOnce([createdType]);
     client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
     const provider = new MeegleWorkItemProvider({ client, clock: () => now });
@@ -545,6 +589,7 @@ describe("Meegle work item provider", () => {
     })]));
     expect(client.listWorkItemTypes).toHaveBeenCalledTimes(2);
     expect(client.hasCreatedOwnerField).toHaveBeenCalledOnce();
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledOnce();
   });
 
   it("caches only filtered active types and rereads the directory after TTL", async () => {

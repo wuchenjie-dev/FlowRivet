@@ -460,14 +460,16 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
           const discoveredTypes = await this.client.listWorkItemTypes(
             profile, project.project_key,
           );
-          if (discoveredTypes.length > maximumTypesPerProject
-            || discoveredTypes.some(({ is_disable: disableState }) =>
-              disableState !== 1 && disableState !== 2)) {
+          if (discoveredTypes.some(({ is_disable: disableState }) =>
+            disableState !== 1 && disableState !== 2)) {
             throw new WorkItemProviderError("provider_unavailable");
           }
           const workItemTypes = discoveredTypes
             .filter(({ is_disable: disableState }) => disableState === 2)
             .sort((left, right) => left.type_key.localeCompare(right.type_key));
+          if (workItemTypes.length > maximumTypesPerProject) {
+            throw new WorkItemProviderError("provider_unavailable");
+          }
           cache.successfulTypes.set(project.project_key, workItemTypes);
           projects.push({ project, workItemTypes });
         } catch (error) {
