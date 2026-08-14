@@ -1,0 +1,11 @@
+{
+  "list": [
+    {
+      "api_name": "redacted_type",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "Redacted Type",
+      "type_key": "REDACTED_TYPE_KEY"
+    }
+  ]
+}

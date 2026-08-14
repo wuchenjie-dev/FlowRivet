@@ -34,6 +34,13 @@ export interface AccountWorkItemScopeResult extends WorkItemScopeResult {
 export interface AccountWorkItemQueryResult {
   projects: ProjectRef[];
   scopes: AccountWorkItemScopeResult[];
+  authoritativeProjects?: boolean;
+  authoritativeProjectScopePrefixes?: string[];
+  authoritativeProviderItemTypes?: string[];
+  authoritativeScopePrefixes?: Array<{
+    projectExternalId: string;
+    providerItemTypePrefix: string;
+  }>;
 }
 
 export interface AccountScopedWorkItemProvider {

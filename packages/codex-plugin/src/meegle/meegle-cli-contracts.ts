@@ -59,6 +59,90 @@ export const meegleProjectSearchSchema = z.object({
   }).strict()),
 }).strict();
 
+export const meegleProjectSchema = meegleProjectSearchSchema.shape.projects.element;
+
+export const meegleWorkItemTypeSchema = z.object({
+  api_name: z.string().min(1).max(512),
+  enable_model_resource_lib: z.boolean(),
+  is_disable: z.number().int(),
+  name: z.string().min(1).max(512),
+  type_key: z.string().min(1).max(512),
+}).strict();
+
+export const meegleWorkItemTypeListSchema = z.object({
+  list: z.array(meegleWorkItemTypeSchema),
+}).strict();
+
+const meegleCreatedFieldSchema = z.discriminatedUnion("key", [
+  z.object({
+    key: z.literal("work_item_id"),
+    name: z.string().min(1).max(512),
+    value: z.object({ long_value: z.number().int().nonnegative() }).strict(),
+    value_type: z.literal("long_value"),
+  }).strict(),
+  z.object({
+    key: z.literal("name"),
+    name: z.string().min(1).max(512),
+    value: z.object({ string_value: z.string().min(1).max(16_384) }).strict(),
+    value_type: z.literal("string_value"),
+  }).strict(),
+  z.object({
+    key: z.literal("work_item_status"),
+    name: z.string().min(1).max(512),
+    value: z.object({
+      key_label_value_list: z.array(z.object({
+        key: z.string().min(1).max(512),
+        label: z.string().min(1).max(512),
+      }).strict()).length(1),
+    }).strict(),
+    value_type: z.literal("key_label_value_list"),
+  }).strict(),
+  z.object({
+    key: z.literal("finish_time"),
+    name: z.string().min(1).max(512),
+    value: z.object({ string_value: z.string().min(1).max(512) }).strict().nullable(),
+    value_type: z.literal("string_value"),
+  }).strict(),
+]);
+
+const meegleCreatedRowSchema = z.object({
+  moql_field_list: z.array(meegleCreatedFieldSchema).length(4),
+}).strict().superRefine((row, context) => {
+  const keys = new Set(row.moql_field_list.map((field) => field.key));
+  if (keys.size !== 4) context.addIssue({ code: "custom", message: "created fields must be unique" });
+});
+
+const meegleCreatedQueryCommon = {
+  extra_info: z.null(),
+  search_status_info: z.null(),
+  session_id: cliOpaqueTokenSchema,
+};
+
+const meegleCreatedWorkItemNonEmptySchema = z.object({
+  ...meegleCreatedQueryCommon,
+  data: z.object({
+    "1": z.array(meegleCreatedRowSchema).min(1).max(50),
+  }).strict(),
+  list: z.tuple([z.object({
+    count: z.number().int().positive(),
+    group_infos: z.tuple([z.object({
+      group_id: z.literal("1"),
+      group_name: z.string().min(1).max(512),
+    }).strict()]),
+  }).strict()]),
+}).strict();
+
+const meegleCreatedWorkItemEmptySchema = z.object({
+  ...meegleCreatedQueryCommon,
+  data: z.object({}).strict(),
+  list: z.null(),
+}).strict();
+
+export const meegleCreatedWorkItemQuerySchema = z.union([
+  meegleCreatedWorkItemNonEmptySchema,
+  meegleCreatedWorkItemEmptySchema,
+]);
+
 const meegleDetailUserSchema = z.object({
   email: z.string(),
   key: z.string().min(1),
@@ -124,4 +208,7 @@ export const meegleDevicePollSchema = z.union([
 export type MeegleAuthStatus = z.infer<typeof meegleAuthStatusSchema>;
 export type MeegleUser = z.infer<typeof meegleUserSchema>;
 export type MeegleMyWorkPage = z.infer<typeof meegleMyWorkPageSchema>;
+export type MeegleProject = z.infer<typeof meegleProjectSchema>;
+export type MeegleWorkItemType = z.infer<typeof meegleWorkItemTypeSchema>;
+export type MeegleCreatedWorkItemQuery = z.infer<typeof meegleCreatedWorkItemQuerySchema>;
 export type MeegleWorkItemDetail = z.infer<typeof meegleWorkItemDetailSchema>;

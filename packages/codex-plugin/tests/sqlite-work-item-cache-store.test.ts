@@ -240,6 +240,7 @@ describe("SQLite work item cache store", () => {
     const merged = await store.mergeScopes({
       account: account(), projects: [project("A")],
       scopes: [scope("A", "task", "task", [item("A-2")])],
+      authoritativeProjects: true,
       now: new Date("2026-08-10T13:00:00.000Z"),
     });
 
@@ -290,6 +291,32 @@ describe("SQLite work item cache store", () => {
       ]));
     expect((await store.loadActive("tapd", new Date("2026-08-17T12:00:00.001Z")))?.items)
       .toEqual([expect.objectContaining({ externalId: "story-new" })]);
+  });
+
+  it("prunes removed created types only after authoritative metadata discovery", async () => {
+    const { store } = await fixture();
+    await store.mergeScopes({
+      account: account(), projects: [project("A")], now,
+      scopes: [
+        scope("A", "created:old", "other", [item("old", "A", "custom", "other")]),
+        scope("A", "mywork:todo:task", "task", [item("mine")]),
+      ],
+    });
+
+    const preserved = await store.mergeScopes({
+      account: account(), projects: [project("A")], now: new Date("2026-08-10T13:00:00.000Z"),
+      scopes: [scope("A", "created:catalog", "other", [], "error")],
+    });
+    expect(preserved.items.map((value) => value.externalId).sort()).toEqual(["mine", "old"]);
+
+    const pruned = await store.mergeScopes({
+      account: account(), projects: [project("A")], now: new Date("2026-08-10T14:00:00.000Z"),
+      scopes: [scope("A", "created:new", "other", [])],
+      authoritativeScopePrefixes: [{ projectExternalId: "A", providerItemTypePrefix: "created:" }],
+    });
+    expect(pruned.scopes.map((value) => value.providerItemType).sort())
+      .toEqual(["created:new", "mywork:todo:task"]);
+    expect(pruned.items.map((value) => value.externalId)).toEqual(["mine"]);
   });
 
   it("rolls back a scope replacement when an item insert fails", async () => {

@@ -108,6 +108,16 @@ export class WorkItemService implements WorkItemSynchronizer {
           account: input.cacheAccount,
           projects,
           scopes,
+          ...(fresh.authoritativeProjects ? { authoritativeProjects: true } : {}),
+          ...(fresh.authoritativeProjectScopePrefixes
+            ? { authoritativeProjectScopePrefixes: fresh.authoritativeProjectScopePrefixes }
+            : {}),
+          ...(fresh.authoritativeProviderItemTypes
+            ? { authoritativeProviderItemTypes: fresh.authoritativeProviderItemTypes }
+            : {}),
+          ...(fresh.authoritativeScopePrefixes
+            ? { authoritativeScopePrefixes: fresh.authoritativeScopePrefixes }
+            : {}),
           now: attemptedAt,
         });
       } catch (error) {
@@ -137,7 +147,7 @@ export class WorkItemService implements WorkItemSynchronizer {
 
     return createSnapshot({
       source,
-      projects,
+      projects: source.projects,
       successfulProjects,
       failedProjects,
       lastSyncAttemptAt: attemptedAt.toISOString(),
@@ -211,6 +221,7 @@ export class WorkItemService implements WorkItemSynchronizer {
     return {
       projects,
       scopes,
+      authoritativeProjects: true,
       successfulProjects,
       failedProjects,
       failureCodes,
@@ -259,6 +270,16 @@ export class WorkItemService implements WorkItemSynchronizer {
     return {
       projects,
       scopes,
+      authoritativeProjects: result.authoritativeProjects ?? false,
+      ...(result.authoritativeProjectScopePrefixes
+        ? { authoritativeProjectScopePrefixes: result.authoritativeProjectScopePrefixes }
+        : {}),
+      ...(result.authoritativeProviderItemTypes
+        ? { authoritativeProviderItemTypes: result.authoritativeProviderItemTypes }
+        : {}),
+      ...(result.authoritativeScopePrefixes
+        ? { authoritativeScopePrefixes: result.authoritativeScopePrefixes }
+        : {}),
       successfulProjects: successfulProjectIds.size,
       failedProjects: failedProjectIds.size,
       failureCodes: failedScopes.map((scope) => scope.errorCode ?? "work_item_sync_failed"),
@@ -279,6 +300,13 @@ interface FreshSyncResult {
   failureCodes: WorkItemErrorCode[];
   retryAfterValues: number[];
   requiresUsableScope: boolean;
+  authoritativeProjects: boolean;
+  authoritativeProjectScopePrefixes?: string[];
+  authoritativeProviderItemTypes?: string[];
+  authoritativeScopePrefixes?: Array<{
+    projectExternalId: string;
+    providerItemTypePrefix: string;
+  }>;
 }
 
 function liveSnapshot(
@@ -324,7 +352,7 @@ function createSnapshot(
   now: Date,
 ): WorkItemSyncSnapshot {
   const cutoff = now.getTime() - 7 * 24 * 60 * 60 * 1000;
-  const items = input.source.items
+  const items = uniqueSnapshotItems(input.source.scopes)
     .filter((item) => item.stage !== "done"
       || Boolean(item.completedAt && new Date(item.completedAt).getTime() >= cutoff))
     .sort(compareItems);
@@ -367,6 +395,41 @@ function createSnapshot(
       ? { retryAfterSeconds: input.retryAfterSeconds }
       : {}),
   };
+}
+
+function uniqueSnapshotItems(scopes: CachedScope[]) {
+  const candidates = scopes.flatMap((scope) => scope.items.map((item) => ({ item, scope })))
+    .sort(compareSnapshotCandidates);
+  const winners = new Map<string, WorkItem>();
+  for (const { item } of candidates) {
+    if (!winners.has(item.key)) winners.set(item.key, item);
+  }
+  return [...winners.values()];
+}
+
+function compareSnapshotCandidates(
+  left: { item: WorkItem; scope: CachedScope },
+  right: { item: WorkItem; scope: CachedScope },
+) {
+  const freshness = freshnessPriority(left.scope.freshness)
+    - freshnessPriority(right.scope.freshness);
+  if (freshness !== 0) return freshness;
+  const source = scopeSourcePriority(left.scope.providerItemType)
+    - scopeSourcePriority(right.scope.providerItemType);
+  if (source !== 0) return source;
+  return left.scope.providerItemType.localeCompare(right.scope.providerItemType)
+    || left.item.key.localeCompare(right.item.key)
+    || left.item.title.localeCompare(right.item.title);
+}
+
+function freshnessPriority(freshness: WorkItem["freshness"]) {
+  return freshness === "fresh" ? 0 : 1;
+}
+
+function scopeSourcePriority(providerItemType: string) {
+  if (providerItemType.startsWith("mywork:")) return 0;
+  if (providerItemType.startsWith("created:")) return 1;
+  return 2;
 }
 
 function providerErrorCode(error: unknown): WorkItemErrorCode {

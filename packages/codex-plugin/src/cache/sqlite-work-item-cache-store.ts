@@ -80,10 +80,48 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
   async mergeScopes(input: CacheMergeInput): Promise<CachedSnapshot> {
     return this.writeTransaction("cache_write_failed", (database) => {
       const namespaceKey = this.activate(database, input.account);
-      this.pruneProjects(database, namespaceKey, input.projects);
+      if (input.authoritativeProjects) {
+        this.pruneProjects(database, namespaceKey, input.projects);
+      } else if (input.authoritativeProjectScopePrefixes?.length) {
+        this.pruneProjectScopes(
+          database,
+          namespaceKey,
+          input.projects,
+          input.authoritativeProjectScopePrefixes,
+        );
+      }
+      if (input.authoritativeProviderItemTypes?.length) {
+        this.pruneProviderItemTypes(
+          database,
+          namespaceKey,
+          input.scopes,
+          input.authoritativeProviderItemTypes,
+        );
+      }
       const projects = new Map(input.projects.map((project) => [project.externalId, project]));
       const freshScopeKeys = new Set<string>();
       let hasSuccess = false;
+
+      for (const authoritative of input.authoritativeScopePrefixes ?? []) {
+        const retainedTypes = new Set(input.scopes
+          .filter((scope) => scope.projectExternalId === authoritative.projectExternalId
+            && scope.providerItemType.startsWith(authoritative.providerItemTypePrefix))
+          .map((scope) => scope.providerItemType));
+        const rows = database.prepare(`
+          SELECT provider_item_type FROM cache_scopes
+          WHERE namespace_key = ? AND project_external_id = ?
+        `).all(namespaceKey, authoritative.projectExternalId) as unknown as Array<{
+          provider_item_type: string;
+        }>;
+        for (const row of rows) {
+          if (!row.provider_item_type.startsWith(authoritative.providerItemTypePrefix)
+            || retainedTypes.has(row.provider_item_type)) continue;
+          database.prepare(`
+            DELETE FROM cache_scopes
+            WHERE namespace_key = ? AND project_external_id = ? AND provider_item_type = ?
+          `).run(namespaceKey, authoritative.projectExternalId, row.provider_item_type);
+        }
+      }
 
       for (const scope of input.scopes) {
         if (scope.outcome !== "success") continue;
@@ -210,6 +248,75 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
       DELETE FROM cache_projects
       WHERE namespace_key = ? AND project_external_id NOT IN (${placeholders})
     `).run(namespaceKey, ...projects.map((project) => project.externalId));
+  }
+
+  private pruneProjectScopes(
+    database: DatabaseSync,
+    namespaceKey: string,
+    projects: ProjectRef[],
+    providerItemTypePrefixes: string[],
+  ) {
+    const availableProjectIds = new Set(projects.map((project) => project.externalId));
+    const rows = database.prepare(`
+      SELECT project_external_id, provider_item_type FROM cache_scopes
+      WHERE namespace_key = ?
+    `).all(namespaceKey) as unknown as Array<{
+      project_external_id: string;
+      provider_item_type: string;
+    }>;
+    for (const row of rows) {
+      if (availableProjectIds.has(row.project_external_id)
+        || !providerItemTypePrefixes.some((prefix) => row.provider_item_type.startsWith(prefix))) {
+        continue;
+      }
+      database.prepare(`
+        DELETE FROM cache_scopes
+        WHERE namespace_key = ? AND project_external_id = ? AND provider_item_type = ?
+      `).run(namespaceKey, row.project_external_id, row.provider_item_type);
+    }
+    this.deleteProjectsWithoutScopes(database, namespaceKey);
+  }
+
+  private pruneProviderItemTypes(
+    database: DatabaseSync,
+    namespaceKey: string,
+    scopes: CacheMergeInput["scopes"],
+    providerItemTypes: string[],
+  ) {
+    const authoritativeTypes = new Set(providerItemTypes);
+    const retainedScopeKeys = new Set(scopes
+      .filter((scope) => scope.outcome === "success"
+        && authoritativeTypes.has(scope.providerItemType))
+      .map((scope) => scopeKey(scope.projectExternalId, scope.providerItemType)));
+    const rows = database.prepare(`
+      SELECT project_external_id, provider_item_type FROM cache_scopes
+      WHERE namespace_key = ?
+    `).all(namespaceKey) as unknown as Array<{
+      project_external_id: string;
+      provider_item_type: string;
+    }>;
+    for (const row of rows) {
+      if (!authoritativeTypes.has(row.provider_item_type)
+        || retainedScopeKeys.has(scopeKey(row.project_external_id, row.provider_item_type))) {
+        continue;
+      }
+      database.prepare(`
+        DELETE FROM cache_scopes
+        WHERE namespace_key = ? AND project_external_id = ? AND provider_item_type = ?
+      `).run(namespaceKey, row.project_external_id, row.provider_item_type);
+    }
+    this.deleteProjectsWithoutScopes(database, namespaceKey);
+  }
+
+  private deleteProjectsWithoutScopes(database: DatabaseSync, namespaceKey: string) {
+    database.prepare(`
+      DELETE FROM cache_projects
+      WHERE namespace_key = ? AND NOT EXISTS (
+        SELECT 1 FROM cache_scopes
+        WHERE cache_scopes.namespace_key = cache_projects.namespace_key
+          AND cache_scopes.project_external_id = cache_projects.project_external_id
+      )
+    `).run(namespaceKey);
   }
 
   private purgeExpiredInDatabase(database: DatabaseSync, now: Date) {

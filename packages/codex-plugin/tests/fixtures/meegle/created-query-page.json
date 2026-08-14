@@ -1,0 +1,59 @@
+{
+  "data": {
+    "1": [
+      {
+        "moql_field_list": [
+          {
+            "key": "work_item_status",
+            "name": "Status",
+            "value": {
+              "key_label_value_list": [
+                {
+                  "key": "started",
+                  "label": "Started"
+                }
+              ]
+            },
+            "value_type": "key_label_value_list"
+          },
+          {
+            "key": "work_item_id",
+            "name": "Item ID",
+            "value": {
+              "long_value": 7000000001
+            },
+            "value_type": "long_value"
+          },
+          {
+            "key": "name",
+            "name": "Name",
+            "value": {
+              "string_value": "Synthetic created item"
+            },
+            "value_type": "string_value"
+          },
+          {
+            "key": "finish_time",
+            "name": "Completion time",
+            "value": null,
+            "value_type": "string_value"
+          }
+        ]
+      }
+    ]
+  },
+  "extra_info": null,
+  "list": [
+    {
+      "count": 1,
+      "group_infos": [
+        {
+          "group_id": "1",
+          "group_name": "Synthetic group"
+        }
+      ]
+    }
+  ],
+  "search_status_info": null,
+  "session_id": "synthetic-session-1"
+}

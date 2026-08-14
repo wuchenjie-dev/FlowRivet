@@ -23,6 +23,13 @@ export interface CacheMergeInput {
   account: CacheAccount;
   projects: ProjectRef[];
   scopes: CacheScopeInput[];
+  authoritativeProjects?: boolean;
+  authoritativeProjectScopePrefixes?: string[];
+  authoritativeProviderItemTypes?: string[];
+  authoritativeScopePrefixes?: Array<{
+    projectExternalId: string;
+    providerItemTypePrefix: string;
+  }>;
   now: Date;
 }
 

@@ -11,13 +11,18 @@ import {
   meegleAuthStatusSchema,
   meegleDeviceInitSchema,
   meegleDevicePollSchema,
+  meegleCreatedWorkItemQuerySchema,
   meegleMyWorkPageSchema,
   meegleProjectSearchSchema,
+  meegleWorkItemTypeListSchema,
   meegleWorkItemDetailSchema,
   meegleUserSchema,
   type MeegleAuthStatus,
   type MeegleMyWorkPage,
+  type MeegleProject,
   type MeegleUser,
+  type MeegleWorkItemType,
+  type MeegleCreatedWorkItemQuery,
   type MeegleWorkItemDetail,
 } from "./meegle-cli-contracts.js";
 import {
@@ -170,6 +175,63 @@ export class MeegleCliClient {
       "--format", "json",
     ], meegleProjectSearchSchema, { timeoutMs: 30_000 });
     return result.projects.find((project) => project.project_key === projectKey)?.simple_name;
+  }
+
+  async listRecentProjects(profile: string): Promise<MeegleProject[]> {
+    const projects: MeegleProject[] = [];
+    let reportedTotal: number | undefined;
+    for (let pageNum = 1; pageNum <= 50; pageNum += 1) {
+      const page = await this.runJson([
+        "project", "search",
+        "--page-num", String(pageNum),
+        "--profile", validateProfile(profile),
+        "--format", "json",
+      ], meegleProjectSearchSchema, { timeoutMs: 30_000 });
+      if (page.pagination.page_num !== pageNum || page.pagination.page_size !== 50) {
+        throw new MeegleCliError("provider_invalid_response");
+      }
+      if (reportedTotal !== undefined && page.pagination.total !== reportedTotal) {
+        throw new MeegleCliError("provider_invalid_response");
+      }
+      reportedTotal = page.pagination.total;
+      if (projects.length + page.projects.length > reportedTotal
+        || (page.pagination.has_more && page.projects.length !== 50)) {
+        throw new MeegleCliError("provider_invalid_response");
+      }
+      projects.push(...page.projects);
+      if (!page.pagination.has_more) {
+        if (projects.length !== reportedTotal) throw new MeegleCliError("provider_invalid_response");
+        return projects;
+      }
+    }
+    throw new MeegleCliError("provider_invalid_response");
+  }
+
+  async listWorkItemTypes(profile: string, projectKey: string): Promise<MeegleWorkItemType[]> {
+    const result = await this.runJson([
+      "workitem", "meta-types",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--profile", validateProfile(profile),
+      "--format", "json",
+    ], meegleWorkItemTypeListSchema, { timeoutMs: 30_000 });
+    return result.list;
+  }
+
+  async queryCreatedWorkItems(
+    profile: string,
+    project: MeegleProject,
+    workItemType: MeegleWorkItemType,
+  ): Promise<MeegleCreatedWorkItemQuery> {
+    const mql = "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间`"
+      + ` FROM \`${validateMqlIdentifier(project.name)}\`.\`${validateMqlIdentifier(workItemType.name)}\``
+      + " WHERE `·创建者` = current_login_user()";
+    return this.runJson([
+      "workitem", "query",
+      "--project-key", validateOpaqueKey(project.project_key),
+      "--mql", mql,
+      "--profile", validateProfile(profile),
+      "--format", "json",
+    ], meegleCreatedWorkItemQuerySchema, { timeoutMs: 30_000 });
   }
 
   async getWorkItem(
@@ -461,6 +523,13 @@ function validatePageNum(pageNum: number) {
 function validateContent(content: string) {
   if (content.includes("\0")) throw new MeegleCliError("provider_invalid_response");
   return content;
+}
+
+function validateMqlIdentifier(value: string) {
+  if (!value || value.length > 512 || value.includes("`") || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new MeegleCliError("provider_invalid_response");
+  }
+  return value;
 }
 
 function isSafeProfile(profile: string) {

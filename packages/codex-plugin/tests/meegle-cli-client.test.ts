@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 
 import {
   CommandRunnerError,
@@ -27,6 +28,149 @@ function client(
 }
 
 describe("Meegle CLI client", () => {
+  it("parses the observed redacted recent-project response", async () => {
+    const runner = new FakeRunner();
+    const fixture = await readFile(new URL("./fixtures/meegle/project-search-page.json", import.meta.url), "utf8");
+    runner.run.mockResolvedValue({ stdout: fixture, exitCode: 0 });
+
+    await expect(client(runner).listRecentProjects("default")).resolves.toEqual([{
+      name: "Redacted Project",
+      project_key: "REDACTED_PROJECT_KEY",
+      simple_name: "redacted-project",
+    }]);
+  });
+
+  it("fully paginates the recent-project catalog with the verified 50-item boundary", async () => {
+    const runner = new FakeRunner();
+    const projects = Array.from({ length: 50 }, (_, index) => ({
+      name: `Project ${index + 1}`,
+      project_key: `PROJ${index + 1}`,
+      simple_name: `project-${index + 1}`,
+    }));
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          pagination: { has_more: true, page_num: 1, page_size: 50, total: 51 },
+          projects,
+        }), exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          pagination: { has_more: false, page_num: 2, page_size: 50, total: 51 },
+          projects: [{ name: "Last", project_key: "LAST", simple_name: "last" }],
+        }), exitCode: 0,
+      });
+
+    await expect(client(runner).listRecentProjects("default"))
+      .resolves.toHaveLength(51);
+    expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
+      ["project", "search", "--page-num", "1", "--profile", "default", "--format", "json"],
+      ["project", "search", "--page-num", "2", "--profile", "default", "--format", "json"],
+    ]);
+  });
+
+  it("parses work item types and the observed moql_field_list query response", async () => {
+    const runner = new FakeRunner();
+    const queryFixture = await readFile(new URL("./fixtures/meegle/created-query-page.json", import.meta.url), "utf8");
+    const typeFixture = await readFile(new URL("./fixtures/meegle/meta-types.json", import.meta.url), "utf8");
+    runner.run
+      .mockResolvedValueOnce({ stdout: typeFixture, exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: queryFixture, exitCode: 0 });
+    const meegle = client(runner);
+    const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
+    const type = { api_name: "redacted_type", enable_model_resource_lib: false, is_disable: 2, name: "Redacted Type", type_key: "REDACTED_TYPE_KEY" };
+
+    await expect(meegle.listWorkItemTypes("default", "PROJ")).resolves.toEqual([type]);
+    const page = await meegle.queryCreatedWorkItems("default", project, type);
+
+    expect(page.data["1"]?.[0]?.moql_field_list).toHaveLength(4);
+    expect(runner.run.mock.calls[1]![0].args).toEqual([
+      "workitem", "query", "--project-key", "PROJ",
+      "--mql", "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Redacted Type` WHERE `·创建者` = current_login_user()",
+      "--profile", "default", "--format", "json",
+    ]);
+  });
+
+  it("parses the observed strict no-match created-items response", async () => {
+    const runner = new FakeRunner();
+    const emptyFixture = await readFile(new URL("./fixtures/meegle/created-query-empty.json", import.meta.url), "utf8");
+    runner.run.mockResolvedValue({ stdout: emptyFixture, exitCode: 0 });
+    const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
+    const type = { api_name: "solution", enable_model_resource_lib: false, is_disable: 2, name: "Solution", type_key: "solution-key" };
+
+    await expect(client(runner).queryCreatedWorkItems("default", project, type))
+      .resolves.toMatchObject({ data: {}, list: null });
+  });
+
+  it.each([
+    {
+      data: {},
+      list: [{ count: 0, group_infos: [{ group_id: "1", group_name: "Group" }] }],
+    },
+    {
+      data: { "1": [] },
+      list: null,
+    },
+  ])("rejects inconsistent empty created-items response variants", async ({ data, list }) => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        data, extra_info: null, list, search_status_info: null, session_id: "session-1",
+      }),
+      exitCode: 0,
+    });
+    const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
+    const type = { api_name: "solution", enable_model_resource_lib: false, is_disable: 2, name: "Solution", type_key: "solution-key" };
+
+    await expect(client(runner).queryCreatedWorkItems("default", project, type))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it("rejects unsafe authoritative MQL identifiers before invoking the runner", async () => {
+    const runner = new FakeRunner();
+    const project = { name: "Project` UNION", project_key: "PROJ", simple_name: "project" };
+    const type = { api_name: "story", enable_model_resource_lib: false, is_disable: 2, name: "Story", type_key: "story" };
+
+    await expect(client(runner).queryCreatedWorkItems("default", project, type))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on inconsistent recent-project pagination and catalog limits", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        pagination: { has_more: true, page_num: 1, page_size: 50, total: 51 },
+        projects: [],
+      }), exitCode: 0,
+    });
+
+    await expect(client(runner).listRecentProjects("default"))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it("rejects a recent-project total that changes between pages", async () => {
+    const runner = new FakeRunner();
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      name: `Project ${index}`, project_key: `PROJ${index}`, simple_name: `project-${index}`,
+    }));
+    runner.run
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          pagination: { has_more: true, page_num: 1, page_size: 50, total: 100 },
+          projects: firstPage,
+        }), exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          pagination: { has_more: false, page_num: 2, page_size: 50, total: 51 },
+          projects: [{ name: "Last", project_key: "LAST", simple_name: "last" }],
+        }), exitCode: 0,
+      });
+
+    await expect(client(runner).listRecentProjects("default"))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
   it("validates the minimum version and parses the bounded text profile", async () => {
     const runner = new FakeRunner();
     runner.run
