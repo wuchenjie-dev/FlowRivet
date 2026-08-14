@@ -73,7 +73,40 @@ export const meegleWorkItemTypeListSchema = z.object({
   list: z.array(meegleWorkItemTypeSchema),
 }).strict();
 
-const meegleCreatedFieldSchema = z.discriminatedUnion("key", [
+const meegleCreatedBaseFieldSchema = z.discriminatedUnion("key", [
+  z.object({
+    key: z.literal("work_item_id"),
+    name: z.string().min(1).max(512),
+    value: z.object({ long_value: z.number().int().nonnegative() }).strict(),
+    value_type: z.literal("long_value"),
+  }).strict(),
+  z.object({
+    key: z.literal("name"),
+    name: z.string().min(1).max(512),
+    value: z.object({ string_value: z.string().min(1).max(16_384) }).strict(),
+    value_type: z.literal("string_value"),
+  }).strict(),
+  z.object({
+    key: z.literal("work_item_status"),
+    name: z.string().min(1).max(512),
+    value: z.object({
+      key_label_value_list: z.array(z.object({
+        key: z.string().min(1).max(512),
+        label: z.string().min(1).max(512),
+      }).strict()).length(1),
+    }).strict(),
+    value_type: z.literal("key_label_value_list"),
+  }).strict(),
+]);
+
+const meegleCreatedBaseRowSchema = z.object({
+  moql_field_list: z.array(meegleCreatedBaseFieldSchema).length(3),
+}).strict().superRefine((row, context) => {
+  const keys = new Set(row.moql_field_list.map((field) => field.key));
+  if (keys.size !== 3) context.addIssue({ code: "custom", message: "created base fields must be unique" });
+});
+
+const meegleCreatedCompletionFieldSchema = z.discriminatedUnion("key", [
   z.object({
     key: z.literal("work_item_id"),
     name: z.string().min(1).max(512),
@@ -105,11 +138,11 @@ const meegleCreatedFieldSchema = z.discriminatedUnion("key", [
   }).strict(),
 ]);
 
-const meegleCreatedRowSchema = z.object({
-  moql_field_list: z.array(meegleCreatedFieldSchema).length(4),
+const meegleCreatedCompletionRowSchema = z.object({
+  moql_field_list: z.array(meegleCreatedCompletionFieldSchema).length(4),
 }).strict().superRefine((row, context) => {
   const keys = new Set(row.moql_field_list.map((field) => field.key));
-  if (keys.size !== 4) context.addIssue({ code: "custom", message: "created fields must be unique" });
+  if (keys.size !== 4) context.addIssue({ code: "custom", message: "created completion fields must be unique" });
 });
 
 const meegleCreatedQueryCommon = {
@@ -118,30 +151,32 @@ const meegleCreatedQueryCommon = {
   session_id: cliOpaqueTokenSchema,
 };
 
-const meegleCreatedWorkItemNonEmptySchema = z.object({
-  ...meegleCreatedQueryCommon,
-  data: z.object({
-    "1": z.array(meegleCreatedRowSchema).min(1).max(50),
-  }).strict(),
-  list: z.tuple([z.object({
-    count: z.number().int().positive(),
-    group_infos: z.tuple([z.object({
-      group_id: z.literal("1"),
-      group_name: z.string().min(1).max(512),
-    }).strict()]),
-  }).strict()]),
-}).strict();
-
 const meegleCreatedWorkItemEmptySchema = z.object({
   ...meegleCreatedQueryCommon,
   data: z.object({}).strict(),
   list: z.null(),
 }).strict();
 
-export const meegleCreatedWorkItemQuerySchema = z.union([
-  meegleCreatedWorkItemNonEmptySchema,
-  meegleCreatedWorkItemEmptySchema,
-]);
+function createdQuerySchema<Row extends z.ZodType>(rowSchema: Row) {
+  const nonEmptySchema = z.object({
+    ...meegleCreatedQueryCommon,
+    data: z.object({
+      "1": z.array(rowSchema).min(1).max(50),
+    }).strict(),
+    list: z.tuple([z.object({
+      count: z.number().int().positive(),
+      group_infos: z.tuple([z.object({
+        group_id: z.literal("1"),
+        group_name: z.string().min(1).max(512),
+      }).strict()]),
+    }).strict()]),
+  }).strict();
+  return z.union([nonEmptySchema, meegleCreatedWorkItemEmptySchema]);
+}
+
+export const meegleCreatedBaseQuerySchema = createdQuerySchema(meegleCreatedBaseRowSchema);
+export const meegleCreatedCompletionQuerySchema = createdQuerySchema(meegleCreatedCompletionRowSchema);
+export const meegleCreatedWorkItemQuerySchema = meegleCreatedCompletionQuerySchema;
 
 const meegleDetailUserSchema = z.object({
   email: z.string(),
@@ -210,5 +245,7 @@ export type MeegleUser = z.infer<typeof meegleUserSchema>;
 export type MeegleMyWorkPage = z.infer<typeof meegleMyWorkPageSchema>;
 export type MeegleProject = z.infer<typeof meegleProjectSchema>;
 export type MeegleWorkItemType = z.infer<typeof meegleWorkItemTypeSchema>;
+export type MeegleCreatedBaseQuery = z.infer<typeof meegleCreatedBaseQuerySchema>;
+export type MeegleCreatedCompletionQuery = z.infer<typeof meegleCreatedCompletionQuerySchema>;
 export type MeegleCreatedWorkItemQuery = z.infer<typeof meegleCreatedWorkItemQuerySchema>;
 export type MeegleWorkItemDetail = z.infer<typeof meegleWorkItemDetailSchema>;

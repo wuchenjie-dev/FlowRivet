@@ -11,6 +11,7 @@ import {
   MeegleCliError,
   type MeegleCommandRunner,
 } from "../src/meegle/meegle-cli-client.js";
+import { meegleCreatedBaseQuerySchema } from "../src/meegle/meegle-cli-contracts.js";
 
 class FakeRunner implements MeegleCommandRunner {
   readonly run = vi.fn<(input: CommandRunInput) => Promise<CommandRunResult>>();
@@ -28,6 +29,18 @@ function client(
 }
 
 describe("Meegle CLI client", () => {
+  it("parses strict created-base page and empty fixtures", async () => {
+    const pageFixture = JSON.parse(await readFile(
+      new URL("./fixtures/meegle/created-base-query-page.json", import.meta.url), "utf8",
+    )) as unknown;
+    const emptyFixture = JSON.parse(await readFile(
+      new URL("./fixtures/meegle/created-base-query-empty.json", import.meta.url), "utf8",
+    )) as unknown;
+
+    expect(meegleCreatedBaseQuerySchema.parse(pageFixture).data["1"]).toHaveLength(1);
+    expect(meegleCreatedBaseQuerySchema.parse(emptyFixture).list).toBeNull();
+  });
+
   it("parses the observed redacted recent-project response", async () => {
     const runner = new FakeRunner();
     const fixture = await readFile(new URL("./fixtures/meegle/project-search-page.json", import.meta.url), "utf8");
@@ -69,9 +82,9 @@ describe("Meegle CLI client", () => {
     ]);
   });
 
-  it("parses work item types and the observed moql_field_list query response", async () => {
+  it("parses strict three-field created-base rows and uses base query argv", async () => {
     const runner = new FakeRunner();
-    const queryFixture = await readFile(new URL("./fixtures/meegle/created-query-page.json", import.meta.url), "utf8");
+    const queryFixture = await readFile(new URL("./fixtures/meegle/created-base-query-page.json", import.meta.url), "utf8");
     const typeFixture = await readFile(new URL("./fixtures/meegle/meta-types.json", import.meta.url), "utf8");
     runner.run
       .mockResolvedValueOnce({ stdout: typeFixture, exitCode: 0 })
@@ -81,25 +94,74 @@ describe("Meegle CLI client", () => {
     const type = { api_name: "redacted_type", enable_model_resource_lib: false, is_disable: 2, name: "Redacted Type", type_key: "REDACTED_TYPE_KEY" };
 
     await expect(meegle.listWorkItemTypes("default", "PROJ")).resolves.toEqual([type]);
-    const page = await meegle.queryCreatedWorkItems("default", project, type);
+    const page = await meegle.queryCreatedBaseWorkItems("default", project, type);
 
-    expect(page.data["1"]?.[0]?.moql_field_list).toHaveLength(4);
+    expect(page.data["1"]?.[0]?.moql_field_list).toHaveLength(3);
     expect(runner.run.mock.calls[1]![0].args).toEqual([
       "workitem", "query", "--project-key", "PROJ",
-      "--mql", "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Redacted Type` WHERE `·创建者` = current_login_user()",
+      "--mql", "SELECT `work_item_id`, `name`, `work_item_status` FROM `Project`.`Redacted Type` WHERE `·创建者` = current_login_user()",
       "--profile", "default", "--format", "json",
     ]);
   });
 
-  it("parses the observed strict no-match created-items response", async () => {
+  it("accepts the observed strict no-match created-base response", async () => {
     const runner = new FakeRunner();
-    const emptyFixture = await readFile(new URL("./fixtures/meegle/created-query-empty.json", import.meta.url), "utf8");
+    const emptyFixture = await readFile(new URL("./fixtures/meegle/created-base-query-empty.json", import.meta.url), "utf8");
     runner.run.mockResolvedValue({ stdout: emptyFixture, exitCode: 0 });
     const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
     const type = { api_name: "solution", enable_model_resource_lib: false, is_disable: 2, name: "Solution", type_key: "solution-key" };
 
-    await expect(client(runner).queryCreatedWorkItems("default", project, type))
+    await expect(client(runner).queryCreatedBaseWorkItems("default", project, type))
       .resolves.toMatchObject({ data: {}, list: null });
+  });
+
+  it("uses a separate four-field completion-enrichment query argv", async () => {
+    const runner = new FakeRunner();
+    const queryFixture = await readFile(new URL("./fixtures/meegle/created-query-page.json", import.meta.url), "utf8");
+    runner.run.mockResolvedValue({ stdout: queryFixture, exitCode: 0 });
+    const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
+    const type = { api_name: "solution", enable_model_resource_lib: false, is_disable: 2, name: "Solution", type_key: "solution-key" };
+
+    const page = await client(runner).queryCreatedCompletionWorkItems("default", project, type);
+
+    expect(page.data["1"]?.[0]?.moql_field_list).toHaveLength(4);
+    expect(runner.run.mock.calls[0]![0].args).toEqual([
+      "workitem", "query", "--project-key", "PROJ",
+      "--mql", "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Solution` WHERE `·创建者` = current_login_user()",
+      "--profile", "default", "--format", "json",
+    ]);
+  });
+
+  it("rejects malformed strict three-field created-base rows", async () => {
+    const fixture = JSON.parse(await readFile(
+      new URL("./fixtures/meegle/created-base-query-page.json", import.meta.url), "utf8",
+    )) as { data: { "1": Array<{ moql_field_list: Array<Record<string, unknown>> }> } };
+    const row = fixture.data["1"][0]!;
+    const [status, id, name] = row.moql_field_list;
+    const invalidRows = [
+      { moql_field_list: [status, id] },
+      { moql_field_list: [status, id, id] },
+      { moql_field_list: [status, id, { ...name, key: "unknown_field" }] },
+      { moql_field_list: [status, id, { ...name, unexpected: true }] },
+    ];
+
+    for (const invalidRow of invalidRows) {
+      expect(() => meegleCreatedBaseQuerySchema.parse({
+        ...fixture,
+        data: { "1": [invalidRow] },
+      })).toThrow();
+    }
+  });
+
+  it("rejects created-base responses over the verified 50-row boundary", async () => {
+    const fixture = JSON.parse(await readFile(
+      new URL("./fixtures/meegle/created-base-query-page.json", import.meta.url), "utf8",
+    )) as { data: { "1": unknown[] } };
+
+    expect(() => meegleCreatedBaseQuerySchema.parse({
+      ...fixture,
+      data: { "1": Array.from({ length: 51 }, () => fixture.data["1"][0]) },
+    })).toThrow();
   });
 
   it.each([
@@ -111,7 +173,7 @@ describe("Meegle CLI client", () => {
       data: { "1": [] },
       list: null,
     },
-  ])("rejects inconsistent empty created-items response variants", async ({ data, list }) => {
+  ])("rejects inconsistent empty created-base response variants", async ({ data, list }) => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({
       stdout: JSON.stringify({
@@ -122,7 +184,7 @@ describe("Meegle CLI client", () => {
     const project = { name: "Project", project_key: "PROJ", simple_name: "project" };
     const type = { api_name: "solution", enable_model_resource_lib: false, is_disable: 2, name: "Solution", type_key: "solution-key" };
 
-    await expect(client(runner).queryCreatedWorkItems("default", project, type))
+    await expect(client(runner).queryCreatedBaseWorkItems("default", project, type))
       .rejects.toMatchObject({ code: "provider_invalid_response" });
   });
 
@@ -131,7 +193,7 @@ describe("Meegle CLI client", () => {
     const project = { name: "Project` UNION", project_key: "PROJ", simple_name: "project" };
     const type = { api_name: "story", enable_model_resource_lib: false, is_disable: 2, name: "Story", type_key: "story" };
 
-    await expect(client(runner).queryCreatedWorkItems("default", project, type))
+    await expect(client(runner).queryCreatedBaseWorkItems("default", project, type))
       .rejects.toMatchObject({ code: "provider_invalid_response" });
     expect(runner.run).not.toHaveBeenCalled();
   });

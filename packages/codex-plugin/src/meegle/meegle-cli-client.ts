@@ -11,7 +11,8 @@ import {
   meegleAuthStatusSchema,
   meegleDeviceInitSchema,
   meegleDevicePollSchema,
-  meegleCreatedWorkItemQuerySchema,
+  meegleCreatedBaseQuerySchema,
+  meegleCreatedCompletionQuerySchema,
   meegleMyWorkPageSchema,
   meegleProjectSearchSchema,
   meegleWorkItemTypeListSchema,
@@ -22,6 +23,8 @@ import {
   type MeegleProject,
   type MeegleUser,
   type MeegleWorkItemType,
+  type MeegleCreatedBaseQuery,
+  type MeegleCreatedCompletionQuery,
   type MeegleCreatedWorkItemQuery,
   type MeegleWorkItemDetail,
 } from "./meegle-cli-contracts.js";
@@ -217,11 +220,28 @@ export class MeegleCliClient {
     return result.list;
   }
 
-  async queryCreatedWorkItems(
+  async queryCreatedBaseWorkItems(
     profile: string,
     project: MeegleProject,
     workItemType: MeegleWorkItemType,
-  ): Promise<MeegleCreatedWorkItemQuery> {
+  ): Promise<MeegleCreatedBaseQuery> {
+    const mql = "SELECT `work_item_id`, `name`, `work_item_status`"
+      + ` FROM \`${validateMqlIdentifier(project.name)}\`.\`${validateMqlIdentifier(workItemType.name)}\``
+      + " WHERE `·创建者` = current_login_user()";
+    return this.runJson([
+      "workitem", "query",
+      "--project-key", validateOpaqueKey(project.project_key),
+      "--mql", mql,
+      "--profile", validateProfile(profile),
+      "--format", "json",
+    ], meegleCreatedBaseQuerySchema, { timeoutMs: 30_000 });
+  }
+
+  async queryCreatedCompletionWorkItems(
+    profile: string,
+    project: MeegleProject,
+    workItemType: MeegleWorkItemType,
+  ): Promise<MeegleCreatedCompletionQuery> {
     const mql = "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间`"
       + ` FROM \`${validateMqlIdentifier(project.name)}\`.\`${validateMqlIdentifier(workItemType.name)}\``
       + " WHERE `·创建者` = current_login_user()";
@@ -231,7 +251,15 @@ export class MeegleCliClient {
       "--mql", mql,
       "--profile", validateProfile(profile),
       "--format", "json",
-    ], meegleCreatedWorkItemQuerySchema, { timeoutMs: 30_000 });
+    ], meegleCreatedCompletionQuerySchema, { timeoutMs: 30_000 });
+  }
+
+  async queryCreatedWorkItems(
+    profile: string,
+    project: MeegleProject,
+    workItemType: MeegleWorkItemType,
+  ): Promise<MeegleCreatedWorkItemQuery> {
+    return this.queryCreatedCompletionWorkItems(profile, project, workItemType);
   }
 
   async getWorkItem(

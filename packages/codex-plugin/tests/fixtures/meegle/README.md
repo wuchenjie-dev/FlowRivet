@@ -1,9 +1,13 @@
 # Meegle created-item fixtures
 
+`created-base-query-page.json` is a synthetic, redacted fixture matching the
+three-field base query response. `created-base-query-empty.json` captures the
+observed valid no-match envelope with `data: {}` and `list: null`.
+
 `created-query-page.json` is a synthetic, redacted fixture matching the observed
-first-page `moql_field_list` response shape. It proves only the initial page
-contract. Created-item session pagination stays disabled until a real response
-with more than 50 results has been captured and redacted.
+four-field completion-enrichment response shape. It proves only the initial
+page contract. Created-item session pagination stays disabled until a real
+response with more than 50 results has been captured and redacted.
 
 `created-query-empty.json` is a redacted fixture of an observed no-match
 response. The empty response has `data: {}` and `list: null`; it is distinct
