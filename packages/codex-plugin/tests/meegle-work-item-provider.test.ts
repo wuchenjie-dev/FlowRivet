@@ -1552,6 +1552,7 @@ describe("Meegle work item provider", () => {
     expect(events[0]).toMatchObject({ batchCompleted: false, mode: "automatic" });
     expect(events[0]?.attemptedIdentityHashes.length).toBeGreaterThan(0);
     expect(events[0]?.attemptedIdentityHashes.length).toBeLessThanOrEqual(4);
+    expect(events[0]?.scannedTypeCount).toBe(events[0]?.attemptedIdentityHashes.length);
 
     client.queryCreatedBaseWorkItems.mockReset();
     client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
@@ -1590,6 +1591,9 @@ describe("Meegle work item provider", () => {
     })).rejects.toMatchObject({ code: "provider_cancelled" });
     expect(events).toHaveLength(1);
     expect(events[0]?.batchCompleted).toBe(false);
+    expect(events[0]?.attemptedIdentityHashes.length).toBeGreaterThan(0);
+    expect(events[0]?.attemptedIdentityHashes.length).toBeLessThanOrEqual(4);
+    expect(events[0]?.scannedTypeCount).toBe(events[0]?.attemptedIdentityHashes.length);
 
     cancelCompletion = false;
     client.queryCreatedBaseWorkItems.mockClear();
@@ -1605,6 +1609,7 @@ describe("Meegle work item provider", () => {
     "propagates created %s cancellation instead of reporting an available or partial batch",
     async (path) => {
       const client = new FakeClient();
+      const events: CreatedSyncDiagnosticEvent[] = [];
       client.getMyWorkPage.mockImplementation(pages({}));
       if (path === "project-catalog") {
         client.listRecentProjects.mockRejectedValue(new MeegleCliError("provider_cancelled"));
@@ -1613,12 +1618,60 @@ describe("Meegle work item provider", () => {
         client.listWorkItemTypes.mockRejectedValue(new MeegleCliError("provider_cancelled"));
       }
 
-      await expect(new MeegleWorkItemProvider({ client, clock: () => now })
+      await expect(new MeegleWorkItemProvider({
+        client,
+        clock: () => now,
+        diagnosticLogger: { completed: (event) => events.push(event) },
+      })
         .listAccountWorkItems({ accountDisplayName: "Example User", refreshMode: "automatic" }))
         .rejects.toMatchObject({ code: "provider_cancelled" });
       expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+      expect(events).toEqual([expect.objectContaining({
+        mode: "automatic",
+        catalog: "unavailable",
+        totalTypeCount: 0,
+        scannedTypeCount: 0,
+        attemptedIdentityHashes: [],
+        batchCompleted: false,
+      })]);
     },
   );
+
+  it("logs partial directory coverage when metadata cancellation follows a successful directory", async () => {
+    const client = new FakeClient();
+    const events: CreatedSyncDiagnosticEvent[] = [];
+    const projectA = { ...createdProject, project_key: "A", name: "Project A" };
+    const projectB = { ...createdProject, project_key: "B", name: "Project B" };
+    const knownTypes = [
+      { ...createdType, type_key: "known-a", name: "Known A" },
+      { ...createdType, type_key: "known-b", name: "Known B" },
+    ];
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([projectA, projectB]);
+    client.listWorkItemTypes.mockImplementation(async (_profile, projectKey) => {
+      if (projectKey === "A") return knownTypes;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      throw new MeegleCliError("provider_cancelled");
+    });
+
+    await expect(new MeegleWorkItemProvider({
+      client,
+      clock: () => now,
+      diagnosticLogger: { completed: (event) => events.push(event) },
+    }).listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    })).rejects.toMatchObject({ code: "provider_cancelled" });
+
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    expect(events).toEqual([expect.objectContaining({
+      mode: "automatic",
+      catalog: "partial",
+      totalTypeCount: knownTypes.length,
+      scannedTypeCount: 0,
+      attemptedIdentityHashes: [],
+      batchCompleted: false,
+    })]);
+  });
 
   it.each(["Incomplete", "Not Completed"])(
     "keeps non-terminal created status %s active without completion enrichment",

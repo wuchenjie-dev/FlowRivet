@@ -84,6 +84,15 @@ interface CreatedDirectory {
   projects: Array<{ project: MeegleProject; workItemTypes: MeegleWorkItemType[] }>;
   errors: CreatedResult[];
 }
+class CreatedDirectoryCancelledError extends Error {
+  constructor(
+    readonly cancellation: MeegleCliError,
+    readonly directory: CreatedDirectory,
+  ) {
+    super(cancellation.message);
+    this.name = "CreatedDirectoryCancelledError";
+  }
+}
 interface CreatedFetchResult {
   authoritativeProjectScopePrefixes: string[];
   discoveredProjects: MeegleProject[];
@@ -155,13 +164,14 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     const mode = input.refreshMode ?? "manual";
     let created: CreatedFetchResult | undefined;
     let diagnostic: Omit<CreatedSyncDiagnosticEvent, "batchCompleted"> | undefined;
+    const beginDiagnostic = (event: Omit<CreatedSyncDiagnosticEvent, "batchCompleted">) => {
+      diagnostic ??= event;
+    };
     let batchCompleted = false;
     try {
       const fetched = await Promise.all([
         this.fetchActions(profile),
-        this.fetchCreated(profile, before.user_key, mode, (event) => {
-          diagnostic = event;
-        }),
+        this.fetchCreated(profile, before.user_key, mode, beginDiagnostic),
       ]);
       const results = fetched[0];
       created = fetched[1];
@@ -252,7 +262,28 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     try {
       directory = await this.getCreatedDirectory(profile, userKey);
     } catch (error) {
-      if (isProviderCancelled(error)) throw error;
+      if (error instanceof CreatedDirectoryCancelledError) {
+        const successfulProjectCount = error.directory.projects.length;
+        const totalTypeCount = countDirectoryTypes(error.directory.projects);
+        onDiagnostic({
+          mode,
+          catalog: successfulProjectCount > 0 ? "partial" : "unavailable",
+          totalTypeCount,
+          scannedTypeCount: 0,
+          attemptedIdentityHashes: [],
+        });
+        throw error.cancellation;
+      }
+      if (isProviderCancelled(error)) {
+        onDiagnostic({
+          mode,
+          catalog: "unavailable",
+          totalTypeCount: 0,
+          scannedTypeCount: 0,
+          attemptedIdentityHashes: [],
+        });
+        throw error;
+      }
       const diagnostic = {
         mode,
         catalog: "unavailable" as const,
@@ -318,10 +349,13 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       while (!cancellation && nextIndex < requests.length) {
         const request = requests[nextIndex++];
         if (!request) return;
-        attemptedIdentityHashes.push(createdSyncIdentityHash(
+        const identityHash = createdSyncIdentityHash(
           request.project.project_key,
           request.workItemType.type_key,
-        ));
+        );
+        if (!attemptedIdentityHashes.includes(identityHash)) {
+          attemptedIdentityHashes.push(identityHash);
+        }
         try {
           const items = await this.fetchCreatedType(
             profile, request.project, request.workItemType, reserveCreatedCount,
@@ -346,6 +380,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       { length: Math.min(createdConcurrency, Math.max(1, requests.length)) },
       () => worker(),
     ));
+    diagnostic.scannedTypeCount = attemptedIdentityHashes.length;
     if (cancellation) throw cancellation;
 
     const coverage: CreatedSyncCoverage = available
@@ -441,7 +476,13 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       { length: Math.min(createdConcurrency, Math.max(1, recentProjects.length)) },
       () => worker(),
     ));
-    if (cancellation) throw cancellation;
+    if (cancellation) {
+      throw new CreatedDirectoryCancelledError(cancellation, {
+        discoveredProjects: recentProjects,
+        projects,
+        errors,
+      });
+    }
     const order = new Map(recentProjects.map((project, index) => [project.project_key, index]));
     projects.sort((left, right) =>
       (order.get(left.project.project_key) ?? 0) - (order.get(right.project.project_key) ?? 0));
@@ -783,6 +824,11 @@ function sameCreatedIds(left: CreatedItemData[], right: CreatedItemData[]) {
 
 function createdScopeKey(project: MeegleProject, workItemType: MeegleWorkItemType) {
   return `${project.project_key}\0${workItemType.type_key}`;
+}
+
+function countDirectoryTypes(projects: CreatedDirectory["projects"]) {
+  return new Set(projects.flatMap(({ project, workItemTypes }) =>
+    workItemTypes.map((workItemType) => createdScopeKey(project, workItemType)))).size;
 }
 
 function normalizeCreatedItem(
