@@ -220,6 +220,7 @@ function synchronizer(
   const service: WorkItemSynchronizer = {
     sync: vi.fn().mockResolvedValue(result),
     loadCached: vi.fn().mockResolvedValue(undefined),
+    loadCachedAccount: vi.fn().mockResolvedValue(undefined),
     clearCached: vi.fn().mockResolvedValue(undefined),
   };
   return { result, service };
@@ -256,13 +257,14 @@ describe("taskboard MCP app", () => {
       accountDisplayName: "Example User",
       profileName: "default",
     };
+    let sessionIdentity = {
+      profileName: "default",
+      accountKey: "user_example",
+      accountDisplayName: "Example User",
+    };
     const auth = {
       getConnection: vi.fn(async () => ({ ...providerConnection, state: connectionState })),
-      getSessionIdentity: vi.fn(() => ({
-        profileName: "default",
-        accountKey: "user_example",
-        accountDisplayName: "Example User",
-      })),
+      getSessionIdentity: vi.fn(() => sessionIdentity),
       disconnect: vi.fn(async () => ({ ...providerConnection, state: "disconnected" as const })),
     };
     const login: ProviderLoginDriver = {
@@ -544,6 +546,90 @@ describe("taskboard MCP app", () => {
       expect(synced.service.sync).toHaveBeenCalledOnce();
       expect(synced.service.loadCached).toHaveBeenCalledWith("feishu-project");
       connectionState = "connected";
+
+      const activeA = {
+        ...synced.result,
+        dataFreshness: "offline" as const,
+        freshScopeCount: 0,
+        staleScopeCount: 3,
+        items: synced.result.items.map((item) => ({ ...item, freshness: "cached" as const })),
+      };
+      const cachedB = synchronizer([{
+        providerId: "feishu-project",
+        externalId: "PROJ-B",
+        name: "Project B",
+        selected: true,
+        available: true,
+        source: "discovered",
+        lastVerifiedAt: "2026-08-11T00:00:00.000Z",
+      }], "feishu-project").result;
+      const offlineB = {
+        ...cachedB,
+        dataFreshness: "offline" as const,
+        freshScopeCount: 0,
+        staleScopeCount: 3,
+        items: cachedB.items.map((item) => ({ ...item, freshness: "cached" as const })),
+      };
+      sessionIdentity = {
+        profileName: "profile-b",
+        accountKey: "user-b",
+        accountDisplayName: "User B",
+      };
+      vi.mocked(synced.service.sync).mockRejectedValue(new Error("provider_cancelled"));
+      vi.mocked(synced.service.loadCached).mockClear();
+      vi.mocked(synced.service.loadCached).mockResolvedValue(activeA);
+      vi.mocked(synced.service.loadCachedAccount).mockResolvedValueOnce(undefined);
+
+      const missingB = await client.callTool({ name: "open_my_taskboard", arguments: {} });
+      expect(missingB.isError).toBe(true);
+      expect(JSON.stringify(missingB)).toContain("provider_cancelled");
+      expect(synced.service.loadCached).not.toHaveBeenCalled();
+      expect(synced.service.loadCachedAccount).toHaveBeenCalledWith({
+        providerId: "feishu-project",
+        accountKey: "user-b",
+        accountDisplayName: "User B",
+      });
+
+      vi.mocked(synced.service.loadCachedAccount).mockRejectedValueOnce(
+        new WorkItemCacheError("cache_read_failed"),
+      );
+      const failedExactB = await client.callTool({ name: "open_my_taskboard", arguments: {} });
+      expect(failedExactB.isError).toBe(true);
+      expect(JSON.stringify(failedExactB)).toContain("provider_cancelled");
+
+      vi.mocked(synced.service.loadCachedAccount).mockResolvedValueOnce(offlineB);
+      const exactB = await client.callTool({ name: "open_my_taskboard", arguments: {} });
+      expect(exactB.structuredContent).toMatchObject({
+        dataFreshness: "offline",
+        projects: [{ externalId: "PROJ-B" }],
+        items: [{ projectExternalId: "PROJ-B" }],
+      });
+      expect((exactB.structuredContent as { projects: Array<{ externalId: string }> })
+        .projects.map((entry) => entry.externalId)).toEqual(["PROJ-B"]);
+
+      vi.mocked(synced.service.loadCachedAccount).mockImplementation(async (cacheAccount) =>
+        cacheAccount.accountKey === "user-a" ? activeA : offlineB);
+      vi.mocked(auth.getSessionIdentity)
+        .mockReturnValueOnce({
+          profileName: "profile-a",
+          accountKey: "user-a",
+          accountDisplayName: "User A",
+        })
+        .mockReturnValueOnce(sessionIdentity);
+      const [concurrentA, concurrentB] = await Promise.all([
+        client.callTool({ name: "open_my_taskboard", arguments: {} }),
+        client.callTool({ name: "open_my_taskboard", arguments: {} }),
+      ]);
+      expect([
+        (concurrentA.structuredContent as { projects: Array<{ externalId: string }> }).projects[0]?.externalId,
+        (concurrentB.structuredContent as { projects: Array<{ externalId: string }> }).projects[0]?.externalId,
+      ].sort()).toEqual(["PROJ", "PROJ-B"]);
+      vi.mocked(synced.service.sync).mockResolvedValue(synced.result);
+      sessionIdentity = {
+        profileName: "default",
+        accountKey: "user_example",
+        accountDisplayName: "Example User",
+      };
 
       await expect(client.callTool({ name: "list_providers", arguments: {} }))
         .resolves.toMatchObject({

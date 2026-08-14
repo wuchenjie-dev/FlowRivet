@@ -45,6 +45,7 @@ export interface WorkItemSyncSnapshot {
 export interface WorkItemSynchronizer {
   sync(input: WorkItemSyncInput): Promise<WorkItemSyncSnapshot>;
   loadCached(providerId: string): Promise<WorkItemSyncSnapshot | undefined>;
+  loadCachedAccount(account: CacheAccount): Promise<WorkItemSyncSnapshot | undefined>;
   clearCached(providerId: string): Promise<void>;
 }
 
@@ -185,6 +186,20 @@ export class WorkItemService implements WorkItemSynchronizer {
       freshnessReasonCode: reason,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     }, attemptedAt);
+  }
+
+  async loadCachedAccount(account: CacheAccount): Promise<WorkItemSyncSnapshot | undefined> {
+    if (!this.cache) return undefined;
+    const now = this.clock();
+    const snapshot = await this.cache.loadAccount(account, now);
+    if (!snapshot) return undefined;
+    return createSnapshot({
+      source: snapshot,
+      projects: snapshot.projects,
+      successfulProjects: 0,
+      failedProjects: 0,
+      lastSyncAttemptAt: now.toISOString(),
+    }, now);
   }
 
   private async fetchProjectScoped(input: WorkItemSyncInput): Promise<FreshSyncResult> {

@@ -607,6 +607,9 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
 }
 
 function namespaceFor(account: CacheAccount) {
+  if (account.tenantKey !== undefined && account.tenantKey.trim().length === 0) {
+    throw new Error("cache tenant identity must not be empty");
+  }
   return createHash("sha256").update(JSON.stringify([
     account.providerId,
     account.tenantKey ?? "",

@@ -193,6 +193,30 @@ function cachedScope(
 }
 
 describe("work item service", () => {
+  it("loads cached data for the exact account without consulting the active provider cache", async () => {
+    const provider = new FakeAccountProvider();
+    const cache = new FakeCache();
+    const bob = feishuCacheAccount({ accountKey: "user-B", accountDisplayName: "bob" });
+    cache.loadAccount.mockImplementation(async (value) =>
+      value.accountKey === "user-B"
+        ? cachedSnapshot([cachedScope("task", "task", [item("B-cached", "todo")])])
+        : undefined);
+    const service = new WorkItemService(provider, () => now, cache);
+
+    const [missing, exact] = await Promise.all([
+      service.loadCachedAccount(feishuCacheAccount({ accountKey: "user-A" })),
+      service.loadCachedAccount(bob),
+    ]);
+
+    expect(missing).toBeUndefined();
+    expect(exact).toMatchObject({
+      dataFreshness: "offline",
+      items: [{ externalId: "B-cached" }],
+    });
+    expect(cache.loadActive).not.toHaveBeenCalled();
+    expect(cache.loadAccount).toHaveBeenCalledWith(bob, now);
+  });
+
   it("preloads the exact account and pure-merges it when the cache write fails", async () => {
     const provider = new FakeAccountProvider();
     const cache = new FakeCache();

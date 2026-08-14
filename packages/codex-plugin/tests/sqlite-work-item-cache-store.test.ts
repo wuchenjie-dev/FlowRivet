@@ -287,6 +287,26 @@ describe("SQLite work item cache store", () => {
     });
   });
 
+  it("rejects an explicitly empty tenant key without aliasing the absent-tenant namespace", async () => {
+    const { store } = await fixture();
+    const absentTenant = account({ tenantKey: undefined });
+    await store.mergeScopes({
+      account: absentTenant, projects: [project("A")], now,
+      scopes: [scope("A", "task", "task", [item("absent-tenant")])],
+    });
+    const emptyTenant = account({ tenantKey: "" });
+
+    await expect(store.loadAccount(emptyTenant, now))
+      .rejects.toMatchObject({ code: "cache_read_failed" });
+    await expect(store.mergeScopes({
+      account: emptyTenant, projects: [project("A")], now,
+      scopes: [scope("A", "task", "task", [item("empty-tenant")])],
+    })).rejects.toMatchObject({ code: "cache_write_failed" });
+    await expect(store.loadAccount(absentTenant, now)).resolves.toMatchObject({
+      items: [{ externalId: "absent-tenant" }],
+    });
+  });
+
   it("loads an exact account without deleting an expired account in another namespace", async () => {
     const { path, store } = await fixture();
     const alice = account();

@@ -517,6 +517,15 @@ export function createTaskboardMcpServer(
 
     if (connection.state === "connected") {
       const identity = registration.auth.getSessionIdentity?.();
+      const cacheAccount = identity?.accountKey ? {
+        providerId: registration.id,
+        accountKey: identity.accountKey,
+        ...(identity.tenantKey !== undefined ? { tenantKey: identity.tenantKey } : {}),
+        accountDisplayName: identity.accountDisplayName,
+        ...(identity.tenantDisplayName
+          ? { tenantDisplayName: identity.tenantDisplayName }
+          : {}),
+      } : undefined;
       try {
         synchronized = await synchronizer.sync({
           accountDisplayName: identity?.accountDisplayName
@@ -524,20 +533,15 @@ export function createTaskboardMcpServer(
             ?? "",
           projects: [],
           ...(identity?.profileName ? { syncSessionKey: identity.profileName } : {}),
-          ...(identity?.accountKey ? {
-            cacheAccount: {
-              providerId: registration.id,
-              accountKey: identity.accountKey,
-              ...(identity.tenantKey ? { tenantKey: identity.tenantKey } : {}),
-              accountDisplayName: identity.accountDisplayName,
-              ...(identity.tenantDisplayName
-                ? { tenantDisplayName: identity.tenantDisplayName }
-                : {}),
-            },
-          } : {}),
+          ...(cacheAccount ? { cacheAccount } : {}),
         });
       } catch (error) {
-        synchronized = await synchronizer.loadCached(registration.id);
+        if (!cacheAccount) throw error;
+        try {
+          synchronized = await synchronizer.loadCachedAccount(cacheAccount);
+        } catch {
+          throw error;
+        }
         if (!synchronized) throw error;
       }
     } else {
