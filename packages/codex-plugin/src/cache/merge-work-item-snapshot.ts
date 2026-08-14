@@ -31,6 +31,7 @@ export function normalizeAuthoritativeScopeInventories(
     for (const providerItemType of providerItemTypes) {
       if (!providerItemType
         || !providerItemType.startsWith(providerItemTypePrefix)
+        || providerItemType.length <= providerItemTypePrefix.length
         || providerItemType === "created:catalog") {
         throw new Error("invalid authoritative scope inventory type");
       }
@@ -134,7 +135,8 @@ export function mergeWorkItemSnapshot(
   }
 
   for (const scope of input.scopes) {
-    if (scope.outcome !== "success" || isScopeDeletedByInventory(scope, inventories)) continue;
+    if (scope.outcome !== "success"
+      || isScopeDeletedByInventory(scope, inventories, { allowCatalogSentinel: true })) continue;
     const project = inputProjects.get(scope.projectExternalId);
     if (!project) throw new Error("cache scope references an unknown project");
     const itemKeys = new Set<string>();
@@ -189,11 +191,13 @@ export function mergeWorkItemSnapshot(
 export function isScopeDeletedByInventory(
   scope: Pick<CacheMergeInput["scopes"][number], "projectExternalId" | "providerItemType">,
   inventories: AuthoritativeScopeInventory[],
+  options: { allowCatalogSentinel?: boolean } = {},
 ) {
   return inventories.some((inventory) =>
     inventory.projectExternalId === scope.projectExternalId
       && scope.providerItemType.startsWith(inventory.providerItemTypePrefix)
-      && scope.providerItemType !== `${inventory.providerItemTypePrefix}catalog`
+      && (!options.allowCatalogSentinel
+        || scope.providerItemType !== `${inventory.providerItemTypePrefix}catalog`)
       && !inventory.providerItemTypes.includes(scope.providerItemType));
 }
 

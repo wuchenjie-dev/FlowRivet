@@ -13,6 +13,7 @@ import {
 import {
   SqliteWorkItemCacheStore,
 } from "../src/cache/sqlite-work-item-cache-store.js";
+import { mergeWorkItemSnapshot } from "../src/cache/merge-work-item-snapshot.js";
 import type {
   CacheAccount,
   CacheScopeInput,
@@ -286,6 +287,39 @@ describe("SQLite work item cache store", () => {
     });
   });
 
+  it("loads an exact account without deleting an expired account in another namespace", async () => {
+    const { path, store } = await fixture();
+    const alice = account();
+    await store.mergeScopes({
+      account: alice, projects: [project("A")], now,
+      scopes: [scope("A", "task", "task", [item("alice")])],
+    });
+    const bob = account({
+      providerId: "other-provider",
+      accountKey: "user-2",
+      tenantKey: "tenant-2",
+      accountDisplayName: "Bob",
+    });
+    const old = new Date("2026-07-01T12:00:00.000Z");
+    await store.mergeScopes({
+      account: bob,
+      projects: [{ ...project("B"), providerId: "other-provider" }],
+      scopes: [scope("B", "task", "task", [{
+        ...item("bob", "B"),
+        key: "other-provider:B:task:bob",
+        providerId: "other-provider",
+      }])],
+      now: old,
+    });
+    const rowsBefore = readCacheRows(path);
+
+    await expect(store.loadAccount(alice, now)).resolves.toBeDefined();
+
+    expect(readCacheRows(path)).toEqual(rowsBefore);
+    await expect(store.loadAccount(bob, now)).resolves.toBeUndefined();
+    expect(readCacheRows(path)).toEqual(rowsBefore);
+  });
+
   it("expires each scope only after its own seven-day boundary", async () => {
     const { store } = await fixture();
     await store.mergeScopes({
@@ -377,18 +411,56 @@ describe("SQLite work item cache store", () => {
       scopes: [scope("A", "created:old", "other", [item("old", "A", "native", "other")])],
     });
 
-    await expect(store.mergeScopes({
-      account: account(), projects: [project("A")], scopes: [],
-      authoritativeScopeInventories: [{
-        projectExternalId: "A",
-        providerItemTypePrefix: "created:",
-        providerItemTypes: ["created:duplicate", "created:duplicate"],
-      }],
-      now: new Date("2026-08-10T13:00:00.000Z"),
-    })).rejects.toMatchObject({ code: "cache_write_failed" });
+    for (const providerItemTypes of [
+      ["created:duplicate", "created:duplicate"],
+      ["created:"],
+    ]) {
+      await expect(store.mergeScopes({
+        account: account(), projects: [project("A")], scopes: [],
+        authoritativeScopeInventories: [{
+          projectExternalId: "A",
+          providerItemTypePrefix: "created:",
+          providerItemTypes,
+        }],
+        now: new Date("2026-08-10T13:00:00.000Z"),
+      })).rejects.toMatchObject({ code: "cache_write_failed" });
+    }
     await expect(store.loadAccount(account(), now)).resolves.toMatchObject({
       items: [{ externalId: "old" }],
     });
+  });
+
+  it.each([
+    { outcome: "absent" as const, scopes: [] },
+    { outcome: "error" as const, scopes: [scope("A", "created:catalog", "other", [], "error")] },
+    { outcome: "success" as const, scopes: [scope("A", "created:catalog", "other", [])] },
+  ])("matches pure inventory cleanup for a $outcome current catalog scope", async ({ outcome, scopes }) => {
+    const { store } = await fixture();
+    await store.mergeScopes({
+      account: account(), projects: [project("A")], now,
+      scopes: [scope("A", "created:catalog", "other", [])],
+    });
+    const previous = await store.loadAccount(account(), now);
+    const input = {
+      account: account(),
+      projects: [project("A")],
+      scopes,
+      authoritativeScopeInventories: [{
+        projectExternalId: "A",
+        providerItemTypePrefix: "created:",
+        providerItemTypes: [],
+      }],
+      now: new Date("2026-08-10T13:00:00.000Z"),
+    };
+
+    const pure = mergeWorkItemSnapshot(previous, input);
+    const sqlite = await store.mergeScopes(input);
+    const projectCatalog = (snapshot: typeof pure) => snapshot.scopes
+      .filter((value) => value.providerItemType === "created:catalog")
+      .map((value) => ({ freshness: value.freshness, lastSuccessfulSyncAt: value.lastSuccessfulSyncAt }));
+
+    expect(projectCatalog(sqlite)).toEqual(projectCatalog(pure));
+    expect(projectCatalog(sqlite)).toHaveLength(outcome === "success" ? 1 : 0);
   });
 
   it("rolls back a scope replacement when an item insert fails", async () => {
@@ -526,3 +598,23 @@ describe("SQLite work item cache store", () => {
       .rejects.toMatchObject({ code: "cache_read_failed" });
   });
 });
+
+function readCacheRows(path: string) {
+  const database = new DatabaseSync(path);
+  const rows = {
+    accounts: database.prepare(`
+      SELECT provider_id, account_display_name, is_active
+      FROM cache_accounts ORDER BY provider_id
+    `).all(),
+    projects: database.prepare(`
+      SELECT namespace_key, project_external_id
+      FROM cache_projects ORDER BY namespace_key, project_external_id
+    `).all(),
+    scopes: database.prepare(`
+      SELECT namespace_key, project_external_id, provider_item_type, last_success_at
+      FROM cache_scopes ORDER BY namespace_key, project_external_id, provider_item_type
+    `).all(),
+  };
+  database.close();
+  return rows;
+}

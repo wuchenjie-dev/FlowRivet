@@ -58,6 +58,7 @@ describe("mergeWorkItemSnapshot", () => {
       [{ projectExternalId: "", providerItemTypePrefix: "created:", providerItemTypes: [] }],
       [{ projectExternalId: "A", providerItemTypePrefix: "", providerItemTypes: [] }],
       [{ projectExternalId: "A", providerItemTypePrefix: "created:", providerItemTypes: [""] }],
+      [{ projectExternalId: "A", providerItemTypePrefix: "created:", providerItemTypes: ["created:"] }],
       [{ projectExternalId: "A", providerItemTypePrefix: "created:", providerItemTypes: ["other:x"] }],
       [{ projectExternalId: "A", providerItemTypePrefix: "created:", providerItemTypes: ["created:x", "created:x"] }],
       [{ projectExternalId: "A", providerItemTypePrefix: "created:", providerItemTypes: ["created:catalog"] }],

@@ -165,7 +165,9 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
 
       for (const scope of input.scopes) {
         if (scope.outcome !== "success"
-          || isScopeDeletedByInventory(scope, authoritativeScopeInventories)) continue;
+          || isScopeDeletedByInventory(scope, authoritativeScopeInventories, {
+            allowCatalogSentinel: true,
+          })) continue;
         const project = projects.get(scope.projectExternalId);
         if (!project) throw new WorkItemCacheError("cache_write_failed");
         hasSuccess = true;
@@ -231,10 +233,13 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
     account: CacheAccount,
     now: Date,
   ): Promise<CachedSnapshot | undefined> {
-    return this.writeTransaction("cache_read_failed", (database) => {
-      this.purgeExpiredInDatabase(database, now);
-      return this.readSnapshot(database, namespaceFor(account), new Set());
-    });
+    try {
+      const cutoff = new Date(now.getTime() - RETENTION_MS).toISOString();
+      return this.withDatabase((database) =>
+        this.readSnapshot(database, namespaceFor(account), new Set(), cutoff));
+    } catch (error) {
+      throw cacheError(error, "cache_read_failed");
+    }
   }
 
   async loadActive(
@@ -401,6 +406,7 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
     database: DatabaseSync,
     namespaceKey: string,
     freshScopeKeys: Set<string>,
+    minimumLastSuccessAt?: string,
   ): CachedSnapshot | undefined {
     try {
       const account = database.prepare(`
@@ -414,15 +420,23 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
         SELECT project_external_id, provider_item_type, kind, last_success_at
         FROM cache_scopes
         WHERE namespace_key = ?
+          ${minimumLastSuccessAt ? "AND last_success_at >= ?" : ""}
         ORDER BY project_external_id, provider_item_type
-      `).all(namespaceKey) as unknown as ScopeRow[];
+      `).all(
+        namespaceKey,
+        ...(minimumLastSuccessAt ? [minimumLastSuccessAt] : []),
+      ) as unknown as ScopeRow[];
       if (scopeRows.length === 0) return undefined;
+
+      const retainedProjectIds = [...new Set(scopeRows.map((row) => row.project_external_id))];
+      const projectPlaceholders = retainedProjectIds.map(() => "?").join(", ");
 
       const projectRows = database.prepare(`
         SELECT project_json FROM cache_projects
         WHERE namespace_key = ?
+          AND project_external_id IN (${projectPlaceholders})
         ORDER BY project_external_id
-      `).all(namespaceKey) as unknown as ProjectRow[];
+      `).all(namespaceKey, ...retainedProjectIds) as unknown as ProjectRow[];
       const itemRows = database.prepare(`
         SELECT project_external_id, provider_item_type, item_json
         FROM cache_items
