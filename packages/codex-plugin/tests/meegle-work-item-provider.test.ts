@@ -383,6 +383,196 @@ describe("Meegle work item provider", () => {
       .toHaveLength(132);
   });
 
+  it("excludes disabled types from metadata, queries, coverage, and inventory", async () => {
+    const client = new FakeClient();
+    const disabled = { ...createdType, is_disable: 1, name: "Disabled", type_key: "disabled" };
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([disabled, createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField.mock.calls.map(([, , typeKey]) => typeKey))
+      .toEqual(["solution-key"]);
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(["solution-key"]);
+    expect(result.createdSyncCoverage).toMatchObject({ scannedTypeCount: 1, totalTypeCount: 1 });
+    expect(result.authoritativeScopeInventories).toEqual([expect.objectContaining({
+      providerItemTypes: ["created:solution-key"],
+    })]);
+    expect(result.scopes.some(({ providerItemType }) => providerItemType === "created:disabled"))
+      .toBe(false);
+  });
+
+  it("completes a manual scan across 110 active types while ignoring 22 disabled types", async () => {
+    const client = new FakeClient();
+    const active = Array.from({ length: 110 }, (_, index) => ({
+      ...createdType, type_key: `active-${String(index).padStart(3, "0")}`,
+    }));
+    const disabled = Array.from({ length: 22 }, (_, index) => ({
+      ...createdType, is_disable: 1, type_key: `disabled-${String(index).padStart(2, "0")}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([...active, ...disabled]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(110);
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledTimes(110);
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available", mode: "manual", scannedTypeCount: 110,
+      totalTypeCount: 110, complete: true,
+    });
+  });
+
+  it("rotates 110 active types in automatic batches of 40, 40, and 30", async () => {
+    const client = new FakeClient();
+    const active = Array.from({ length: 110 }, (_, index) => ({
+      ...createdType, type_key: `active-${String(index).padStart(3, "0")}`,
+    }));
+    const disabled = Array.from({ length: 22 }, (_, index) => ({
+      ...createdType, is_disable: 1, type_key: `disabled-${String(index).padStart(2, "0")}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([...active, ...disabled]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    const provider = new MeegleWorkItemProvider({ client, clock: () => now });
+
+    const coverages = [];
+    for (let index = 0; index < 3; index += 1) {
+      const result = await provider.listAccountWorkItems({
+        accountDisplayName: "Example User", refreshMode: "automatic",
+      });
+      coverages.push(result.createdSyncCoverage);
+    }
+
+    expect(coverages.map((coverage) => coverage?.scannedTypeCount)).toEqual([40, 40, 30]);
+    expect(coverages.every((coverage) => coverage?.totalTypeCount === 110)).toBe(true);
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(active.map(({ type_key }) => type_key));
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledTimes(110);
+  });
+
+  it("publishes an authoritative empty inventory for an all-disabled project", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([
+      { ...createdType, is_disable: 1, type_key: "disabled" },
+    ]);
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.hasCreatedOwnerField).not.toHaveBeenCalled();
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available", mode: "manual", scannedTypeCount: 0,
+      totalTypeCount: 0, complete: true,
+    });
+    expect(result.authoritativeScopeInventories).toEqual([{
+      projectExternalId: "CREATED", providerItemTypePrefix: "created:", providerItemTypes: [],
+    }]);
+    expect(result.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
+      projectExternalId: "CREATED", providerItemType: "created:catalog", outcome: "success",
+    })]));
+  });
+
+  it("clears cached created scopes when a project becomes all-disabled", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "flowrivet-disabled-created-"));
+    try {
+      const store = new SqliteWorkItemCacheStore({
+        path: join(directory, "work-items.sqlite"), DatabaseSync,
+      });
+      const syncInput = {
+        accountDisplayName: "Example User", projects: [],
+        cacheAccount: {
+          providerId: "feishu-project", accountKey: identity.user_key,
+          accountDisplayName: "Example User",
+        },
+      };
+      const activeClient = new FakeClient();
+      activeClient.getMyWorkPage.mockImplementation(pages({}));
+      activeClient.listRecentProjects.mockResolvedValue([createdProject]);
+      activeClient.listWorkItemTypes.mockResolvedValue([createdType]);
+      activeClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+      await new WorkItemService(
+        new MeegleWorkItemProvider({ client: activeClient, clock: () => now }), () => now, store,
+      ).sync(syncInput);
+
+      const disabledClient = new FakeClient();
+      disabledClient.getMyWorkPage.mockImplementation(pages({}));
+      disabledClient.listRecentProjects.mockResolvedValue([createdProject]);
+      disabledClient.listWorkItemTypes.mockResolvedValue([
+        { ...createdType, is_disable: 1, type_key: "solution-key" },
+      ]);
+      const cleared = await new WorkItemService(
+        new MeegleWorkItemProvider({ client: disabledClient, clock: () => now }), () => now, store,
+      ).sync(syncInput);
+
+      expect(cleared.items).toEqual([]);
+      expect(cleared.projects).toEqual([expect.objectContaining({ externalId: "CREATED", count: 0 })]);
+      expect(disabledClient.hasCreatedOwnerField).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on an unknown disable state and retries the directory next sync", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes
+      .mockResolvedValueOnce([{ ...createdType, is_disable: 3 }])
+      .mockResolvedValueOnce([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    const provider = new MeegleWorkItemProvider({ client, clock: () => now });
+
+    const failed = await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    const recovered = await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(failed.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
+      projectExternalId: "CREATED", providerItemType: "created:catalog", outcome: "error",
+    })]));
+    expect(recovered.scopes).toEqual(expect.arrayContaining([expect.objectContaining({
+      providerItemType: "created:solution-key", outcome: "success",
+    })]));
+    expect(client.listWorkItemTypes).toHaveBeenCalledTimes(2);
+    expect(client.hasCreatedOwnerField).toHaveBeenCalledOnce();
+  });
+
+  it("caches only filtered active types and rereads the directory after TTL", async () => {
+    const client = new FakeClient();
+    let currentTime = now.getTime();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([
+      createdType,
+      { ...createdType, is_disable: 1, type_key: "disabled" },
+    ]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    const provider = new MeegleWorkItemProvider({
+      client, clock: () => new Date(currentTime),
+    });
+
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+    currentTime += 10 * 60 * 1_000 + 1;
+    await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.listWorkItemTypes).toHaveBeenCalledTimes(2);
+    expect(client.hasCreatedOwnerField.mock.calls.map(([, , typeKey]) => typeKey))
+      .toEqual(["solution-key", "solution-key"]);
+    expect(client.queryCreatedBaseWorkItems.mock.calls.every(([, , type]) =>
+      type.type_key === "solution-key")).toBe(true);
+  });
+
   it("deduplicates a created result against mywork and preserves the richer mywork item", async () => {
     const client = new FakeClient();
     client.getMyWorkPage.mockImplementation(pages({

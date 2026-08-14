@@ -15,5 +15,6 @@ from a non-empty grouped response.
 
 `project-search-page.json` and `meta-types.json` are redacted captures of the
 observed project catalog and work-item type metadata shapes. `is_disable: 2`
-is intentionally retained because it is returned for active types and is not
-treated as a boolean disabled flag.
+identifies an active type, while `is_disable: 1` identifies a disabled type.
+Only active types participate in created-item scans; unknown disable states
+fail closed instead of being silently skipped.
