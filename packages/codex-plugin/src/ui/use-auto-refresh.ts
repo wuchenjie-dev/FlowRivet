@@ -4,10 +4,12 @@ export interface AutoRefreshOutcome {
   retryAfterSeconds?: number;
 }
 
+export type RefreshMode = "manual" | "automatic";
+
 export interface UseAutoRefreshOptions {
   enabled: boolean;
   intervalSeconds: number | undefined;
-  performRefresh: () => Promise<AutoRefreshOutcome>;
+  performRefresh: (mode: RefreshMode) => Promise<AutoRefreshOutcome>;
 }
 
 export function useAutoRefresh({
@@ -24,7 +26,8 @@ export function useAutoRefresh({
   const timerRef = useRef<number | undefined>(undefined);
   const lastAttemptCompletedAtRef = useRef<number | undefined>(undefined);
   const rateLimitUntilRef = useRef<number | undefined>(undefined);
-  const inFlightRef = useRef<Promise<void> | undefined>(undefined);
+  const inFlightRef = useRef<Partial<Record<RefreshMode, Promise<void>>>>({});
+  const activeModesRef = useRef(new Set<RefreshMode>());
   const scheduleRef = useRef<() => void>(() => undefined);
 
   enabledRef.current = enabled;
@@ -37,38 +40,47 @@ export function useAutoRefresh({
     timerRef.current = undefined;
   }, []);
 
-  const requestRefresh = useCallback((): Promise<void> => {
-    const current = inFlightRef.current;
+  const requestRefresh = useCallback((mode: RefreshMode = "manual"): Promise<void> => {
+    const current = inFlightRef.current[mode];
     if (current) return current;
+    if (mode === "automatic") clearTimer();
+    activeModesRef.current.add(mode);
     if (mounted.current) setPending(true);
 
     let refresh: Promise<AutoRefreshOutcome>;
     try {
-      refresh = performRefreshRef.current();
+      refresh = performRefreshRef.current(mode);
     } catch (error) {
       refresh = Promise.reject(error);
     }
     const operation = refresh
       .then((outcome) => {
-        rateLimitUntilRef.current = outcome.retryAfterSeconds === undefined
-          ? undefined
-          : performance.now() + outcome.retryAfterSeconds * 1000;
+        if (mode === "automatic") {
+          rateLimitUntilRef.current = outcome.retryAfterSeconds === undefined
+            ? undefined
+            : performance.now() + outcome.retryAfterSeconds * 1000;
+        }
       })
       .catch((error: unknown) => {
-        rateLimitUntilRef.current = isRateLimitError(error)
-          ? performance.now() + 60_000
-          : undefined;
+        if (mode === "automatic") {
+          rateLimitUntilRef.current = isRateLimitError(error)
+            ? performance.now() + 60_000
+            : undefined;
+        }
         throw error;
       })
       .finally(() => {
-        lastAttemptCompletedAtRef.current = performance.now();
-        inFlightRef.current = undefined;
-        if (mounted.current) setPending(false);
-        scheduleRef.current();
+        delete inFlightRef.current[mode];
+        activeModesRef.current.delete(mode);
+        if (mounted.current) setPending(activeModesRef.current.size > 0);
+        if (mode === "automatic") {
+          lastAttemptCompletedAtRef.current = performance.now();
+          scheduleRef.current();
+        }
       });
-    inFlightRef.current = operation;
+    inFlightRef.current[mode] = operation;
     return operation;
-  }, []);
+  }, [clearTimer]);
 
   scheduleRef.current = () => {
     clearTimer();
@@ -78,7 +90,7 @@ export function useAutoRefresh({
       || interval === undefined
       || interval === 0
       || document.visibilityState !== "visible"
-      || inFlightRef.current) return;
+      || inFlightRef.current.automatic) return;
 
     const now = performance.now();
     lastAttemptCompletedAtRef.current ??= now;
@@ -86,7 +98,7 @@ export function useAutoRefresh({
     const deadline = Math.max(intervalDeadline, rateLimitUntilRef.current ?? 0);
     timerRef.current = window.setTimeout(() => {
       timerRef.current = undefined;
-      void requestRefresh().catch(() => undefined);
+      void requestRefresh("automatic").catch(() => undefined);
     }, Math.max(0, deadline - now));
   };
 

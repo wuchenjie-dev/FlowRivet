@@ -4,6 +4,29 @@ function boardFrame(page: Page) {
   return page.frameLocator('iframe[title="FlowRivet MCP App"]');
 }
 
+async function captureRefreshArguments(page: Page) {
+  await page.evaluate(() => {
+    const refreshArguments: unknown[] = [];
+    Object.assign(window, { __flowrivetRefreshArguments: refreshArguments });
+    window.addEventListener("message", (event) => {
+      const message = event.data as {
+        method?: string;
+        params?: { name?: string; arguments?: unknown };
+      } | undefined;
+      if (message?.method === "tools/call"
+        && message.params?.name === "refresh_my_work_items") {
+        refreshArguments.push(message.params.arguments);
+      }
+    });
+  });
+}
+
+async function readRefreshArguments(page: Page) {
+  return page.evaluate(() => (
+    window as Window & { __flowrivetRefreshArguments?: unknown[] }
+  ).__flowrivetRefreshArguments ?? []);
+}
+
 test.beforeEach(async ({ context }) => {
   await context.route("https://project.feishu.cn/**", (route) => route.fulfill({
     status: 200,
@@ -240,6 +263,13 @@ test("execution drawer shows GitLab progress and local writeback fallback", asyn
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
+  const refreshCount = page.getByLabel("刷新调用次数");
+  const countBeforeRefresh = Number(await refreshCount.textContent());
+  const refreshButton = board.getByRole("button", { name: "刷新看板" });
+  await refreshButton.click();
+  await expect.poll(async () => Number(await refreshCount.textContent()))
+    .toBeGreaterThan(countBeforeRefresh);
+  await expect(refreshButton).toBeEnabled();
 
   await board.getByRole("button", {
     name: "打开工作项：统一检索结果的排序与筛选体验",
@@ -247,7 +277,7 @@ test("execution drawer shows GitLab progress and local writeback fallback", asyn
   await board.getByRole("button", { name: "交给 Codex 处理" }).click();
 
   const dialog = board.getByRole("dialog");
-  await expect(dialog.getByText("研发实现")).toBeVisible();
+  await expect(dialog.getByText("需要修改代码")).toBeVisible();
   await expect(dialog.getByText("尚未写回，结果已保存在本地")).toBeVisible();
   await expect(dialog.getByText("codex/feishu-work-item-123")).toBeVisible();
   await expect(dialog.getByRole("link", { name: /查看 MR/ })).toHaveAttribute(
@@ -313,17 +343,24 @@ test("opens all accessible projects without a selection step", async ({ page }) 
 test("refreshes the real read-only snapshot", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
+  await captureRefreshArguments(page);
 
   await board.getByRole("button", { name: "刷新看板" }).click();
   await expect(board.getByText("已同步 7 个工作项")).toBeVisible();
   await expect(board.locator(".work-card")).toHaveCount(7);
+  expect(await readRefreshArguments(page)).toEqual([
+    { refreshMode: "manual" },
+    { refreshMode: "manual" },
+  ]);
 });
 
 test("partial sync preserves available work items and reports the failed project", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=partial");
   const board = boardFrame(page);
 
-  await expect(board.getByText("1 个项目同步失败，已保留其他结果")).toBeVisible();
+  await expect(board.getByRole("alert")).toContainText(
+    "1 个项目同步失败，已保留其他结果",
+  );
   await expect(board.locator(".work-card")).toHaveCount(7);
 });
 
@@ -357,7 +394,7 @@ test("mixed snapshot identifies cached scopes and cards", async ({ page }) => {
   await page.goto("/src/ui/demo-harness.html?scenario=mixed");
   const board = boardFrame(page);
 
-  await expect(board.getByRole("status")).toContainText("2 个范围使用缓存");
+  await expect(board.getByRole("alert")).toContainText("2 个范围使用缓存");
   await expect(board.locator(".cache-badge")).toHaveCount(2);
   await expect(board.getByRole("button", { name: /打开缓存工作项/ })).toHaveCount(2);
   expect(await board.locator("html").evaluate(
@@ -372,7 +409,7 @@ test("offline snapshot stays browsable while Feishu reconnects", async ({ page }
   const reconnect = board.getByRole("button", { name: "重新连接飞书项目" });
 
   await expect(board.getByRole("region", { name: "工作项看板" })).toBeVisible();
-  await expect(board.getByRole("status")).toContainText("正在显示离线缓存");
+  await expect(board.getByRole("alert")).toContainText("正在显示离线缓存");
   await expect(board.locator(".cache-badge")).toHaveCount(7);
   await reconnect.click();
   await expect(board.getByRole("dialog", { name: "重新连接飞书项目" })).toBeVisible();
@@ -434,14 +471,52 @@ test("five-second automatic refresh fires exactly once", async ({ page }) => {
   await page.clock.install();
   await page.goto("/src/ui/demo-harness.html?scenario=connected");
   const board = boardFrame(page);
+  await captureRefreshArguments(page);
 
   await board.getByRole("button", { name: "打开连接菜单" }).click();
   await board.getByRole("menuitemradio", { name: "每 5 秒" }).click();
-  await expect(page.getByLabel("刷新调用次数")).toHaveText("0");
-  await page.clock.fastForward(4_000);
-  await expect(page.getByLabel("刷新调用次数")).toHaveText("0");
-  await page.clock.fastForward(1_000);
   await expect(page.getByLabel("刷新调用次数")).toHaveText("1");
+  await page.clock.fastForward(4_000);
+  await expect(page.getByLabel("刷新调用次数")).toHaveText("1");
+  await page.clock.fastForward(1_000);
+  await expect(page.getByLabel("刷新调用次数")).toHaveText("2");
+  expect((await readRefreshArguments(page)).at(-1)).toEqual({ refreshMode: "automatic" });
+});
+
+test("automatic created-task rotation is neutral progress without a false warning", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.addEventListener("message", (event) => {
+      const value = event.data as {
+        method?: string;
+        params?: { structuredContent?: Record<string, unknown> };
+        result?: { structuredContent?: Record<string, unknown> };
+      } | undefined;
+      const structuredContent = value?.params?.structuredContent
+        ?? value?.result?.structuredContent;
+      if (structuredContent && "syncSummary" in structuredContent && "items" in structuredContent) {
+        Object.assign(structuredContent, {
+          dataFreshness: "mixed",
+          freshScopeCount: 40,
+          staleScopeCount: 92,
+          createdSyncCoverage: {
+            catalog: "available",
+            mode: "automatic",
+            scannedTypeCount: 40,
+            totalTypeCount: 132,
+            complete: false,
+          },
+        });
+      }
+    }, { capture: true });
+  });
+  await page.goto("/src/ui/demo-harness.html?scenario=connected");
+  const board = boardFrame(page);
+
+  await expect(board.locator(".stale-banner--progress")).toContainText(
+    "已扫描 40/132 类，后续自动刷新继续",
+  );
+  await expect(board.getByRole("alert")).toHaveCount(0);
+  await expect(board.getByText("92 个范围使用缓存")).toHaveCount(0);
 });
 
 test("custom refresh dialog validates input and restores keyboard focus", async ({ page }) => {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAutoRefresh } from "../src/ui/use-auto-refresh.js";
@@ -17,6 +17,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -35,7 +36,7 @@ describe("useAutoRefresh", () => {
     await act(() => vi.advanceTimersByTimeAsync(intervalSeconds * 1000 - 1));
     expect(performRefresh).not.toHaveBeenCalled();
     await act(() => vi.advanceTimersByTimeAsync(1));
-    expect(performRefresh).toHaveBeenCalledOnce();
+    expect(performRefresh).toHaveBeenCalledWith("automatic");
     },
   );
 
@@ -69,7 +70,7 @@ describe("useAutoRefresh", () => {
     expect(performRefresh).toHaveBeenCalledOnce();
   });
 
-  it("shares one in-flight Promise and resets the deadline after manual refresh", async () => {
+  it("coalesces repeated manual refreshes without changing the automatic deadline", async () => {
     let release!: () => void;
     const performRefresh = vi.fn().mockReturnValue(new Promise<{ retryAfterSeconds?: number }>(
       (resolve) => { release = () => resolve({}); },
@@ -87,10 +88,104 @@ describe("useAutoRefresh", () => {
       second = result.current.requestRefresh();
     });
     expect(second).toBe(first);
-    expect(performRefresh).toHaveBeenCalledOnce();
+    expect(performRefresh).toHaveBeenCalledWith("manual");
     await act(async () => release());
+    await act(() => vi.advanceTimersByTimeAsync(5_000));
+    expect(performRefresh).toHaveBeenCalledTimes(2);
+    expect(performRefresh).toHaveBeenLastCalledWith("automatic");
+  });
+
+  it("coalesces repeated automatic refreshes by mode", async () => {
+    const refresh = deferred<{ retryAfterSeconds?: number }>();
+    const performRefresh = vi.fn().mockReturnValue(refresh.promise);
+    const { result } = renderHook(() => useAutoRefresh({
+      enabled: true,
+      intervalSeconds: 5,
+      performRefresh,
+    }));
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = result.current.requestRefresh("automatic");
+      second = result.current.requestRefresh("automatic");
+    });
+
+    expect(second).toBe(first);
+    expect(performRefresh).toHaveBeenCalledTimes(1);
+    expect(performRefresh).toHaveBeenCalledWith("automatic");
+    await act(async () => refresh.resolve({}));
+  });
+
+  it("forwards a manual click while an automatic refresh is in flight", async () => {
+    const automatic = deferred<{ retryAfterSeconds?: number }>();
+    const manual = deferred<{ retryAfterSeconds?: number }>();
+    const performRefresh = vi.fn((mode: "manual" | "automatic") => (
+      mode === "automatic" ? automatic.promise : manual.promise
+    ));
+    const { result } = renderHook(() => useAutoRefresh({
+      enabled: true,
+      intervalSeconds: 5,
+      performRefresh,
+    }));
+
+    act(() => {
+      void result.current.requestRefresh("automatic");
+      void result.current.requestRefresh();
+    });
+
+    expect(performRefresh.mock.calls.map(([mode]) => mode))
+      .toEqual(["automatic", "manual"]);
+    expect(result.current.pending).toBe(true);
+    await act(async () => automatic.resolve({}));
+    expect(result.current.pending).toBe(true);
+    await act(async () => manual.resolve({}));
+    expect(result.current.pending).toBe(false);
+  });
+
+  it("forwards a timer tick while a manual refresh is in flight", async () => {
+    const manual = deferred<{ retryAfterSeconds?: number }>();
+    const automatic = deferred<{ retryAfterSeconds?: number }>();
+    const performRefresh = vi.fn((mode: "manual" | "automatic") => (
+      mode === "manual" ? manual.promise : automatic.promise
+    ));
+    const { result } = renderHook(() => useAutoRefresh({
+      enabled: true,
+      intervalSeconds: 5,
+      performRefresh,
+    }));
+
+    act(() => { void result.current.requestRefresh(); });
+    await act(() => vi.advanceTimersByTimeAsync(5_000));
+
+    expect(performRefresh.mock.calls.map(([mode]) => mode))
+      .toEqual(["manual", "automatic"]);
+    expect(result.current.pending).toBe(true);
+    await act(async () => manual.resolve({}));
+    expect(result.current.pending).toBe(true);
+    await act(async () => automatic.resolve({}));
+    expect(result.current.pending).toBe(false);
+  });
+
+  it("reschedules the timer only after the automatic refresh settles", async () => {
+    const automatic = deferred<{ retryAfterSeconds?: number }>();
+    const nextAutomatic = deferred<{ retryAfterSeconds?: number }>();
+    const performRefresh = vi.fn()
+      .mockReturnValueOnce(automatic.promise)
+      .mockReturnValueOnce(nextAutomatic.promise);
+    renderHook(() => useAutoRefresh({
+      enabled: true,
+      intervalSeconds: 5,
+      performRefresh,
+    }));
+
+    await act(() => vi.advanceTimersByTimeAsync(5_000));
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(performRefresh).toHaveBeenCalledTimes(1);
+
+    await act(async () => automatic.resolve({}));
     await act(() => vi.advanceTimersByTimeAsync(4_999));
-    expect(performRefresh).toHaveBeenCalledOnce();
+    expect(performRefresh).toHaveBeenCalledTimes(1);
     await act(() => vi.advanceTimersByTimeAsync(1));
     expect(performRefresh).toHaveBeenCalledTimes(2);
   });
@@ -110,7 +205,7 @@ describe("useAutoRefresh", () => {
     visibility = "visible";
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(performRefresh).toHaveBeenCalledOnce();
+    expect(performRefresh).toHaveBeenCalledWith("automatic");
   });
 
   it("uses the longer provider cooldown after partial and full rate limits", async () => {
@@ -124,7 +219,7 @@ describe("useAutoRefresh", () => {
       performRefresh,
     }));
 
-    await act(() => result.current.requestRefresh());
+    await act(() => result.current.requestRefresh("automatic"));
     await act(() => vi.advanceTimersByTimeAsync(29_999));
     expect(performRefresh).toHaveBeenCalledOnce();
     await act(() => vi.advanceTimersByTimeAsync(1));
@@ -145,7 +240,7 @@ describe("useAutoRefresh", () => {
       performRefresh,
     }));
 
-    await act(() => result.current.requestRefresh().catch(() => undefined));
+    await act(() => result.current.requestRefresh("automatic").catch(() => undefined));
     await act(() => vi.advanceTimersByTimeAsync(4_999));
     expect(performRefresh).toHaveBeenCalledOnce();
     await act(() => vi.advanceTimersByTimeAsync(1));
@@ -188,3 +283,13 @@ describe("useAutoRefresh", () => {
     expect(clearTimeout).toHaveBeenCalled();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}

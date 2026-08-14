@@ -215,7 +215,32 @@ describe("FlowRivet taskboard", () => {
     expect(screen.getByText("旧待办 1")).toBeTruthy();
     expect(await screen.findByText("最新待办 1")).toBeTruthy();
     expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
-      .toHaveLength(1);
+      .toEqual([["refresh_my_work_items", { refreshMode: "manual" }]]);
+  });
+
+  it("does not announce an empty success when the entry refresh reports a sync error", async () => {
+    const failed = {
+      ...snapshotWithFeishuState("connected"),
+      items: [],
+      syncErrorCode: "work_item_sync_failed" as const,
+      syncSummary: { successfulProjects: 0, failedProjects: 2, itemCount: 0 },
+    };
+    const callTool = vi.fn(async (name: string) => ({
+      content: [],
+      structuredContent: name === "refresh_my_work_items"
+        ? failed
+        : { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" },
+    }));
+
+    render(<App
+      initialSnapshot={snapshotWithFeishuState("connected")}
+      bridge={createBridge({ callTool }, {
+        get: vi.fn().mockResolvedValue({ refreshIntervalSeconds: 0 }),
+      })}
+    />);
+
+    expect(await screen.findByText("工作项同步失败，请重试")).toBeTruthy();
+    expect(screen.queryByText("已同步 0 个工作项")).toBeNull();
   });
 
   it("applies a newer host snapshot to an already mounted taskboard", async () => {
@@ -909,7 +934,7 @@ describe("FlowRivet taskboard", () => {
 
     await user.click(screen.getByRole("button", { name: "刷新看板" }));
 
-    expect(callTool).toHaveBeenCalledWith("refresh_my_work_items", {});
+    expect(callTool).toHaveBeenCalledWith("refresh_my_work_items", { refreshMode: "manual" });
     expect(await screen.findByText("已同步 0 个工作项")).toBeTruthy();
     expect(screen.getByText("0 个工作项 · 2 个项目")).toBeTruthy();
   });
@@ -920,8 +945,122 @@ describe("FlowRivet taskboard", () => {
       syncSummary: { successfulProjects: 1, failedProjects: 1, itemCount: 7 },
     }} bridge={createBridge()} />);
 
-    expect(screen.getByText("1 个项目同步失败，已保留其他结果")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent)
+      .toContain("1 个项目同步失败，已保留其他结果");
     expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
+  });
+
+  it("shows expected automatic rotation as neutral progress without cache degradation", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      dataFreshness: "mixed",
+      freshScopeCount: 40,
+      staleScopeCount: 92,
+      createdSyncCoverage: {
+        catalog: "available",
+        mode: "automatic",
+        scannedTypeCount: 40,
+        totalTypeCount: 132,
+        complete: false,
+      },
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("status").textContent)
+      .toContain("已扫描 40/132 类，后续自动刷新继续");
+    expect(document.body.textContent).not.toContain("92 个范围使用缓存");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps automatic progress and project query failures visible together", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      syncSummary: { successfulProjects: 1, failedProjects: 1, itemCount: 7 },
+      createdSyncCoverage: {
+        catalog: "available",
+        mode: "automatic",
+        scannedTypeCount: 40,
+        totalTypeCount: 132,
+        complete: false,
+      },
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("status").textContent).toContain("已扫描 40/132 类");
+    expect(screen.getByRole("alert").textContent).toContain("1 个项目同步失败");
+  });
+
+  it("shows known partial coverage and a separate directory warning", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      createdSyncCoverage: {
+        catalog: "partial",
+        mode: "automatic",
+        scannedTypeCount: 40,
+        knownTypeCount: 120,
+        failedProjectCount: 2,
+        complete: false,
+      },
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("status").textContent)
+      .toContain("已扫描 40/120 个已知类型");
+    expect(screen.getByRole("alert").textContent)
+      .toContain("2 个项目的工作项类型目录读取失败");
+  });
+
+  it("shows completed manual full-scan coverage without rotation copy", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      createdSyncCoverage: {
+        catalog: "available",
+        mode: "manual",
+        scannedTypeCount: 132,
+        totalTypeCount: 132,
+        complete: true,
+      },
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("status").textContent).toContain("已扫描全部 132 类");
+    expect(document.body.textContent).not.toContain("后续自动刷新继续");
+  });
+
+  it("announces unavailable created-task catalogs as an actual warning", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      createdSyncCoverage: {
+        catalog: "unavailable",
+        mode: "manual",
+        scannedTypeCount: 0,
+        complete: false,
+      },
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("alert").textContent)
+      .toContain("无法读取工作项类型目录");
+  });
+
+  it("does not hide cache or rate-limit warnings behind rotation progress", () => {
+    render(<App initialSnapshot={{
+      ...demoTaskboardSnapshot,
+      dataFreshness: "mixed",
+      freshScopeCount: 40,
+      staleScopeCount: 92,
+      cacheWarningCode: "cache_write_failed",
+      freshnessReasonCode: "provider_rate_limited",
+      retryAfterSeconds: 60,
+      createdSyncCoverage: {
+        catalog: "available",
+        mode: "automatic",
+        scannedTypeCount: 40,
+        totalTypeCount: 132,
+        complete: false,
+      },
+    }} bridge={createBridge()} />);
+
+    expect(screen.getByRole("status").textContent).toContain("已扫描 40/132 类");
+    const warnings = screen.getAllByRole("alert").map((entry) => entry.textContent).join(" ");
+    expect(warnings).toContain("本地缓存写入失败");
+    expect(warnings).toContain("请求频率受限");
+    expect(warnings).toContain("92 个范围使用缓存");
   });
 
   it("shows a retryable error when refresh fails", async () => {
@@ -977,7 +1116,7 @@ describe("FlowRivet taskboard", () => {
     render(<App initialSnapshot={offlineSnapshot()} bridge={createBridge()} />);
 
     expect(screen.getByRole("region", { name: "工作项看板" })).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("离线缓存");
+    expect(screen.getByRole("alert").textContent).toContain("离线缓存");
     expect(screen.getByRole("button", { name: "重新连接 TAPD" })).toBeTruthy();
     expect(screen.queryByLabelText("TAPD Token")).toBeNull();
   });
@@ -997,7 +1136,7 @@ describe("FlowRivet taskboard", () => {
       staleScopeCount: 2,
     }} bridge={createBridge()} />);
 
-    expect(screen.getByRole("status").textContent).toContain("2 个范围使用缓存");
+    expect(screen.getByRole("alert").textContent).toContain("2 个范围使用缓存");
     expect(screen.getAllByText("缓存").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /打开缓存工作项/ }).length)
       .toBeGreaterThan(0);
@@ -1178,6 +1317,9 @@ describe("FlowRivet taskboard", () => {
     await act(() => vi.advanceTimersByTimeAsync(5_000));
     expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
       .toHaveLength(1);
+    expect(callTool).toHaveBeenCalledWith("refresh_my_work_items", {
+      refreshMode: "automatic",
+    });
     await act(() => vi.advanceTimersByTimeAsync(59_999));
     expect(callTool.mock.calls.filter(([name]) => name === "refresh_my_work_items"))
       .toHaveLength(1);

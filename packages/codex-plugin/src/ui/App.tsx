@@ -24,7 +24,7 @@ import { TapdLogin, TapdReconnectDialog } from "./components/TapdLogin.js";
 import { WorkItemDetailDrawer } from "./components/WorkItemDetailDrawer.js";
 import { RepositoryDialog } from "./components/RepositoryDialog.js";
 import { UpdateReadyNotice } from "./components/UpdateReadyNotice.js";
-import { useAutoRefresh } from "./use-auto-refresh.js";
+import { useAutoRefresh, type RefreshMode } from "./use-auto-refresh.js";
 import { useProviderLogin } from "./use-provider-login.js";
 import { useRuntimeVersion } from "./use-runtime-version.js";
 import { useGitLabConnection } from "./use-gitlab-connection.js";
@@ -48,6 +48,13 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   const [lastSyncedAt, setLastSyncedAt] = useState(initialSnapshot.lastSyncedAt);
   const [dataFreshness, setDataFreshness] = useState(initialSnapshot.dataFreshness);
   const [staleScopeCount, setStaleScopeCount] = useState(initialSnapshot.staleScopeCount);
+  const [cacheWarningCode, setCacheWarningCode] = useState(initialSnapshot.cacheWarningCode);
+  const [freshnessReasonCode, setFreshnessReasonCode] = useState(
+    initialSnapshot.freshnessReasonCode,
+  );
+  const [createdSyncCoverage, setCreatedSyncCoverage] = useState(
+    initialSnapshot.createdSyncCoverage,
+  );
   const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState(
     initialSnapshot.lastSuccessfulSyncAt,
   );
@@ -137,7 +144,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
   useEffect(() => {
     if (!refreshConnectedFeishuOnEntry.current) return;
     refreshConnectedFeishuOnEntry.current = false;
-    void refreshCoordinator.requestRefresh().catch(() => undefined);
+    void refreshCoordinator.requestRefresh("manual").catch(() => undefined);
   }, [refreshCoordinator.requestRefresh]);
 
   useEffect(() => {
@@ -191,6 +198,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     setLastSyncedAt(snapshot.lastSyncedAt);
     setDataFreshness(snapshot.dataFreshness);
     setStaleScopeCount(snapshot.staleScopeCount);
+    setCacheWarningCode(snapshot.cacheWarningCode);
+    setFreshnessReasonCode(snapshot.freshnessReasonCode);
+    setCreatedSyncCoverage(snapshot.createdSyncCoverage);
     setLastSuccessfulSyncAt(snapshot.lastSuccessfulSyncAt);
   }
 
@@ -247,8 +257,14 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
   }
 
-  async function loadBoard(tool: "open_my_taskboard" | "refresh_my_work_items") {
-    const result = await bridge.callTool(tool, {});
+  async function loadBoard(
+    tool: "open_my_taskboard" | "refresh_my_work_items",
+    refreshMode: RefreshMode = "manual",
+  ) {
+    const result = await bridge.callTool(
+      tool,
+      tool === "refresh_my_work_items" ? { refreshMode } : {},
+    );
     if (result.isError) {
       const text = result.content
         .filter((entry) => entry.type === "text")
@@ -378,6 +394,9 @@ export function App({ initialSnapshot, bridge }: AppProps) {
       setSyncErrorCode(undefined);
       setDataFreshness("live");
       setStaleScopeCount(0);
+      setCacheWarningCode(undefined);
+      setFreshnessReasonCode(undefined);
+      setCreatedSyncCoverage(undefined);
       setLastSuccessfulSyncAt(undefined);
       setMenuOpen(false);
       providerLogin.clear();
@@ -389,9 +408,10 @@ export function App({ initialSnapshot, bridge }: AppProps) {
     }
   }
 
-  async function refreshBoard() {
+  async function refreshBoard(mode: RefreshMode) {
     try {
-      const snapshot = await loadBoard("refresh_my_work_items");
+      const snapshot = await loadBoard("refresh_my_work_items", mode);
+      if (snapshot.syncErrorCode) throw new Error(snapshot.syncErrorCode);
       setNotice(`已同步 ${snapshot.syncSummary.itemCount} 个工作项`);
       return {
         ...(snapshot.freshnessReasonCode === "provider_rate_limited"
@@ -450,7 +470,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         providerLoginActive={Boolean(providerLogin.session
           && ["starting", "waiting", "verifying"].includes(providerLogin.session.state))}
         onFullscreen={() => void enterFullscreen()}
-        onRefresh={() => void refreshCoordinator.requestRefresh().catch(() => undefined)}
+        onRefresh={() => void refreshCoordinator.requestRefresh("manual").catch(() => undefined)}
         onToggleMenu={() => setMenuOpen((open) => !open)}
         notificationCenter={(
           <NotificationCenter
@@ -516,7 +536,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
             {syncErrorCode ? (
               <p className="sync-error" role="alert">工作项同步失败，请重试</p>
             ) : syncSummary.failedProjects > 0 ? (
-              <p className="sync-warning" role="status">
+              <p className="sync-warning" role="alert">
                 {syncSummary.failedProjects} 个项目同步失败，已保留其他结果
               </p>
             ) : null}
@@ -525,6 +545,18 @@ export function App({ initialSnapshot, bridge }: AppProps) {
               items={filteredItems}
               dataFreshness={dataFreshness}
               staleScopeCount={staleScopeCount}
+              cacheWarningCode={cacheWarningCode}
+              freshnessReasonCode={freshnessReasonCode}
+              createdSyncCoverage={createdSyncCoverage}
+              suppressMixedWarning={Boolean(
+                createdSyncCoverage?.catalog === "available"
+                && createdSyncCoverage.mode === "automatic"
+                && !createdSyncCoverage.complete
+                && syncSummary.failedProjects === 0
+                && !syncErrorCode
+                && !cacheWarningCode
+                && !freshnessReasonCode
+              )}
               lastSuccessfulSyncAt={lastSuccessfulSyncAt}
               reconnectButtonRef={reconnectOpener}
               onReconnect={() => {
