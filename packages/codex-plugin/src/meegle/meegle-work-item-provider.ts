@@ -650,7 +650,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         projectExternalId,
         providerItemTypePrefix: "created:",
       })),
-      ...(created.authoritativeScopeInventories.length > 0
+      ...(created.coverage.catalog !== "unavailable"
         ? { authoritativeScopeInventories: created.authoritativeScopeInventories }
         : {}),
       createdSyncCoverage: created.coverage,

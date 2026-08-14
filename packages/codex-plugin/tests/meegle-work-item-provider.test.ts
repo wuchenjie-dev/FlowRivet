@@ -1454,6 +1454,24 @@ describe("Meegle work item provider", () => {
     expect(unavailable.authoritativeScopeInventories).toBeUndefined();
   });
 
+  it("publishes an authoritative empty inventory for an available empty project catalog", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([]);
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available",
+      mode: "manual",
+      scannedTypeCount: 0,
+      totalTypeCount: 0,
+      complete: true,
+    });
+    expect(result.authoritativeScopeInventories).toEqual([]);
+  });
+
   it("logs exactly once and leaves the automatic cursor uncommitted on identity mismatch", async () => {
     const client = new FakeClient();
     const types = Array.from({ length: 47 }, (_, index) => ({
