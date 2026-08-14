@@ -171,20 +171,35 @@ function createdQuerySchema<Row extends z.ZodType>(rowSchema: Row) {
       }).strict()]),
     }).strict()]),
   }).strict().superRefine((query, context) => {
-    const rows = query.data["1"];
-    if (query.list[0].count !== rows.length) {
+    const rows = query.data && typeof query.data === "object"
+      ? Reflect.get(query.data, "1") as unknown
+      : undefined;
+    const reportedCount = Array.isArray(query.list) ? query.list[0]?.count : undefined;
+    if (!Array.isArray(rows) || typeof reportedCount !== "number") return;
+    if (reportedCount !== rows.length) {
       context.addIssue({
         code: "custom",
         message: "created query count must match row count",
         path: ["list", 0, "count"],
       });
     }
-    const workItemIds = rows.map((row) => {
-      const fields = (row as {
-        moql_field_list: Array<{ key: string; value: { long_value?: number } }>;
-      }).moql_field_list;
-      return fields.find((field) => field.key === "work_item_id")!.value.long_value;
-    });
+    const workItemIds: number[] = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") return;
+      const fields = Reflect.get(row, "moql_field_list") as unknown;
+      if (!Array.isArray(fields)) return;
+      const idField = fields.find((field) => field
+        && typeof field === "object"
+        && Reflect.get(field, "key") === "work_item_id");
+      if (!idField) return;
+      const value = Reflect.get(idField, "value") as unknown;
+      if (!value || typeof value !== "object") return;
+      const workItemId = Reflect.get(value, "long_value") as unknown;
+      if (typeof workItemId !== "number"
+        || !Number.isInteger(workItemId)
+        || workItemId < 0) return;
+      workItemIds.push(workItemId);
+    }
     if (new Set(workItemIds).size !== workItemIds.length) {
       context.addIssue({
         code: "custom",

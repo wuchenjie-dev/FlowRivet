@@ -153,11 +153,12 @@ describe("Meegle CLI client", () => {
     },
   ]) {
     it.each([
-      ["count/rows mismatch", 2, false],
-      ["reported count over 50", 51, false],
-      ["duplicate work item IDs", 2, true],
+      ["count/rows mismatch", 2, false, false],
+      ["reported count over 50", 51, false, false],
+      ["duplicate work item IDs", 2, true, false],
+      ["rows missing a work item ID", 1, false, true],
     ] as const)(`rejects %s through the ${query.name} production parser`, async (
-      _failure, reportedCount, duplicateRow,
+      _failure, reportedCount, duplicateRow, missingWorkItemId,
     ) => {
       const response = JSON.parse(await readFile(
         new URL(`./fixtures/meegle/${query.fixture}`, import.meta.url), "utf8",
@@ -166,6 +167,11 @@ describe("Meegle CLI client", () => {
         list: [{ count: number }];
       };
       if (duplicateRow) response.data["1"].push(response.data["1"][0]!);
+      if (missingWorkItemId) {
+        const fields = response.data["1"][0]!.moql_field_list;
+        const idIndex = fields.findIndex((field) => field.key === "work_item_id");
+        fields[idIndex] = fields.find((field) => field.key !== "work_item_id")!;
+      }
       response.list[0].count = reportedCount;
       const runner = new FakeRunner();
       runner.run.mockResolvedValue({ stdout: JSON.stringify(response), exitCode: 0 });
