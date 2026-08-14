@@ -438,11 +438,19 @@ export class SqliteWorkItemCacheStore implements WorkItemCacheStore {
         ORDER BY project_external_id
       `).all(namespaceKey, ...retainedProjectIds) as unknown as ProjectRow[];
       const itemRows = database.prepare(`
-        SELECT project_external_id, provider_item_type, item_json
-        FROM cache_items
-        WHERE namespace_key = ?
-        ORDER BY project_external_id, provider_item_type, item_key
-      `).all(namespaceKey) as unknown as ItemRow[];
+        SELECT items.project_external_id, items.provider_item_type, items.item_json
+        FROM cache_items AS items
+        INNER JOIN cache_scopes AS scopes
+          ON scopes.namespace_key = items.namespace_key
+          AND scopes.project_external_id = items.project_external_id
+          AND scopes.provider_item_type = items.provider_item_type
+        WHERE items.namespace_key = ?
+          ${minimumLastSuccessAt ? "AND scopes.last_success_at >= ?" : ""}
+        ORDER BY items.project_external_id, items.provider_item_type, items.item_key
+      `).all(
+        namespaceKey,
+        ...(minimumLastSuccessAt ? [minimumLastSuccessAt] : []),
+      ) as unknown as ItemRow[];
 
       const itemsByScope = new Map<string, WorkItem[]>();
       for (const row of itemRows) {

@@ -320,6 +320,46 @@ describe("SQLite work item cache store", () => {
     expect(readCacheRows(path)).toEqual(rowsBefore);
   });
 
+  it("does not parse or delete expired item payloads during an exact account read", async () => {
+    const mixed = await fixture();
+    const old = new Date("2026-07-01T12:00:00.000Z");
+    await mixed.store.mergeScopes({
+      account: account(), projects: [project("A")], now,
+      scopes: [scope("A", "current", "task", [item("current", "A", "current")])],
+    });
+    await mixed.store.mergeScopes({
+      account: account(), projects: [project("A")], now: old,
+      scopes: [scope("A", "expired", "task", [item("expired", "A", "expired")])],
+    });
+    corruptItemPayload(mixed.path, "expired");
+
+    await expect(mixed.store.loadAccount(account(), now)).resolves.toMatchObject({
+      scopes: [{ providerItemType: "current" }],
+      items: [{ externalId: "current" }],
+    });
+    expect(readItemPayload(mixed.path, "expired")).toBe("{bad json");
+
+    const expiredOnly = await fixture();
+    await expiredOnly.store.mergeScopes({
+      account: account(), projects: [project("A")], now: old,
+      scopes: [scope("A", "expired", "task", [item("expired", "A", "expired")])],
+    });
+    corruptItemPayload(expiredOnly.path, "expired");
+
+    await expect(expiredOnly.store.loadAccount(account(), now)).resolves.toBeUndefined();
+    expect(readItemPayload(expiredOnly.path, "expired")).toBe("{bad json");
+
+    const currentCorrupt = await fixture();
+    await currentCorrupt.store.mergeScopes({
+      account: account(), projects: [project("A")], now,
+      scopes: [scope("A", "current", "task", [item("current", "A", "current")])],
+    });
+    corruptItemPayload(currentCorrupt.path, "current");
+
+    await expect(currentCorrupt.store.loadAccount(account(), now))
+      .rejects.toMatchObject({ code: "cache_read_failed" });
+  });
+
   it("expires each scope only after its own seven-day boundary", async () => {
     const { store } = await fixture();
     await store.mergeScopes({
@@ -617,4 +657,22 @@ function readCacheRows(path: string) {
   };
   database.close();
   return rows;
+}
+
+function corruptItemPayload(path: string, providerItemType: string) {
+  const database = new DatabaseSync(path);
+  database.prepare(`
+    UPDATE cache_items SET item_json = '{bad json'
+    WHERE provider_item_type = ?
+  `).run(providerItemType);
+  database.close();
+}
+
+function readItemPayload(path: string, providerItemType: string) {
+  const database = new DatabaseSync(path);
+  const row = database.prepare(`
+    SELECT item_json FROM cache_items WHERE provider_item_type = ?
+  `).get(providerItemType) as { item_json: string } | undefined;
+  database.close();
+  return row?.item_json;
 }
