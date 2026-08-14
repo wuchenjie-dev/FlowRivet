@@ -99,7 +99,7 @@ describe("Meegle CLI client", () => {
     expect(page.data["1"]?.[0]?.moql_field_list).toHaveLength(3);
     expect(runner.run.mock.calls[1]![0].args).toEqual([
       "workitem", "query", "--project-key", "PROJ",
-      "--mql", "SELECT `work_item_id`, `name`, `work_item_status` FROM `Project`.`Redacted Type` WHERE `·创建者` = current_login_user()",
+      "--mql", "SELECT `work_item_id`, `name`, `work_item_status` FROM `Project`.`Redacted Type` WHERE `创建者` = current_login_user()",
       "--profile", "default", "--format", "json",
     ]);
   });
@@ -127,7 +127,7 @@ describe("Meegle CLI client", () => {
     expect(page.data["1"]?.[0]?.moql_field_list).toHaveLength(4);
     expect(runner.run.mock.calls[0]![0].args).toEqual([
       "workitem", "query", "--project-key", "PROJ",
-      "--mql", "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Solution` WHERE `·创建者` = current_login_user()",
+      "--mql", "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Solution` WHERE `创建者` = current_login_user()",
       "--profile", "default", "--format", "json",
     ]);
   });
@@ -181,9 +181,11 @@ describe("Meegle CLI client", () => {
       await expect(query.run(client(runner), project, type))
         .rejects.toMatchObject({ code: "provider_invalid_response" });
       if (query.name === "legacy completion query") {
-        expect(runner.run.mock.calls[0]![0].args).toContain(
-          "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Solution` WHERE `·创建者` = current_login_user()",
-        );
+        expect(runner.run.mock.calls[0]![0].args).toEqual([
+          "workitem", "query", "--project-key", "PROJ",
+          "--mql", "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间` FROM `Project`.`Solution` WHERE `创建者` = current_login_user()",
+          "--profile", "default", "--format", "json",
+        ]);
       }
     });
   }

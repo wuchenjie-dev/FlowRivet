@@ -227,7 +227,7 @@ export class MeegleCliClient {
   ): Promise<MeegleCreatedBaseQuery> {
     const mql = "SELECT `work_item_id`, `name`, `work_item_status`"
       + ` FROM \`${validateMqlIdentifier(project.name)}\`.\`${validateMqlIdentifier(workItemType.name)}\``
-      + " WHERE `·创建者` = current_login_user()";
+      + " WHERE `创建者` = current_login_user()";
     return this.runJson([
       "workitem", "query",
       "--project-key", validateOpaqueKey(project.project_key),
@@ -244,7 +244,7 @@ export class MeegleCliClient {
   ): Promise<MeegleCreatedCompletionQuery> {
     const mql = "SELECT `work_item_id`, `name`, `work_item_status`, `完成时间`"
       + ` FROM \`${validateMqlIdentifier(project.name)}\`.\`${validateMqlIdentifier(workItemType.name)}\``
-      + " WHERE `·创建者` = current_login_user()";
+      + " WHERE `创建者` = current_login_user()";
     return this.runJson([
       "workitem", "query",
       "--project-key", validateOpaqueKey(project.project_key),
