@@ -939,6 +939,56 @@ describe("FlowRivet taskboard", () => {
     expect(screen.getByText("0 个工作项 · 2 个项目")).toBeTruthy();
   });
 
+  it("keeps manual refresh available during automatic sync and disables it only for manual sync", async () => {
+    vi.useFakeTimers();
+    const automatic = deferred<{ content: []; structuredContent: TaskboardSnapshot }>();
+    const manual = deferred<{ content: []; structuredContent: TaskboardSnapshot }>();
+    const callTool = vi.fn((name: string, arguments_: Record<string, unknown>) => {
+      if (name === "refresh_my_work_items") {
+        return arguments_.refreshMode === "automatic" ? automatic.promise : manual.promise;
+      }
+      return Promise.resolve({
+        content: [] as [],
+        structuredContent: { version: "0.1.0", protocolVersion: 1, uiVersion: "0.1.0" },
+      });
+    });
+    render(<App
+      initialSnapshot={demoTaskboardSnapshot}
+      bridge={createBridge({
+        callTool,
+        getDisplayState: vi.fn(() => ({ canFullscreen: false, isFullscreen: false })),
+      }, {
+        get: vi.fn().mockResolvedValue({ refreshIntervalSeconds: 5 }),
+      })}
+    />);
+    await act(async () => Promise.resolve());
+
+    await act(() => vi.advanceTimersByTimeAsync(5_000));
+    expect(callTool).toHaveBeenCalledWith("refresh_my_work_items", {
+      refreshMode: "automatic",
+    });
+    const refreshButton = screen.getByRole("button", { name: "刷新看板" });
+    expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(refreshButton);
+    expect(callTool).toHaveBeenCalledWith("refresh_my_work_items", {
+      refreshMode: "manual",
+    });
+    expect((refreshButton as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => automatic.resolve({
+      content: [],
+      structuredContent: demoTaskboardSnapshot,
+    }));
+    expect((refreshButton as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => manual.resolve({
+      content: [],
+      structuredContent: demoTaskboardSnapshot,
+    }));
+    expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("keeps partial data and shows the failed project count", () => {
     render(<App initialSnapshot={{
       ...demoTaskboardSnapshot,

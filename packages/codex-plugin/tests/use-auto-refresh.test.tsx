@@ -247,6 +247,22 @@ describe("useAutoRefresh", () => {
     expect(performRefresh).toHaveBeenCalledTimes(2);
   });
 
+  it("allows the same mode to retry after its rejected Promise settles", async () => {
+    const performRefresh = vi.fn()
+      .mockRejectedValueOnce(new Error("provider_unavailable"))
+      .mockResolvedValueOnce({});
+    const { result } = renderHook(() => useAutoRefresh({
+      enabled: true,
+      intervalSeconds: 0,
+      performRefresh,
+    }));
+
+    await act(() => result.current.requestRefresh().catch(() => undefined));
+    await act(() => result.current.requestRefresh());
+
+    expect(performRefresh.mock.calls.map(([mode]) => mode)).toEqual(["manual", "manual"]);
+  });
+
   it("pauses while disconnected and restarts from a completed reconnect", async () => {
     const performRefresh = vi.fn().mockResolvedValue({});
     const { result, rerender } = renderHook(({ enabled }) => useAutoRefresh({

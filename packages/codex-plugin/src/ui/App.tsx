@@ -466,7 +466,7 @@ export function App({ initialSnapshot, bridge }: AppProps) {
         menuOpen={menuOpen}
         showFullscreen={displayState.canFullscreen && !displayState.isFullscreen}
         fullscreenPending={fullscreenPending}
-        refreshPending={refreshCoordinator.pending}
+        refreshPending={refreshCoordinator.manualPending}
         providerLoginActive={Boolean(providerLogin.session
           && ["starting", "waiting", "verifying"].includes(providerLogin.session.state))}
         onFullscreen={() => void enterFullscreen()}

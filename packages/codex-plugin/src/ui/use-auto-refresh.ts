@@ -18,6 +18,7 @@ export function useAutoRefresh({
   performRefresh,
 }: UseAutoRefreshOptions) {
   const [pending, setPending] = useState(false);
+  const [manualPending, setManualPending] = useState(false);
   const mounted = useRef(false);
   const enabledRef = useRef(enabled);
   const intervalRef = useRef(intervalSeconds);
@@ -45,7 +46,10 @@ export function useAutoRefresh({
     if (current) return current;
     if (mode === "automatic") clearTimer();
     activeModesRef.current.add(mode);
-    if (mounted.current) setPending(true);
+    if (mounted.current) {
+      setPending(true);
+      if (mode === "manual") setManualPending(true);
+    }
 
     let refresh: Promise<AutoRefreshOutcome>;
     try {
@@ -72,7 +76,10 @@ export function useAutoRefresh({
       .finally(() => {
         delete inFlightRef.current[mode];
         activeModesRef.current.delete(mode);
-        if (mounted.current) setPending(activeModesRef.current.size > 0);
+        if (mounted.current) {
+          setPending(activeModesRef.current.size > 0);
+          if (mode === "manual") setManualPending(false);
+        }
         if (mode === "automatic") {
           lastAttemptCompletedAtRef.current = performance.now();
           scheduleRef.current();
@@ -136,7 +143,7 @@ export function useAutoRefresh({
     scheduleRef.current();
   }, [enabled, intervalSeconds]);
 
-  return { requestRefresh, markAttemptCompleted, pending };
+  return { requestRefresh, markAttemptCompleted, pending, manualPending };
 }
 
 function isRateLimitError(error: unknown) {
