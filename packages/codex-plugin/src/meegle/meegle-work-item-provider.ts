@@ -154,11 +154,14 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
 
     const mode = input.refreshMode ?? "manual";
     let created: CreatedFetchResult | undefined;
+    let diagnostic: Omit<CreatedSyncDiagnosticEvent, "batchCompleted"> | undefined;
     let batchCompleted = false;
     try {
       const fetched = await Promise.all([
         this.fetchActions(profile),
-        this.fetchCreated(profile, before.user_key, mode),
+        this.fetchCreated(profile, before.user_key, mode, (event) => {
+          diagnostic = event;
+        }),
       ]);
       const results = fetched[0];
       created = fetched[1];
@@ -178,9 +181,9 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       batchCompleted = true;
       return normalized;
     } finally {
-      if (created) {
+      if (diagnostic) {
         try {
-          this.diagnosticLogger.completed({ ...created.diagnostic, batchCompleted });
+          this.diagnosticLogger.completed({ ...diagnostic, batchCompleted });
         } catch {
           // Diagnostics must never change synchronization behavior.
         }
@@ -243,24 +246,28 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     profile: string,
     userKey: string,
     mode: "manual" | "automatic",
+    onDiagnostic: (event: Omit<CreatedSyncDiagnosticEvent, "batchCompleted">) => void,
   ): Promise<CreatedFetchResult> {
     let directory: CreatedDirectory;
     try {
       directory = await this.getCreatedDirectory(profile, userKey);
     } catch (error) {
+      if (isProviderCancelled(error)) throw error;
+      const diagnostic = {
+        mode,
+        catalog: "unavailable" as const,
+        totalTypeCount: 0,
+        scannedTypeCount: 0,
+        attemptedIdentityHashes: [],
+      };
+      onDiagnostic(diagnostic);
       return {
         authoritativeProjectScopePrefixes: [],
         discoveredProjects: [],
         authoritativeProjectIds: [],
         authoritativeScopeInventories: [],
         coverage: { catalog: "unavailable", mode, scannedTypeCount: 0, complete: false },
-        diagnostic: {
-          mode,
-          catalog: "unavailable",
-          totalTypeCount: 0,
-          scannedTypeCount: 0,
-          attemptedIdentityHashes: [],
-        },
+        diagnostic,
         results: [{
           outcome: "error",
           projectExternalId: "account:created",
@@ -289,6 +296,15 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       const request = byIdentity.get(`${projectKey}\0${typeKey}`);
       return request ? [request] : [];
     });
+    const attemptedIdentityHashes: string[] = [];
+    const diagnostic = {
+      mode,
+      catalog: available ? "available" as const : "partial" as const,
+      totalTypeCount: allTypes.length,
+      scannedTypeCount: requests.length,
+      attemptedIdentityHashes,
+    };
+    onDiagnostic(diagnostic);
     let reportedCreatedCount = 0;
     const reserveCreatedCount = (count: number) => {
       reportedCreatedCount += count;
@@ -297,16 +313,25 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       }
     };
     let nextIndex = 0;
+    let cancellation: MeegleCliError | undefined;
     const worker = async () => {
-      while (nextIndex < requests.length) {
+      while (!cancellation && nextIndex < requests.length) {
         const request = requests[nextIndex++];
         if (!request) return;
+        attemptedIdentityHashes.push(createdSyncIdentityHash(
+          request.project.project_key,
+          request.workItemType.type_key,
+        ));
         try {
           const items = await this.fetchCreatedType(
             profile, request.project, request.workItemType, reserveCreatedCount,
           );
           results.push({ outcome: "success", ...request, items });
         } catch (error) {
+          if (isProviderCancelled(error)) {
+            cancellation ??= error;
+            return;
+          }
           results.push({
             outcome: "error",
             ...request,
@@ -321,6 +346,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       { length: Math.min(createdConcurrency, Math.max(1, requests.length)) },
       () => worker(),
     ));
+    if (cancellation) throw cancellation;
 
     const coverage: CreatedSyncCoverage = available
       ? {
@@ -353,14 +379,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       authoritativeProjectIds: directory.projects.map(({ project }) => project.project_key),
       authoritativeScopeInventories,
       coverage,
-      diagnostic: {
-        mode,
-        catalog: coverage.catalog,
-        totalTypeCount: allTypes.length,
-        scannedTypeCount: requests.length,
-        attemptedIdentityHashes: batch.selected.map(({ projectKey, typeKey }) =>
-          createdSyncIdentityHash(projectKey, typeKey)),
-      },
+      diagnostic,
       ...(batch.mode === "automatic" ? { commitToken: batch.commitToken } : {}),
       results,
     };
@@ -385,8 +404,9 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     const projects: CreatedDirectory["projects"] = [];
     const errors: CreatedResult[] = [];
     let nextIndex = 0;
+    let cancellation: MeegleCliError | undefined;
     const worker = async () => {
-      while (nextIndex < recentProjects.length) {
+      while (!cancellation && nextIndex < recentProjects.length) {
         const project = recentProjects[nextIndex++];
         if (!project) return;
         const cachedTypes = cache.successfulTypes.get(project.project_key);
@@ -403,6 +423,10 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
           cache.successfulTypes.set(project.project_key, workItemTypes);
           projects.push({ project, workItemTypes });
         } catch (error) {
+          if (isProviderCancelled(error)) {
+            cancellation ??= error;
+            return;
+          }
           errors.push({
             outcome: "error",
             project,
@@ -417,6 +441,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       { length: Math.min(createdConcurrency, Math.max(1, recentProjects.length)) },
       () => worker(),
     ));
+    if (cancellation) throw cancellation;
     const order = new Map(recentProjects.map((project, index) => [project.project_key, index]));
     projects.sort((left, right) =>
       (order.get(left.project.project_key) ?? 0) - (order.get(right.project.project_key) ?? 0));
@@ -432,10 +457,8 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     const baseQuery = await this.client.queryCreatedBaseWorkItems(profile, project, workItemType);
     const baseItems = parseCreatedQuery(baseQuery, false);
     reserveCount(baseItems.length);
-    const activeItems = baseItems.filter((item) =>
-      mapStateStage(`${item.statusKey} ${item.statusLabel}`) !== "done");
-    const completedItems = baseItems.filter((item) =>
-      mapStateStage(`${item.statusKey} ${item.statusLabel}`) === "done");
+    const activeItems = baseItems.filter((item) => createdStage(item) !== "done");
+    const completedItems = baseItems.filter((item) => createdStage(item) === "done");
     if (completedItems.length === 0) return activeItems;
 
     try {
@@ -452,7 +475,8 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
           return finishTime ? [{ ...item, finishTime }] : [];
         }),
       ];
-    } catch {
+    } catch (error) {
+      if (isProviderCancelled(error)) throw error;
       return activeItems;
     }
   }
@@ -774,7 +798,7 @@ function normalizeCreatedItem(
     || !projectExternalId || !projectName || !providerItemType) {
     return undefined;
   }
-  const stage = mapStateStage(`${statusKey} ${statusLabel}`);
+  const stage = createdStage(raw);
   const completedAt = normalizedDate(finishTime);
   if (stage === "done" && !completedAt) return undefined;
   return {
@@ -871,6 +895,31 @@ function mapStage(action: MeegleMyWorkAction, state: string): CanonicalStage {
   return mapStateStage(state);
 }
 
+const createdTerminalStatuses = new Set([
+  "done",
+  "closed",
+  "complete",
+  "completed",
+  "finish",
+  "finished",
+  "已完成",
+  "已关闭",
+]);
+
+function createdStage(item: Pick<CreatedItemData, "statusKey" | "statusLabel">): CanonicalStage {
+  const statusKey = normalizedStatusToken(item.statusKey);
+  const statusLabel = normalizedStatusToken(item.statusLabel);
+  if (createdTerminalStatuses.has(statusKey) || createdTerminalStatuses.has(statusLabel)) {
+    return "done";
+  }
+  const stage = mapStateStage(`${item.statusKey} ${item.statusLabel}`);
+  return stage === "done" ? "todo" : stage;
+}
+
+function normalizedStatusToken(value: string) {
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
 function mapStateStage(state: string): CanonicalStage {
   const normalized = state.toLowerCase();
   if (/(done|closed|complete|finish|已完成|已关闭)/u.test(normalized)) return "done";
@@ -919,4 +968,8 @@ function providerErrorCode(error: unknown): WorkItemErrorCode {
     return "provider_unavailable";
   }
   return "work_item_sync_failed";
+}
+
+function isProviderCancelled(error: unknown): error is MeegleCliError {
+  return error instanceof MeegleCliError && error.code === "provider_cancelled";
 }

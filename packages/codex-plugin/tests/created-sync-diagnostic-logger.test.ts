@@ -35,7 +35,7 @@ describe("created sync diagnostic logger", () => {
 
     expect(write).toHaveBeenCalledOnce();
     const output = String(write.mock.calls[0]?.[0]);
-    expect(JSON.parse(output)).toEqual({ event: "created_sync_completed", ...event });
+    expect(JSON.parse(output)).toEqual({ event: "created_sync.completed", ...event });
     expect(output).not.toContain("PRIVATE_PROJECT");
     expect(output).not.toContain("PRIVATE_TYPE");
     expect(output).not.toMatch(/account|task|cursor|session_id|cli_payload/iu);

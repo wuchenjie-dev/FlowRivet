@@ -1315,8 +1315,12 @@ describe("Meegle work item provider", () => {
       .listAccountWorkItems({ accountDisplayName: "Example User" });
 
     expect(client.queryCreatedCompletionWorkItems).toHaveBeenCalledOnce();
-    expect(result.scopes.flatMap(({ items }) => items).map((item) => [item.externalId, item.completedAt]))
-      .toEqual([["7", undefined], ["8", "2026-08-10T00:00:00.000Z"]]);
+    expect(result.scopes.flatMap(({ items }) => items)
+      .map((item) => [item.externalId, item.completedAt, item.stage]))
+      .toEqual([
+        ["7", undefined, "in_progress"],
+        ["8", "2026-08-10T00:00:00.000Z", "done"],
+      ]);
   });
 
   it("keeps active rows and does not create an error scope when completion enrichment fails", async () => {
@@ -1519,4 +1523,124 @@ describe("Meegle work item provider", () => {
     expect(events[0]?.attemptedIdentityHashes.every((hash) => /^[0-9a-f]{16}$/u.test(hash)))
       .toBe(true);
   });
+
+  it("propagates automatic base cancellation, logs false once, and retries the first batch", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 47 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${String(index).padStart(2, "0")}`,
+    }));
+    const events: CreatedSyncDiagnosticEvent[] = [];
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.queryCreatedBaseWorkItems.mockRejectedValue(new MeegleCliError("provider_cancelled"));
+    const provider = new MeegleWorkItemProvider({
+      client,
+      clock: () => now,
+      diagnosticLogger: {
+        completed(event) {
+          events.push(event);
+          throw new Error("logger failed");
+        },
+      },
+    });
+
+    await expect(provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    })).rejects.toMatchObject({ code: "provider_cancelled" });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ batchCompleted: false, mode: "automatic" });
+    expect(events[0]?.attemptedIdentityHashes.length).toBeGreaterThan(0);
+    expect(events[0]?.attemptedIdentityHashes.length).toBeLessThanOrEqual(4);
+
+    client.queryCreatedBaseWorkItems.mockReset();
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(types.slice(0, 40).map(({ type_key }) => type_key));
+    expect(events.map(({ batchCompleted }) => batchCompleted)).toEqual([false, true]);
+  });
+
+  it("propagates completion cancellation and leaves the automatic cursor at the first batch", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 47 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${String(index).padStart(2, "0")}`,
+    }));
+    const events: CreatedSyncDiagnosticEvent[] = [];
+    let cancelCompletion = true;
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.queryCreatedBaseWorkItems.mockImplementation(async () => cancelCompletion
+      ? createdBaseQuery([{ id: 1, statusKey: "completed", statusLabel: "Completed" }])
+      : emptyCreatedQuery());
+    client.queryCreatedCompletionWorkItems.mockRejectedValue(
+      new MeegleCliError("provider_cancelled"),
+    );
+    const provider = new MeegleWorkItemProvider({
+      client,
+      clock: () => now,
+      diagnosticLogger: { completed: (event) => events.push(event) },
+    });
+
+    await expect(provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    })).rejects.toMatchObject({ code: "provider_cancelled" });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.batchCompleted).toBe(false);
+
+    cancelCompletion = false;
+    client.queryCreatedBaseWorkItems.mockClear();
+    await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(types.slice(0, 40).map(({ type_key }) => type_key));
+    expect(events.map(({ batchCompleted }) => batchCompleted)).toEqual([false, true]);
+  });
+
+  it.each(["project-catalog", "type-metadata"] as const)(
+    "propagates created %s cancellation instead of reporting an available or partial batch",
+    async (path) => {
+      const client = new FakeClient();
+      client.getMyWorkPage.mockImplementation(pages({}));
+      if (path === "project-catalog") {
+        client.listRecentProjects.mockRejectedValue(new MeegleCliError("provider_cancelled"));
+      } else {
+        client.listRecentProjects.mockResolvedValue([createdProject]);
+        client.listWorkItemTypes.mockRejectedValue(new MeegleCliError("provider_cancelled"));
+      }
+
+      await expect(new MeegleWorkItemProvider({ client, clock: () => now })
+        .listAccountWorkItems({ accountDisplayName: "Example User", refreshMode: "automatic" }))
+        .rejects.toMatchObject({ code: "provider_cancelled" });
+      expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["Incomplete", "Not Completed"])(
+    "keeps non-terminal created status %s active without completion enrichment",
+    async (status) => {
+      const client = new FakeClient();
+      client.getMyWorkPage.mockImplementation(pages({}));
+      client.listRecentProjects.mockResolvedValue([createdProject]);
+      client.listWorkItemTypes.mockResolvedValue([createdType]);
+      client.queryCreatedBaseWorkItems.mockResolvedValue(createdBaseQuery([{
+        id: 7, statusKey: status, statusLabel: status,
+      }]));
+      client.queryCreatedCompletionWorkItems.mockRejectedValue(
+        new MeegleCliError("provider_unavailable"),
+      );
+
+      const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+        .listAccountWorkItems({ accountDisplayName: "Example User" });
+      const item = result.scopes.flatMap(({ items }) => items)[0];
+
+      expect(client.queryCreatedCompletionWorkItems).not.toHaveBeenCalled();
+      expect(item).toMatchObject({ externalId: "7" });
+      expect(item?.stage).not.toBe("done");
+    },
+  );
 });

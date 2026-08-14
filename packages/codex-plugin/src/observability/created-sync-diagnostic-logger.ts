@@ -22,7 +22,7 @@ export function createdSyncIdentityHash(projectKey: string, typeKey: string): st
 
 export class JsonStderrCreatedSyncDiagnosticLogger implements CreatedSyncDiagnosticLogger {
   completed(event: CreatedSyncDiagnosticEvent): void {
-    process.stderr.write(`${JSON.stringify({ event: "created_sync_completed", ...event })}\n`);
+    process.stderr.write(`${JSON.stringify({ event: "created_sync.completed", ...event })}\n`);
   }
 }
 
