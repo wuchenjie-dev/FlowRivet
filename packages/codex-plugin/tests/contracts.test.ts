@@ -275,6 +275,40 @@ describe("taskboard demo contract", () => {
     expect(auth.connection).not.toHaveProperty("accountKey");
   });
 
+  it("accepts only internally consistent created-item coverage", () => {
+    const available = {
+      catalog: "available",
+      mode: "manual",
+      scannedTypeCount: 3,
+      totalTypeCount: 3,
+      complete: true,
+    } as const;
+    expect(taskboardSnapshotSchema.parse({
+      ...demoTaskboardSnapshot,
+      createdSyncCoverage: available,
+    }).createdSyncCoverage).toEqual(available);
+
+    const invalidCoverage = [
+      { ...available, scannedTypeCount: 4 },
+      { ...available, complete: false },
+      { ...available, unknown: true },
+      { catalog: "partial", mode: "automatic", scannedTypeCount: 3, knownTypeCount: 2, failedProjectCount: 1, complete: false },
+      { catalog: "partial", mode: "automatic", scannedTypeCount: 1, knownTypeCount: 2, failedProjectCount: 0, complete: false },
+      { catalog: "unavailable", mode: "automatic", scannedTypeCount: 1, complete: false },
+      { catalog: "unavailable", mode: "automatic", scannedTypeCount: 0, complete: true },
+    ];
+    for (const createdSyncCoverage of invalidCoverage) {
+      expect(taskboardSnapshotSchema.safeParse({
+        ...demoTaskboardSnapshot,
+        createdSyncCoverage,
+      }).success).toBe(false);
+    }
+    expect(taskboardSnapshotSchema.safeParse({
+      ...demoTaskboardSnapshot,
+      cacheDiagnosticCodes: ["cache_read_failed"],
+    }).success).toBe(false);
+  });
+
   it("allows cooldown metadata only for provider rate limits", () => {
     const rateLimited = taskboardSnapshotSchema.parse({
       ...demoTaskboardSnapshot,

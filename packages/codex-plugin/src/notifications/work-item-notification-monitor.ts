@@ -80,6 +80,7 @@ export class WorkItemNotificationMonitor {
     const snapshot = await provider.synchronizer.sync({
       accountDisplayName: identity.accountDisplayName,
       projects: [],
+      refreshMode: "automatic",
       ...(identity.profileName ? { syncSessionKey: identity.profileName } : {}),
       cacheAccount: {
         providerId,

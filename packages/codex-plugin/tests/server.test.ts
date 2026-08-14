@@ -413,9 +413,11 @@ describe("taskboard MCP app", () => {
         selectDirectory: vi.fn().mockResolvedValue({ outcome: "cancelled" }),
       },
     } as RuntimeServices;
+    const workItemEvents: Array<Parameters<WorkItemOperationLogger["completed"]>[0]> = [];
     const server = createTaskboardMcpServer({
       uiBundlePath: await createBundle(),
       runtimeServices,
+      workItemLogger: { completed: (event) => workItemEvents.push(event) },
     });
     const client = new Client({ name: "flowrivet-provider-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -529,6 +531,7 @@ describe("taskboard MCP app", () => {
       expect(synced.service.sync).toHaveBeenCalledWith({
         accountDisplayName: "Example User",
         projects: [],
+        refreshMode: "manual",
         syncSessionKey: "default",
         cacheAccount: {
           providerId: "feishu-project",
@@ -536,6 +539,77 @@ describe("taskboard MCP app", () => {
           accountDisplayName: "Example User",
         },
       });
+
+      vi.mocked(synced.service.sync).mockClear();
+      workItemEvents.length = 0;
+      vi.mocked(synced.service.sync).mockImplementation(async (input) => ({
+        ...synced.result,
+        cacheWarningCode: input.refreshMode === "automatic"
+          ? "cache_write_failed" as const
+          : "cache_read_failed" as const,
+        cacheDiagnosticCodes: input.refreshMode === "automatic"
+          ? ["cache_read_failed", "cache_write_failed"] as const
+          : ["cache_read_failed"] as const,
+        ...(input.refreshMode === "automatic" ? {
+          createdSyncCoverage: {
+            catalog: "available" as const,
+            mode: "automatic" as const,
+            scannedTypeCount: 2,
+            totalTypeCount: 4,
+            complete: false,
+          },
+        } : {}),
+      }));
+      const [listedBoard, refreshedBoard] = await Promise.all([
+        client.callTool({ name: "list_my_work_items", arguments: {} }),
+        client.callTool({
+          name: "refresh_my_work_items",
+          arguments: { refreshMode: "automatic" },
+        }),
+      ]);
+      expect(listedBoard.structuredContent).not.toHaveProperty("cacheDiagnosticCodes");
+      expect(refreshedBoard.structuredContent).toMatchObject({
+        cacheWarningCode: "cache_write_failed",
+        createdSyncCoverage: {
+          catalog: "available",
+          mode: "automatic",
+          complete: false,
+        },
+      });
+      expect(refreshedBoard.structuredContent).not.toHaveProperty("cacheDiagnosticCodes");
+      expect(workItemEvents.filter((event) => [
+        "list_my_work_items",
+        "refresh_my_work_items",
+      ].includes(event.tool)).map((event) => ({
+        tool: event.tool,
+        codes: event.cacheDiagnosticCodes,
+      }))).toEqual(expect.arrayContaining([
+        { tool: "list_my_work_items", codes: ["cache_read_failed"] },
+        {
+          tool: "refresh_my_work_items",
+          codes: ["cache_read_failed", "cache_write_failed"],
+        },
+      ]));
+      const defaultRefresh = await client.callTool({
+        name: "refresh_my_work_items",
+        arguments: {},
+      });
+      expect(defaultRefresh.isError).not.toBe(true);
+      expect(vi.mocked(synced.service.sync).mock.calls.map(([input]) => input.refreshMode))
+        .toEqual(["manual", "automatic", "manual"]);
+      for (const [name, arguments_] of [
+        ["open_my_taskboard", { unknown: true }],
+        ["list_my_work_items", { unknown: true }],
+        ["refresh_my_work_items", { refreshMode: "background" }],
+        ["refresh_my_work_items", { refreshMode: "manual", unknown: true }],
+      ] as const) {
+        const invalid = await client.callTool({ name, arguments: arguments_ });
+        expect(invalid.isError).toBe(true);
+      }
+      expect(synced.service.sync).toHaveBeenCalledTimes(3);
+      vi.mocked(synced.service.sync).mockClear();
+      vi.mocked(synced.service.sync).mockResolvedValue(synced.result);
+      await client.callTool({ name: "open_my_taskboard", arguments: {} });
 
       connectionState = "disconnected";
       const cachedBoard = await client.callTool({ name: "open_my_taskboard", arguments: {} });
@@ -1066,6 +1140,7 @@ describe("taskboard MCP app", () => {
           tenantDisplayName: "FlowRivet 演示企业",
         },
         projects: fixture.result.projects,
+        refreshMode: "manual",
       });
     } finally {
       await connection.close();
@@ -1371,6 +1446,7 @@ describe("taskboard MCP app", () => {
       expect(workItems.service.sync).toHaveBeenCalledWith({
         accountDisplayName: "吴晨杰",
         projects: fixture.result.projects,
+        refreshMode: "manual",
       });
       expect(result.structuredContent).toMatchObject({
         dataFreshness: "live",

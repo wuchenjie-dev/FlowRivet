@@ -7,7 +7,8 @@ import {
   registerAppTool,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   activeProviderSchema,
@@ -107,6 +108,18 @@ import { WorkItemDetailProviderError } from "../work-items/work-item-detail-prov
 export function taskboardResourceUri(uiVersion: string) {
   return `ui://flowrivet/taskboard/${encodeURIComponent(uiVersion)}.html`;
 }
+
+type WorkItemRefreshMode = "manual" | "automatic";
+
+interface WorkItemToolRunResult {
+  snapshot: z.infer<typeof taskboardSnapshotSchema>;
+  cacheDiagnosticCodes: Array<"cache_read_failed" | "cache_write_failed">;
+}
+
+const emptyWorkItemToolInputSchema = z.object({}).strict();
+const refreshWorkItemToolInputSchema = z.object({
+  refreshMode: z.enum(["manual", "automatic"]).optional().default("manual"),
+}).strict();
 
 const DEFAULT_UI_BUNDLE_PATH = fileURLToPath(
   new URL("../ui/taskboard.html", import.meta.url),
@@ -265,19 +278,22 @@ export function createTaskboardMcpServer(
     title: "打开我的待办看板",
     description: "打开当前项目管理系统中的真实只读待办看板。",
     resourceUri,
-    run: snapshotBuilder,
+    inputSchema: emptyWorkItemToolInputSchema,
+    run: () => snapshotBuilder("manual"),
     providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
   registerWorkItemTool(server, workItemLogger, "list_my_work_items", {
     title: "列出我的工作项",
     description: "读取当前用户在全部可访问项目中的真实工作项。",
-    run: snapshotBuilder,
+    inputSchema: emptyWorkItemToolInputSchema,
+    run: () => snapshotBuilder("manual"),
     providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
   registerWorkItemTool(server, workItemLogger, "refresh_my_work_items", {
     title: "刷新我的工作项",
     description: "重新发现项目并刷新真实只读工作项。",
-    run: snapshotBuilder,
+    inputSchema: refreshWorkItemToolInputSchema,
+    run: ({ refreshMode }) => snapshotBuilder(refreshMode),
     providerIdOnError: runtimeServices ? "feishu-project" : "tapd",
   });
 
@@ -419,7 +435,9 @@ export function createTaskboardMcpServer(
     },
   );
 
-  async function buildTaskboardSnapshot() {
+  async function buildTaskboardSnapshot(
+    refreshMode: WorkItemRefreshMode = "manual",
+  ): Promise<WorkItemToolRunResult> {
     const syncAttemptAt = now().toISOString();
     const session = await authService.getSession();
     const auth = session.result;
@@ -432,6 +450,7 @@ export function createTaskboardMcpServer(
           ?? auth.connection.userName
           ?? "",
         projects: liveCatalog.projects.filter((project) => project.available),
+        refreshMode,
         ...(session.identity?.accountKey ? {
           cacheAccount: {
             providerId: "tapd",
@@ -475,7 +494,7 @@ export function createTaskboardMcpServer(
     const freshnessReasonCode = connected
       ? synchronized.freshnessReasonCode
       : offlineReason(auth);
-    return taskboardSnapshotSchema.parse({
+    const snapshot = taskboardSnapshotSchema.parse({
       projectCatalog: catalog,
       projects: synchronized.projects,
       items: synchronized.items,
@@ -500,9 +519,12 @@ export function createTaskboardMcpServer(
       lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
       connection: { provider: catalog.provider, gitlab: "not_configured" },
     });
+    return { snapshot, cacheDiagnosticCodes: [] };
   }
 
-  async function buildProviderTaskboardSnapshot() {
+  async function buildProviderTaskboardSnapshot(
+    refreshMode: WorkItemRefreshMode = "manual",
+  ): Promise<WorkItemToolRunResult> {
     if (!runtimeServices) throw new Error("provider_runtime_unavailable");
     const syncAttemptAt = now().toISOString();
     const providerIds = runtimeServices.registry.ids();
@@ -532,6 +554,7 @@ export function createTaskboardMcpServer(
             ?? connection.accountDisplayName
             ?? "",
           projects: [],
+          refreshMode,
           ...(identity?.profileName ? { syncSessionKey: identity.profileName } : {}),
           ...(cacheAccount ? { cacheAccount } : {}),
         });
@@ -563,7 +586,7 @@ export function createTaskboardMcpServer(
       : connection.state === "unavailable"
         ? "provider_unavailable" as const
         : synchronized.freshnessReasonCode;
-    return taskboardSnapshotSchema.parse({
+    const snapshot = taskboardSnapshotSchema.parse({
       connection: { provider: connection, gitlab: "not_configured" },
       projectCatalog: {
         provider: connection,
@@ -590,8 +613,17 @@ export function createTaskboardMcpServer(
         && synchronized.retryAfterSeconds !== undefined
         ? { retryAfterSeconds: synchronized.retryAfterSeconds }
         : {}),
+      ...(synchronized.createdSyncCoverage
+        ? { createdSyncCoverage: synchronized.createdSyncCoverage }
+        : {}),
       lastSyncedAt: synchronized.lastSuccessfulSyncAt ?? syncAttemptAt,
     });
+    return {
+      snapshot,
+      cacheDiagnosticCodes: snapshot.dataFreshness === "offline"
+        ? []
+        : [...(synchronized.cacheDiagnosticCodes ?? [])],
+    };
   }
 
   if (!runtimeServices) registerAppTool(
@@ -1078,7 +1110,7 @@ function registerProjectTool(
   });
 }
 
-function registerWorkItemTool(
+function registerWorkItemTool<TSchema extends z.ZodObject>(
   server: McpServer,
   logger: WorkItemOperationLogger,
   tool: WorkItemToolName,
@@ -1086,22 +1118,26 @@ function registerWorkItemTool(
     title: string;
     description: string;
     resourceUri?: string;
-    run: () => Promise<unknown>;
+    inputSchema: TSchema;
+    run: (input: z.infer<TSchema>) => Promise<WorkItemToolRunResult>;
     providerIdOnError?: string;
   },
 ) {
+  const registeredInputSchema: z.ZodObject = options.inputSchema;
   registerAppTool(server, tool, {
     title: options.title,
     description: options.description,
-    inputSchema: {},
-    outputSchema: taskboardSnapshotSchema.shape,
+    inputSchema: registeredInputSchema,
+    outputSchema: taskboardSnapshotSchema,
     annotations: { readOnlyHint: true, openWorldHint: true },
     _meta: options.resourceUri ? { ui: { resourceUri: options.resourceUri } } : {},
-  }, async () => {
+  }, (async (input: Record<string, unknown>): Promise<CallToolResult> => {
     const requestId = randomUUID();
     const startedAt = performance.now();
     try {
-      const snapshot = taskboardSnapshotSchema.parse(await options.run());
+      const parsedInput = options.inputSchema.parse(input);
+      const result = await options.run(parsedInput);
+      const snapshot = taskboardSnapshotSchema.parse(result.snapshot);
       logger.completed({
         requestId,
         tool,
@@ -1113,9 +1149,10 @@ function registerWorkItemTool(
         freshScopeCount: snapshot.freshScopeCount,
         staleScopeCount: snapshot.staleScopeCount,
         cacheOutcome: cacheOutcome(snapshot),
+        cacheDiagnosticCodes: [...result.cacheDiagnosticCodes],
       });
       return {
-        structuredContent: snapshot,
+        structuredContent: { ...snapshot },
         content: [{
           type: "text" as const,
           text: snapshot.dataFreshness === "offline"
@@ -1139,7 +1176,7 @@ function registerWorkItemTool(
       });
       throw error;
     }
-  });
+  }) as ToolCallback<typeof registeredInputSchema>);
 }
 
 function projectErrorCode(error: unknown) {

@@ -10,6 +10,7 @@ import type { ProjectRef } from "../contracts/projects.js";
 import type { WorkItem } from "../contracts/taskboard.js";
 import {
   WorkItemProviderError,
+  type CreatedSyncCoverage,
   type WorkItemErrorCode,
   type WorkItemProvider,
   type WorkItemScopeResult,
@@ -20,6 +21,7 @@ export interface WorkItemSyncInput {
   projects: ProjectRef[];
   cacheAccount?: CacheAccount;
   syncSessionKey?: string;
+  refreshMode?: "manual" | "automatic";
 }
 
 export interface WorkItemSyncSnapshot {
@@ -40,6 +42,7 @@ export interface WorkItemSyncSnapshot {
   cacheDiagnosticCodes?: Array<"cache_read_failed" | "cache_write_failed">;
   freshnessReasonCode?: WorkItemErrorCode;
   retryAfterSeconds?: number;
+  createdSyncCoverage?: CreatedSyncCoverage;
 }
 
 export interface WorkItemSynchronizer {
@@ -51,6 +54,7 @@ export interface WorkItemSynchronizer {
 
 export class WorkItemService implements WorkItemSynchronizer {
   private readonly inFlight = new Map<string, Promise<WorkItemSyncSnapshot>>();
+  private readonly accountSynchronizations = new Map<string, AccountSynchronizationState>();
 
   constructor(
     private readonly provider: WorkItemProvider,
@@ -59,16 +63,118 @@ export class WorkItemService implements WorkItemSynchronizer {
   ) {}
 
   sync(input: WorkItemSyncInput): Promise<WorkItemSyncSnapshot> {
+    const normalized = { ...input, refreshMode: input.refreshMode ?? "manual" };
     const key = synchronizationKey(this.provider, input);
-    if (!key) return this.performSync(input);
+    if (!key) return this.performSync(normalized);
+    if (this.provider.queryMode === "account_scoped") {
+      return this.coordinateAccountSync(key, normalized);
+    }
     const current = this.inFlight.get(key);
     if (current) return current;
-    const operation = this.performSync(input);
-    const shared = operation.finally(() => {
-      if (this.inFlight.get(key) === shared) this.inFlight.delete(key);
-    });
+    const shared = this.trackProjectSync(key, normalized);
     this.inFlight.set(key, shared);
     return shared;
+  }
+
+  private trackProjectSync(key: string, input: WorkItemSyncInput) {
+    const operation = this.performSync(input);
+    let shared!: Promise<WorkItemSyncSnapshot>;
+    shared = (async () => {
+      try {
+        return await operation;
+      } finally {
+        if (this.inFlight.get(key) === shared) this.inFlight.delete(key);
+      }
+    })();
+    return shared;
+  }
+
+  private coordinateAccountSync(
+    key: string,
+    input: WorkItemSyncInput & { refreshMode: "manual" | "automatic" },
+  ) {
+    let state = this.accountSynchronizations.get(key);
+    if (!state) {
+      state = {};
+      this.accountSynchronizations.set(key, state);
+    }
+    if (!state.active) return this.startAccountSync(key, state, input);
+    if (input.refreshMode === "automatic" || state.active.mode === "manual") {
+      return state.active.promise;
+    }
+    if (state.queuedManual) return state.queuedManual;
+
+    const active = state.active.promise;
+    let resolveQueued!: (snapshot: WorkItemSyncSnapshot) => void;
+    let rejectQueued!: (error: unknown) => void;
+    const queued = new Promise<WorkItemSyncSnapshot>((resolve, reject) => {
+      resolveQueued = resolve;
+      rejectQueued = reject;
+    });
+    state.queuedManual = queued;
+    const launch = () => this.launchQueuedManual(
+      key,
+      state,
+      queued,
+      { ...input, refreshMode: "manual" },
+      resolveQueued,
+      rejectQueued,
+    );
+    void active.then(launch, launch);
+    return queued;
+  }
+
+  private startAccountSync(
+    key: string,
+    state: AccountSynchronizationState,
+    input: WorkItemSyncInput & { refreshMode: "manual" | "automatic" },
+  ) {
+    const operation = this.performSync(input);
+    let shared!: Promise<WorkItemSyncSnapshot>;
+    shared = (async () => {
+      try {
+        return await operation;
+      } finally {
+        this.clearAccountSync(key, state, shared);
+      }
+    })();
+    state.active = { mode: input.refreshMode, promise: shared };
+    return shared;
+  }
+
+  private launchQueuedManual(
+    key: string,
+    state: AccountSynchronizationState,
+    queued: Promise<WorkItemSyncSnapshot>,
+    input: WorkItemSyncInput & { refreshMode: "manual" },
+    resolve: (snapshot: WorkItemSyncSnapshot) => void,
+    reject: (error: unknown) => void,
+  ) {
+    if (state.queuedManual !== queued) return;
+    state.queuedManual = undefined;
+    state.active = { mode: "manual", promise: queued };
+    void this.performSync(input).then(
+      (snapshot) => {
+        this.clearAccountSync(key, state, queued);
+        resolve(snapshot);
+      },
+      (error) => {
+        this.clearAccountSync(key, state, queued);
+        reject(error);
+      },
+    );
+  }
+
+  private clearAccountSync(
+    key: string,
+    state: AccountSynchronizationState,
+    operation: Promise<WorkItemSyncSnapshot>,
+  ) {
+    if (state.active?.promise === operation) state.active = undefined;
+    if (!state.active && !state.queuedManual
+      && this.accountSynchronizations.get(key) === state) {
+      this.accountSynchronizations.delete(key);
+    }
   }
 
   async loadCached(providerId: string): Promise<WorkItemSyncSnapshot | undefined> {
@@ -185,6 +291,9 @@ export class WorkItemService implements WorkItemSynchronizer {
       cacheDiagnosticCodes,
       freshnessReasonCode: reason,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      ...(fresh.createdSyncCoverage
+        ? { createdSyncCoverage: fresh.createdSyncCoverage }
+        : {}),
     }, attemptedAt);
   }
 
@@ -290,6 +399,7 @@ export class WorkItemService implements WorkItemSynchronizer {
           ? { tenantKey: input.cacheAccount.tenantKey }
           : {}),
         ...(input.syncSessionKey ? { syncSessionKey: input.syncSessionKey } : {}),
+        refreshMode: input.refreshMode ?? "manual",
       });
     } catch (error) {
       throw new WorkItemProviderError(providerErrorCode(error), {
@@ -336,6 +446,9 @@ export class WorkItemService implements WorkItemSynchronizer {
           && scope.retryAfterSeconds !== undefined)
         .map((scope) => scope.retryAfterSeconds as number),
       requiresUsableScope: scopes.some((scope) => scope.outcome === "error"),
+      ...(result.createdSyncCoverage
+        ? { createdSyncCoverage: result.createdSyncCoverage }
+        : {}),
     };
   }
 }
@@ -360,6 +473,15 @@ interface FreshSyncResult {
     providerItemTypePrefix: string;
     providerItemTypes: string[];
   }>;
+  createdSyncCoverage?: CreatedSyncCoverage;
+}
+
+interface AccountSynchronizationState {
+  active?: {
+    mode: "manual" | "automatic";
+    promise: Promise<WorkItemSyncSnapshot>;
+  };
+  queuedManual?: Promise<WorkItemSyncSnapshot>;
 }
 
 function liveSnapshot(
@@ -402,6 +524,7 @@ function createSnapshot(
     cacheDiagnosticCodes?: WorkItemSyncSnapshot["cacheDiagnosticCodes"];
     freshnessReasonCode?: WorkItemErrorCode;
     retryAfterSeconds?: number;
+    createdSyncCoverage?: CreatedSyncCoverage;
   },
   now: Date,
 ): WorkItemSyncSnapshot {
@@ -448,6 +571,9 @@ function createSnapshot(
     ...(input.freshnessReasonCode === "provider_rate_limited"
       && input.retryAfterSeconds !== undefined
       ? { retryAfterSeconds: input.retryAfterSeconds }
+      : {}),
+    ...(input.createdSyncCoverage
+      ? { createdSyncCoverage: input.createdSyncCoverage }
       : {}),
   };
 }

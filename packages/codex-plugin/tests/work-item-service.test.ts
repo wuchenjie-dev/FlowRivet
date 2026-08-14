@@ -360,6 +360,7 @@ describe("work item service", () => {
     expect(provider.listAccountWorkItems).toHaveBeenCalledOnce();
     expect(provider.listAccountWorkItems).toHaveBeenCalledWith({
       accountDisplayName: "Example User",
+      refreshMode: "manual",
       syncSessionKey: "default",
     });
     expect(snapshot.projects).toEqual([
@@ -508,6 +509,109 @@ describe("work item service", () => {
     await vi.waitFor(() => expect(provider.listAccountWorkItems).toHaveBeenCalledTimes(2));
     releases.forEach((release) => release(accountResult([], [])));
     await Promise.all([first, sameProfile, otherProfile]);
+  });
+
+  it("passes the requested refresh mode and publishes created-item coverage", async () => {
+    const provider = new FakeAccountProvider();
+    provider.listAccountWorkItems.mockResolvedValue({
+      ...accountResult([accountProject("PROJ")], [{
+        projectExternalId: "PROJ",
+        providerItemType: "task",
+        kind: "task",
+        outcome: "success",
+        items: [accountItem("1")],
+      }]),
+      createdSyncCoverage: {
+        catalog: "available",
+        mode: "automatic",
+        scannedTypeCount: 2,
+        totalTypeCount: 4,
+        complete: false,
+      },
+    });
+    const service = new WorkItemService(provider, () => now);
+
+    const automatic = await service.sync({
+      accountDisplayName: "Example User",
+      projects: [],
+      refreshMode: "automatic",
+    });
+    await service.sync({ accountDisplayName: "Example User", projects: [] });
+
+    expect(provider.listAccountWorkItems).toHaveBeenNthCalledWith(1, {
+      accountDisplayName: "Example User",
+      refreshMode: "automatic",
+    });
+    expect(provider.listAccountWorkItems).toHaveBeenNthCalledWith(2, {
+      accountDisplayName: "Example User",
+      refreshMode: "manual",
+    });
+    expect(automatic.createdSyncCoverage).toEqual({
+      catalog: "available",
+      mode: "automatic",
+      scannedTypeCount: 2,
+      totalTypeCount: 4,
+      complete: false,
+    });
+  });
+
+  it("coordinates overlapping automatic and manual account refreshes by mode", async () => {
+    const provider = new FakeAccountProvider();
+    const releases: Array<(value: AccountWorkItemQueryResult) => void> = [];
+    provider.listAccountWorkItems.mockImplementation(() =>
+      new Promise((resolve) => releases.push(resolve)),
+    );
+    const service = new WorkItemService(provider, () => now);
+    const base = {
+      accountDisplayName: "Example User",
+      projects: [],
+      cacheAccount: feishuCacheAccount(),
+      syncSessionKey: "default",
+    };
+
+    const automatic = service.sync({ ...base, refreshMode: "automatic" as const });
+    const automaticAgain = service.sync({ ...base, refreshMode: "automatic" as const });
+    const queuedManual = service.sync({ ...base, refreshMode: "manual" as const });
+    const queuedManualAgain = service.sync({ ...base, refreshMode: "manual" as const });
+    const automaticWhileQueued = service.sync({ ...base, refreshMode: "automatic" as const });
+
+    expect(automaticAgain).toBe(automatic);
+    expect(automaticWhileQueued).toBe(automatic);
+    expect(queuedManualAgain).toBe(queuedManual);
+    expect(queuedManual).not.toBe(automatic);
+    expect(provider.listAccountWorkItems).toHaveBeenCalledTimes(1);
+    releases[0]!(accountResult([], []));
+    await automatic;
+    await vi.waitFor(() => expect(provider.listAccountWorkItems).toHaveBeenCalledTimes(2));
+    const automaticDuringManual = service.sync({ ...base, refreshMode: "automatic" as const });
+    expect(automaticDuringManual).toBe(queuedManual);
+    releases[1]!(accountResult([], []));
+    await Promise.all([queuedManual, queuedManualAgain, automaticDuringManual]);
+    expect(provider.listAccountWorkItems.mock.calls.map(([input]) => input.refreshMode))
+      .toEqual(["automatic", "manual"]);
+  });
+
+  it("runs a queued manual refresh after an automatic failure and clears coordination state", async () => {
+    const provider = new FakeAccountProvider();
+    let rejectAutomatic!: (error: Error) => void;
+    provider.listAccountWorkItems
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectAutomatic = reject; }))
+      .mockResolvedValue(accountResult([], []));
+    const service = new WorkItemService(provider, () => now);
+    const base = {
+      accountDisplayName: "Example User",
+      projects: [],
+      cacheAccount: feishuCacheAccount(),
+    };
+
+    const automatic = service.sync({ ...base, refreshMode: "automatic" });
+    const manual = service.sync({ ...base, refreshMode: "manual" });
+    rejectAutomatic(new Error("automatic failed"));
+
+    await expect(automatic).rejects.toMatchObject({ code: "work_item_sync_failed" });
+    await expect(manual).resolves.toMatchObject({ summary: { failedProjects: 0 } });
+    await expect(service.sync({ ...base, refreshMode: "automatic" })).resolves.toBeDefined();
+    expect(provider.listAccountWorkItems).toHaveBeenCalledTimes(3);
   });
 
   it("keeps unfinished items and only trusted completions from the last seven days", async () => {

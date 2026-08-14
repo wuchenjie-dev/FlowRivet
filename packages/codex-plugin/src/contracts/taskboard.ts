@@ -30,6 +30,54 @@ export const workItemSchema = z.object({
   externalUrl: z.string().optional(),
 }).strict();
 
+const refreshModeSchema = z.enum(["manual", "automatic"]);
+const createdSyncCoverageSchema = z.discriminatedUnion("catalog", [
+  z.object({
+    catalog: z.literal("available"),
+    mode: refreshModeSchema,
+    scannedTypeCount: z.number().int().nonnegative(),
+    totalTypeCount: z.number().int().nonnegative(),
+    complete: z.boolean(),
+  }).strict().superRefine((coverage, context) => {
+    if (coverage.scannedTypeCount > coverage.totalTypeCount) {
+      context.addIssue({
+        code: "custom",
+        path: ["scannedTypeCount"],
+        message: "scannedTypeCount cannot exceed totalTypeCount",
+      });
+    }
+    if (coverage.complete !== (coverage.scannedTypeCount === coverage.totalTypeCount)) {
+      context.addIssue({
+        code: "custom",
+        path: ["complete"],
+        message: "complete must match catalog coverage",
+      });
+    }
+  }),
+  z.object({
+    catalog: z.literal("partial"),
+    mode: refreshModeSchema,
+    scannedTypeCount: z.number().int().nonnegative(),
+    knownTypeCount: z.number().int().nonnegative(),
+    failedProjectCount: z.number().int().min(1),
+    complete: z.literal(false),
+  }).strict().superRefine((coverage, context) => {
+    if (coverage.scannedTypeCount > coverage.knownTypeCount) {
+      context.addIssue({
+        code: "custom",
+        path: ["scannedTypeCount"],
+        message: "scannedTypeCount cannot exceed knownTypeCount",
+      });
+    }
+  }),
+  z.object({
+    catalog: z.literal("unavailable"),
+    mode: refreshModeSchema,
+    scannedTypeCount: z.literal(0),
+    complete: z.literal(false),
+  }).strict(),
+]);
+
 export const taskboardSnapshotSchema = z.object({
   connection: z.object({
     provider: providerConnectionSchema,
@@ -71,6 +119,7 @@ export const taskboardSnapshotSchema = z.object({
     "work_item_sync_failed",
   ]).optional(),
   retryAfterSeconds: z.number().int().min(1).max(86400).optional(),
+  createdSyncCoverage: createdSyncCoverageSchema.optional(),
   lastSyncedAt: z.string(),
 }).strict().superRefine((snapshot, context) => {
   if (snapshot.retryAfterSeconds !== undefined

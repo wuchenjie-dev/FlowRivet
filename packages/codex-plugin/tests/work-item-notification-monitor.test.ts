@@ -68,8 +68,9 @@ describe("work item notification monitor", () => {
   });
 
   it("establishes the first baseline without sending notifications", async () => {
-    const { monitor, store, notify } = harness({ baseline: undefined });
+    const { monitor, store, sync, notify } = harness({ baseline: undefined });
     await monitor.runOnce();
+    expect(sync).toHaveBeenCalledWith(expect.objectContaining({ refreshMode: "automatic" }));
     expect(store.applyScan).toHaveBeenCalledWith(expect.objectContaining({ events: [] }));
     expect(notify).not.toHaveBeenCalled();
   });
