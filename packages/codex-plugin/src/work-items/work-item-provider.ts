@@ -41,7 +41,36 @@ export interface AccountWorkItemQueryResult {
     projectExternalId: string;
     providerItemTypePrefix: string;
   }>;
+  authoritativeScopeInventories?: Array<{
+    projectExternalId: string;
+    providerItemTypePrefix: string;
+    providerItemTypes: string[];
+  }>;
+  createdSyncCoverage?: CreatedSyncCoverage;
 }
+
+export type CreatedSyncCoverage =
+  | {
+    catalog: "available";
+    mode: "manual" | "automatic";
+    scannedTypeCount: number;
+    totalTypeCount: number;
+    complete: boolean;
+  }
+  | {
+    catalog: "partial";
+    mode: "manual" | "automatic";
+    scannedTypeCount: number;
+    knownTypeCount: number;
+    failedProjectCount: number;
+    complete: false;
+  }
+  | {
+    catalog: "unavailable";
+    mode: "manual" | "automatic";
+    scannedTypeCount: 0;
+    complete: false;
+  };
 
 export interface AccountScopedWorkItemProvider {
   readonly id: string;
@@ -51,6 +80,7 @@ export interface AccountScopedWorkItemProvider {
     accountKey?: string;
     tenantKey?: string;
     syncSessionKey?: string;
+    refreshMode?: "manual" | "automatic";
   }): Promise<AccountWorkItemQueryResult>;
 }
 

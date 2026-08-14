@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
-  MeegleCreatedWorkItemQuery,
+  MeegleCreatedBaseQuery,
+  MeegleCreatedCompletionQuery,
   MeegleMyWorkPage,
   MeegleProject,
   MeegleUser,
@@ -18,6 +19,10 @@ import {
 } from "../src/meegle/meegle-work-item-provider.js";
 import { WorkItemService } from "../src/work-items/work-item-service.js";
 import { SqliteWorkItemCacheStore } from "../src/cache/sqlite-work-item-cache-store.js";
+import type {
+  CreatedSyncDiagnosticEvent,
+  CreatedSyncDiagnosticLogger,
+} from "../src/observability/created-sync-diagnostic-logger.js";
 
 const now = new Date("2026-08-11T00:00:00.000Z");
 const identity: MeegleUser = {
@@ -34,8 +39,9 @@ class FakeClient implements MeegleWorkItemClient {
     `space-${projectKey.toLowerCase()}`);
   readonly listRecentProjects = vi.fn(async () => [] as MeegleProject[]);
   readonly listWorkItemTypes = vi.fn(async () => [] as MeegleWorkItemType[]);
-  readonly queryCreatedWorkItems = vi.fn<MeegleWorkItemClient["queryCreatedWorkItems"]>();
-  readonly queryCreatedWorkItemsPage = vi.fn();
+  readonly queryCreatedBaseWorkItems = vi.fn<MeegleWorkItemClient["queryCreatedBaseWorkItems"]>();
+  readonly queryCreatedCompletionWorkItems = vi.fn<MeegleWorkItemClient["queryCreatedCompletionWorkItems"]>();
+  readonly queryCreatedBaseWorkItemsPage = vi.fn();
 }
 
 const createdProject: MeegleProject = {
@@ -51,16 +57,43 @@ const createdType: MeegleWorkItemType = {
   type_key: "solution-key",
 };
 
-function createdQuery(items: Array<{
+function createdBaseQuery(items: Array<{
+  id: number;
+  name?: string;
+  statusKey?: string;
+  statusLabel?: string;
+}>, options: {
+  count?: number;
+  sessionId?: string;
+} = {}): MeegleCreatedBaseQuery {
+  return {
+    data: {
+      "1": items.map((item) => ({
+        moql_field_list: [
+          { key: "work_item_id", name: "Item ID", value: { long_value: item.id }, value_type: "long_value" },
+          { key: "name", name: "Name", value: { string_value: item.name ?? `Created ${item.id}` }, value_type: "string_value" },
+          {
+            key: "work_item_status", name: "Status",
+            value: { key_label_value_list: [{ key: item.statusKey ?? "started", label: item.statusLabel ?? "Started" }] },
+            value_type: "key_label_value_list",
+          },
+        ],
+      })),
+    },
+    extra_info: null,
+    list: [{ count: options.count ?? items.length, group_infos: [{ group_id: "1", group_name: "Group" }] }],
+    search_status_info: null,
+    session_id: options.sessionId ?? "session-1",
+  };
+}
+
+function createdCompletionQuery(items: Array<{
   id: number;
   name?: string;
   statusKey?: string;
   statusLabel?: string;
   finishTime?: string | null;
-}>, options: {
-  count?: number;
-  sessionId?: string;
-} = {}): MeegleCreatedWorkItemQuery {
+}>, options: { count?: number; sessionId?: string } = {}): MeegleCreatedCompletionQuery {
   return {
     data: {
       "1": items.map((item) => ({
@@ -83,18 +116,20 @@ function createdQuery(items: Array<{
     extra_info: null,
     list: [{ count: options.count ?? items.length, group_infos: [{ group_id: "1", group_name: "Group" }] }],
     search_status_info: null,
-    session_id: options.sessionId ?? "session-1",
+    session_id: options.sessionId ?? "session-completion-1",
   };
 }
 
-function emptyCreatedQuery(): MeegleCreatedWorkItemQuery {
+const createdQuery = createdBaseQuery;
+
+function emptyCreatedQuery(): MeegleCreatedBaseQuery {
   return {
     data: {},
     extra_info: null,
     list: null,
     search_status_info: null,
     session_id: "REDACTED_SESSION_ID",
-  } as unknown as MeegleCreatedWorkItemQuery;
+  } as unknown as MeegleCreatedBaseQuery;
 }
 
 function rawItem(id: number, options: {
@@ -135,7 +170,7 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([
       { id: 7001, statusKey: "started", statusLabel: "Started" },
     ]));
 
@@ -158,7 +193,7 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(emptyCreatedQuery());
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
 
     const result = await new MeegleWorkItemProvider({ client, clock: () => now })
       .listAccountWorkItems({ accountDisplayName: "Example User" });
@@ -189,7 +224,7 @@ describe("Meegle work item provider", () => {
     }));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 42 }]));
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 42 }]));
 
     const result = await new MeegleWorkItemProvider({ client, clock: () => now })
       .listAccountWorkItems({ accountDisplayName: "Example User" });
@@ -197,7 +232,7 @@ describe("Meegle work item provider", () => {
       .filter((item) => item.externalId === "42");
 
     expect(matching).toHaveLength(1);
-    expect(client.queryCreatedWorkItems).toHaveBeenCalledOnce();
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledOnce();
     expect(matching[0]).toMatchObject({
       providerStatus: "Review",
       dueAt: "2026-08-15T00:00:00.000Z",
@@ -209,7 +244,7 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery(
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery(
       Array.from({ length: 50 }, (_, index) => ({ id: index + 1 })),
       { count: 51, sessionId: "session-51" },
     ));
@@ -225,7 +260,7 @@ describe("Meegle work item provider", () => {
         outcome: "error",
       }),
     ]));
-    expect(client.queryCreatedWorkItemsPage).not.toHaveBeenCalled();
+    expect(client.queryCreatedBaseWorkItemsPage).not.toHaveBeenCalled();
   });
 
   it("accepts an exact 50-row created first page without session pagination", async () => {
@@ -233,7 +268,7 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery(
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery(
       Array.from({ length: 50 }, (_, index) => ({ id: index + 1 })),
       { count: 50 },
     ));
@@ -242,7 +277,7 @@ describe("Meegle work item provider", () => {
       .listAccountWorkItems({ accountDisplayName: "Example User" });
 
     expect(result.scopes.flatMap((scope) => scope.items)).toHaveLength(50);
-    expect(client.queryCreatedWorkItemsPage).not.toHaveBeenCalled();
+    expect(client.queryCreatedBaseWorkItemsPage).not.toHaveBeenCalled();
   });
 
   it("maps trusted created completion times and lets the service apply the seven-day window", async () => {
@@ -250,7 +285,12 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([
+      { id: 1, statusKey: "completed", statusLabel: "Completed" },
+      { id: 2, statusKey: "completed", statusLabel: "Completed" },
+      { id: 3, statusKey: "completed", statusLabel: "Completed" },
+    ]));
+    client.queryCreatedCompletionWorkItems.mockResolvedValue(createdCompletionQuery([
       { id: 1, statusKey: "completed", statusLabel: "Completed", finishTime: "2026-08-10T00:00:00Z" },
       { id: 2, statusKey: "completed", statusLabel: "Completed", finishTime: "2026-08-01T23:59:59Z" },
       { id: 3, statusKey: "completed", statusLabel: "Completed", finishTime: null },
@@ -274,7 +314,7 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([]));
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([]));
     client.getCurrentUser
       .mockResolvedValueOnce(identity)
       .mockResolvedValueOnce(identity)
@@ -297,7 +337,7 @@ describe("Meegle work item provider", () => {
     }));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType, failedType]);
-    client.queryCreatedWorkItems.mockImplementation(async (_profile, _project, type) => {
+    client.queryCreatedBaseWorkItems.mockImplementation(async (_profile, _project, type) => {
       if (type.type_key === "broken") throw new MeegleCliError("provider_unavailable");
       return createdQuery([{ id: 7001 }]);
     });
@@ -326,7 +366,7 @@ describe("Meegle work item provider", () => {
     })));
     let active = 0;
     let maximumActive = 0;
-    client.queryCreatedWorkItems.mockImplementation(async () => {
+    client.queryCreatedBaseWorkItems.mockImplementation(async () => {
       active += 1;
       maximumActive = Math.max(maximumActive, active);
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -346,7 +386,7 @@ describe("Meegle work item provider", () => {
     client.getMyWorkPage.mockImplementation(pages({}));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([]));
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([]));
     const provider = new MeegleWorkItemProvider({ client, clock: () => now });
 
     await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
@@ -354,7 +394,7 @@ describe("Meegle work item provider", () => {
 
     expect(client.listRecentProjects).toHaveBeenCalledTimes(1);
     expect(client.listWorkItemTypes).toHaveBeenCalledTimes(1);
-    expect(client.queryCreatedWorkItems).toHaveBeenCalledTimes(2);
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledTimes(2);
   });
 
   it("rejects oversized type catalogs and created result counts within the created scope", async () => {
@@ -376,7 +416,7 @@ describe("Meegle work item provider", () => {
         projectExternalId: "CREATED", providerItemType: "created:catalog", outcome: "error",
       }),
     ]));
-    expect(client.queryCreatedWorkItems).not.toHaveBeenCalled();
+    expect(client.queryCreatedBaseWorkItems).not.toHaveBeenCalled();
   });
 
   it("rejects a created type reporting more than 10000 items without losing mywork", async () => {
@@ -386,7 +426,7 @@ describe("Meegle work item provider", () => {
     }));
     client.listRecentProjects.mockResolvedValue([createdProject]);
     client.listWorkItemTypes.mockResolvedValue([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([], { count: 10_001 }));
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([], { count: 10_001 }));
 
     const result = await new MeegleWorkItemProvider({ client, clock: () => now })
       .listAccountWorkItems({ accountDisplayName: "Example User" });
@@ -399,7 +439,7 @@ describe("Meegle work item provider", () => {
         outcome: "error",
       }),
     ]));
-    expect(client.queryCreatedWorkItemsPage).not.toHaveBeenCalled();
+    expect(client.queryCreatedBaseWorkItemsPage).not.toHaveBeenCalled();
   });
 
   it("isolates project metadata failure while keeping mywork online", async () => {
@@ -431,7 +471,7 @@ describe("Meegle work item provider", () => {
     client.listWorkItemTypes
       .mockRejectedValueOnce(new MeegleCliError("provider_unavailable"))
       .mockResolvedValueOnce([createdType]);
-    client.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
     const provider = new MeegleWorkItemProvider({ client, clock: () => now });
 
     const failed = await provider.listAccountWorkItems({ accountDisplayName: "Example User" });
@@ -454,7 +494,7 @@ describe("Meegle work item provider", () => {
       firstClient.getMyWorkPage.mockImplementation(pages({}));
       firstClient.listRecentProjects.mockResolvedValue([createdProject]);
       firstClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      firstClient.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+      firstClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
       const syncInput = {
         accountDisplayName: "Example User",
         projects: [],
@@ -519,7 +559,7 @@ describe("Meegle work item provider", () => {
       }));
       firstClient.listRecentProjects.mockResolvedValue([createdProject]);
       firstClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      firstClient.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+      firstClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
       const syncInput = {
         accountDisplayName: "Example User",
         projects: [],
@@ -566,7 +606,7 @@ describe("Meegle work item provider", () => {
       }));
       firstClient.listRecentProjects.mockResolvedValue([createdProject]);
       firstClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      firstClient.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+      firstClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
       const syncInput = {
         accountDisplayName: "Example User",
         projects: [],
@@ -734,7 +774,7 @@ describe("Meegle work item provider", () => {
       createdClient.getMyWorkPage.mockImplementation(pages({}));
       createdClient.listRecentProjects.mockResolvedValue([createdProject]);
       createdClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      createdClient.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+      createdClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
       await new WorkItemService(
         new MeegleWorkItemProvider({ client: createdClient, clock: () => now }),
         () => now, store,
@@ -752,7 +792,7 @@ describe("Meegle work item provider", () => {
       }));
       myworkClient.listRecentProjects.mockResolvedValue([createdProject]);
       myworkClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      myworkClient.queryCreatedWorkItems.mockRejectedValue(
+      myworkClient.queryCreatedBaseWorkItems.mockRejectedValue(
         new MeegleCliError("provider_unavailable"),
       );
       const merged = await new WorkItemService(
@@ -805,7 +845,7 @@ describe("Meegle work item provider", () => {
       });
       createdClient.listRecentProjects.mockResolvedValue([createdProject]);
       createdClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      createdClient.queryCreatedWorkItems.mockResolvedValue(createdQuery([{
+      createdClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{
         id: 7001, statusKey: "started", statusLabel: "Fresh Created",
       }]));
       const merged = await new WorkItemService(
@@ -844,7 +884,7 @@ describe("Meegle work item provider", () => {
       createdClient.getMyWorkPage.mockImplementation(pages({}));
       createdClient.listRecentProjects.mockResolvedValue([createdProject]);
       createdClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      createdClient.queryCreatedWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
+      createdClient.queryCreatedBaseWorkItems.mockResolvedValue(createdQuery([{ id: 7001 }]));
       await new WorkItemService(
         new MeegleWorkItemProvider({ client: createdClient, clock: () => now }),
         () => now, store,
@@ -868,7 +908,7 @@ describe("Meegle work item provider", () => {
       }));
       nodesClient.listRecentProjects.mockResolvedValue([createdProject]);
       nodesClient.listWorkItemTypes.mockResolvedValue([createdType]);
-      nodesClient.queryCreatedWorkItems.mockRejectedValue(
+      nodesClient.queryCreatedBaseWorkItems.mockRejectedValue(
         new MeegleCliError("provider_unavailable"),
       );
       const merged = await new WorkItemService(
@@ -888,7 +928,7 @@ describe("Meegle work item provider", () => {
     }
   });
 
-  it("caps created MQL queries at forty and defers whole later projects", async () => {
+  it("caps automatic created base queries at forty without emitting errors for deferred types", async () => {
     const client = new FakeClient();
     const projects = Array.from({ length: 3 }, (_, index) => ({
       ...createdProject,
@@ -904,26 +944,27 @@ describe("Meegle work item provider", () => {
         name: `${projectKey} Type ${index}`,
         type_key: `${projectKey}-type-${String(index).padStart(2, "0")}`,
       })));
-    client.queryCreatedWorkItems.mockImplementation(async (_profile, project, type) => {
+    client.queryCreatedBaseWorkItems.mockImplementation(async (_profile, project, type) => {
       if (type.type_key.endsWith("00")) throw new MeegleCliError("provider_unavailable");
       return createdQuery([]);
     });
 
     const result = await new MeegleWorkItemProvider({ client, clock: () => now })
-      .listAccountWorkItems({ accountDisplayName: "Example User" });
+      .listAccountWorkItems({ accountDisplayName: "Example User", refreshMode: "automatic" });
 
-    expect(client.queryCreatedWorkItems).toHaveBeenCalledTimes(40);
-    expect(client.queryCreatedWorkItems.mock.calls.every(([, project]) =>
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledTimes(40);
+    expect(client.queryCreatedBaseWorkItems.mock.calls.every(([, project]) =>
       project.project_key !== "P3")).toBe(true);
-    const deferred = result.scopes.filter((scope) => scope.projectExternalId === "P3"
+    expect(result.scopes.some((scope) => scope.projectExternalId === "P3"
       && scope.providerItemType.startsWith("created:")
-      && scope.providerItemType !== "created:catalog");
-    expect(deferred)
-      .toHaveLength(20);
-    expect(deferred)
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({ outcome: "error", errorCode: "provider_unavailable" }),
-      ]));
+      && scope.providerItemType !== "created:catalog")).toBe(false);
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available",
+      mode: "automatic",
+      scannedTypeCount: 40,
+      totalTypeCount: 60,
+      complete: false,
+    });
   });
   it("includes unscheduled work returned only by the complete todo query", async () => {
     const client = new FakeClient();
@@ -1144,5 +1185,320 @@ describe("Meegle work item provider", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ kind: "other", stage: "todo" });
+  });
+
+  it("defaults to a complete manual scan and publishes the full stable type inventory", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 132 }, (_, index) => ({
+      ...createdType,
+      name: `Type ${index}`,
+      type_key: `type-${String(index).padStart(3, "0")}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.queryCreatedBaseWorkItems).toHaveBeenCalledTimes(types.length);
+    expect(result.createdSyncCoverage).toEqual({
+      catalog: "available",
+      mode: "manual",
+      scannedTypeCount: types.length,
+      totalTypeCount: types.length,
+      complete: true,
+    });
+    expect(result.authoritativeScopeInventories).toEqual([{
+      projectExternalId: "CREATED",
+      providerItemTypePrefix: "created:",
+      providerItemTypes: types.map(({ type_key }) => `created:${type_key}`),
+    }]);
+  });
+
+  it("publishes unique inventories in stable project and type order", async () => {
+    const client = new FakeClient();
+    const projectA = { ...createdProject, project_key: "A", name: "Project A" };
+    const projectB = { ...createdProject, project_key: "B", name: "Project B" };
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([projectB, projectA]);
+    client.listWorkItemTypes.mockResolvedValue([
+      { ...createdType, type_key: "z-type" },
+      { ...createdType, type_key: "a-type" },
+      { ...createdType, type_key: "a-type" },
+    ]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(result.authoritativeScopeInventories).toEqual([
+      {
+        projectExternalId: "A",
+        providerItemTypePrefix: "created:",
+        providerItemTypes: ["created:a-type", "created:z-type"],
+      },
+      {
+        projectExternalId: "B",
+        providerItemTypePrefix: "created:",
+        providerItemTypes: ["created:a-type", "created:z-type"],
+      },
+    ]);
+    expect(result.createdSyncCoverage).toMatchObject({
+      scannedTypeCount: 4,
+      totalTypeCount: 4,
+    });
+  });
+
+  it("rotates a single 47-type project across automatic refreshes", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 47 }, (_, index) => ({
+      ...createdType,
+      name: `Type ${index}`,
+      type_key: `type-${String(index).padStart(2, "0")}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    const provider = new MeegleWorkItemProvider({ client, clock: () => now });
+
+    const first = await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+    const firstKeys = client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key);
+    client.queryCreatedBaseWorkItems.mockClear();
+    const second = await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+    const secondKeys = client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key);
+
+    expect(firstKeys).toHaveLength(40);
+    expect(secondKeys).toEqual(types.slice(40).map(({ type_key }) => type_key));
+    expect(new Set([...firstKeys, ...secondKeys])).toEqual(new Set(types.map(({ type_key }) => type_key)));
+    expect(first.createdSyncCoverage).toMatchObject({ scannedTypeCount: 40, complete: false });
+    expect(second.createdSyncCoverage).toMatchObject({ scannedTypeCount: 7, complete: false });
+  });
+
+  it("skips completion enrichment for active-only base rows", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdBaseQuery([{ id: 7 }]));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.queryCreatedCompletionWorkItems).not.toHaveBeenCalled();
+    expect(result.scopes.flatMap(({ items }) => items)).toEqual([
+      expect.objectContaining({ externalId: "7", stage: "in_progress" }),
+    ]);
+  });
+
+  it("joins completion enrichment by exact work item ID and calls it once per type", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdBaseQuery([
+      { id: 7 },
+      { id: 8, statusKey: "completed", statusLabel: "Completed" },
+    ]));
+    client.queryCreatedCompletionWorkItems.mockResolvedValue(createdCompletionQuery([
+      { id: 8, statusKey: "completed", statusLabel: "Completed", finishTime: "2026-08-10T00:00:00Z" },
+      { id: 7 },
+    ]));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(client.queryCreatedCompletionWorkItems).toHaveBeenCalledOnce();
+    expect(result.scopes.flatMap(({ items }) => items).map((item) => [item.externalId, item.completedAt]))
+      .toEqual([["7", undefined], ["8", "2026-08-10T00:00:00.000Z"]]);
+  });
+
+  it("keeps active rows and does not create an error scope when completion enrichment fails", async () => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdBaseQuery([
+      { id: 7 },
+      { id: 8, statusKey: "completed", statusLabel: "Completed" },
+    ]));
+    client.queryCreatedCompletionWorkItems.mockRejectedValue(new MeegleCliError("provider_unavailable"));
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+    const createdScope = result.scopes.find(({ providerItemType }) =>
+      providerItemType === "created:solution-key");
+
+    expect(createdScope).toMatchObject({ outcome: "success" });
+    expect(createdScope?.items.map(({ externalId }) => externalId)).toEqual(["7"]);
+  });
+
+  it.each([
+    "missing-field",
+    "invalid-response",
+    "duplicate-id",
+    "mismatched-id",
+    "invalid-date",
+    "over-50",
+  ] as const)("keeps active rows when completion enrichment has %s", async (failure) => {
+    const client = new FakeClient();
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue([createdType]);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(createdBaseQuery([
+      { id: 7 },
+      { id: 8, statusKey: "completed", statusLabel: "Completed" },
+    ]));
+    let response: unknown;
+    if (failure === "invalid-response") {
+      response = undefined;
+    } else if (failure === "over-50") {
+      response = createdCompletionQuery(Array.from({ length: 51 }, (_, index) => ({ id: index })));
+    } else {
+      response = createdCompletionQuery([
+        { id: 7 },
+        {
+          id: failure === "duplicate-id" ? 7 : failure === "mismatched-id" ? 9 : 8,
+          statusKey: "completed",
+          statusLabel: "Completed",
+          finishTime: failure === "invalid-date" ? "not-a-date" : "2026-08-10T00:00:00Z",
+        },
+      ]);
+      if (failure === "missing-field") {
+        const rows = (response as MeegleCreatedCompletionQuery & {
+          data: { "1": Array<{ moql_field_list: unknown[] }> };
+        }).data["1"];
+        rows[1]?.moql_field_list.pop();
+      }
+    }
+    client.queryCreatedCompletionWorkItems.mockResolvedValue(
+      response as MeegleCreatedCompletionQuery,
+    );
+
+    const result = await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+    const scope = result.scopes.find(({ providerItemType }) =>
+      providerItemType === "created:solution-key");
+
+    expect(scope).toMatchObject({ outcome: "success" });
+    expect(scope?.items.map(({ externalId }) => externalId)).toEqual(["7"]);
+  });
+
+  it("shares one four-call concurrency pool across base and completion queries", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 8 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${index}`,
+    }));
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    let active = 0;
+    let maximumActive = 0;
+    const track = async <T>(value: T) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return value;
+    };
+    client.queryCreatedBaseWorkItems.mockImplementation(async (_profile, _project, type) =>
+      track(createdBaseQuery([{ id: Number(type.type_key.slice(5)), statusKey: "done", statusLabel: "Done" }])));
+    client.queryCreatedCompletionWorkItems.mockImplementation(async (_profile, _project, type) =>
+      track(createdCompletionQuery([{
+        id: Number(type.type_key.slice(5)), statusKey: "done", statusLabel: "Done",
+        finishTime: "2026-08-10T00:00:00Z",
+      }])));
+
+    await new MeegleWorkItemProvider({ client, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(maximumActive).toBeLessThanOrEqual(4);
+    expect(client.queryCreatedCompletionWorkItems).toHaveBeenCalledTimes(types.length);
+  });
+
+  it("reports partial and unavailable catalogs without publishing failed inventories", async () => {
+    const partialClient = new FakeClient();
+    const failedProject = { ...createdProject, project_key: "FAILED", name: "Failed" };
+    partialClient.getMyWorkPage.mockImplementation(pages({}));
+    partialClient.listRecentProjects.mockResolvedValue([createdProject, failedProject]);
+    partialClient.listWorkItemTypes.mockImplementation(async (_profile, projectKey) => {
+      if (projectKey === "FAILED") throw new MeegleCliError("provider_unavailable");
+      return [];
+    });
+    const partial = await new MeegleWorkItemProvider({ client: partialClient, clock: () => now })
+      .listAccountWorkItems({ accountDisplayName: "Example User" });
+
+    expect(partial.createdSyncCoverage).toEqual({
+      catalog: "partial", mode: "manual", scannedTypeCount: 0,
+      knownTypeCount: 0, failedProjectCount: 1, complete: false,
+    });
+    expect(partial.authoritativeScopeInventories).toEqual([{
+      projectExternalId: "CREATED", providerItemTypePrefix: "created:", providerItemTypes: [],
+    }]);
+
+    const unavailableClient = new FakeClient();
+    unavailableClient.getMyWorkPage.mockImplementation(pages({}));
+    unavailableClient.listRecentProjects.mockRejectedValue(new MeegleCliError("provider_unavailable"));
+    const unavailable = await new MeegleWorkItemProvider({
+      client: unavailableClient, clock: () => now,
+    }).listAccountWorkItems({ accountDisplayName: "Example User", refreshMode: "automatic" });
+    expect(unavailable.createdSyncCoverage).toEqual({
+      catalog: "unavailable", mode: "automatic", scannedTypeCount: 0, complete: false,
+    });
+    expect(unavailable.authoritativeScopeInventories).toBeUndefined();
+  });
+
+  it("logs exactly once and leaves the automatic cursor uncommitted on identity mismatch", async () => {
+    const client = new FakeClient();
+    const types = Array.from({ length: 47 }, (_, index) => ({
+      ...createdType, name: `Type ${index}`, type_key: `type-${String(index).padStart(2, "0")}`,
+    }));
+    const events: CreatedSyncDiagnosticEvent[] = [];
+    const diagnosticLogger: CreatedSyncDiagnosticLogger = {
+      completed: (event) => events.push(event),
+    };
+    client.getMyWorkPage.mockImplementation(pages({}));
+    client.listRecentProjects.mockResolvedValue([createdProject]);
+    client.listWorkItemTypes.mockResolvedValue(types);
+    client.queryCreatedBaseWorkItems.mockResolvedValue(emptyCreatedQuery());
+    client.getCurrentUser
+      .mockResolvedValue(identity)
+      .mockResolvedValueOnce(identity)
+      .mockResolvedValueOnce({ ...identity, user_key: "changed" });
+    const provider = new MeegleWorkItemProvider({
+      client, clock: () => now, diagnosticLogger,
+    });
+
+    await expect(provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    })).rejects.toMatchObject({ code: "provider_unauthorized" });
+    const rejectedKeys = client.queryCreatedBaseWorkItems.mock.calls
+      .map(([, , type]) => type.type_key);
+    client.queryCreatedBaseWorkItems.mockClear();
+
+    await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+    const retriedKeys = client.queryCreatedBaseWorkItems.mock.calls
+      .map(([, , type]) => type.type_key);
+    client.queryCreatedBaseWorkItems.mockClear();
+    await provider.listAccountWorkItems({
+      accountDisplayName: "Example User", refreshMode: "automatic",
+    });
+
+    expect(retriedKeys).toEqual(rejectedKeys);
+    expect(client.queryCreatedBaseWorkItems.mock.calls.map(([, , type]) => type.type_key))
+      .toEqual(types.slice(40).map(({ type_key }) => type_key));
+    expect(events).toHaveLength(3);
+    expect(events.map(({ batchCompleted }) => batchCompleted)).toEqual([false, true, true]);
+    expect(events[0]?.attemptedIdentityHashes).toHaveLength(40);
+    expect(events[0]?.attemptedIdentityHashes.every((hash) => /^[0-9a-f]{16}$/u.test(hash)))
+      .toBe(true);
   });
 });

@@ -5,18 +5,30 @@ import type {
   WorkItemKind,
 } from "../contracts/taskboard.js";
 import {
+  createdSyncIdentityHash,
+  NoopCreatedSyncDiagnosticLogger,
+  type CreatedSyncDiagnosticEvent,
+  type CreatedSyncDiagnosticLogger,
+} from "../observability/created-sync-diagnostic-logger.js";
+import {
   WorkItemProviderError,
   type AccountScopedWorkItemProvider,
   type AccountWorkItemQueryResult,
+  type CreatedSyncCoverage,
   type WorkItemErrorCode,
 } from "../work-items/work-item-provider.js";
 import type {
-  MeegleCreatedWorkItemQuery,
+  MeegleCreatedBaseQuery,
+  MeegleCreatedCompletionQuery,
   MeegleMyWorkPage,
   MeegleProject,
   MeegleUser,
   MeegleWorkItemType,
 } from "./meegle-cli-contracts.js";
+import {
+  CreatedSyncScheduler,
+  type CreatedSyncCommitToken,
+} from "./created-sync-scheduler.js";
 import {
   MeegleCliError,
   type MeegleMyWorkAction,
@@ -28,9 +40,12 @@ export interface MeegleWorkItemClient {
   getProjectSimpleName(profile: string, projectKey: string): Promise<string | undefined>;
   listRecentProjects(profile: string): Promise<MeegleProject[]>;
   listWorkItemTypes(profile: string, projectKey: string): Promise<MeegleWorkItemType[]>;
-  queryCreatedWorkItems(
+  queryCreatedBaseWorkItems(
     profile: string, project: MeegleProject, workItemType: MeegleWorkItemType,
-  ): Promise<MeegleCreatedWorkItemQuery>;
+  ): Promise<MeegleCreatedBaseQuery>;
+  queryCreatedCompletionWorkItems(
+    profile: string, project: MeegleProject, workItemType: MeegleWorkItemType,
+  ): Promise<MeegleCreatedCompletionQuery>;
   getMyWorkPage(
     profile: string,
     action: MeegleMyWorkAction,
@@ -42,14 +57,19 @@ type RawItem = NonNullable<MeegleMyWorkPage["list"]>[number];
 type ActionResult =
   | { action: MeegleMyWorkAction; outcome: "success"; items: RawItem[] }
   | { action: MeegleMyWorkAction; outcome: "error"; errorCode: WorkItemErrorCode };
-type NonEmptyCreatedQuery = Extract<MeegleCreatedWorkItemQuery, { list: unknown[] }>;
-type CreatedRow = NonEmptyCreatedQuery["data"]["1"][number];
+interface CreatedItemData {
+  externalId: string;
+  title: string;
+  statusKey: string;
+  statusLabel: string;
+  finishTime?: string;
+}
 type CreatedResult =
   | {
     outcome: "success";
     project: MeegleProject;
     workItemType: MeegleWorkItemType;
-    items: CreatedRow[];
+    items: CreatedItemData[];
   }
   | {
     outcome: "error";
@@ -68,6 +88,12 @@ interface CreatedFetchResult {
   authoritativeProjectScopePrefixes: string[];
   discoveredProjects: MeegleProject[];
   authoritativeProjectIds: string[];
+  authoritativeScopeInventories: NonNullable<
+    AccountWorkItemQueryResult["authoritativeScopeInventories"]
+  >;
+  coverage: CreatedSyncCoverage;
+  diagnostic: Omit<CreatedSyncDiagnosticEvent, "batchCompleted">;
+  commitToken?: CreatedSyncCommitToken;
   results: CreatedResult[];
 }
 
@@ -81,7 +107,6 @@ const maximumCreatedItems = 10_000;
 const maximumTypesPerProject = 200;
 const directoryTtlMs = 10 * 60 * 1_000;
 const createdConcurrency = 4;
-// Bounds every automatic refresh while covering the observed 18-type recent project.
 const maximumCreatedTypeQueriesPerSync = 40;
 
 export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
@@ -90,6 +115,10 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
 
   private readonly client: MeegleWorkItemClient;
   private readonly clock: () => Date;
+  private readonly diagnosticLogger: CreatedSyncDiagnosticLogger;
+  private readonly createdSyncScheduler = new CreatedSyncScheduler({
+    automaticLimit: maximumCreatedTypeQueriesPerSync,
+  });
   private directoryCache?: {
     identityKey: string;
     expiresAt: number;
@@ -97,9 +126,14 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     successfulTypes: Map<string, MeegleWorkItemType[]>;
   };
 
-  constructor(options: { client: MeegleWorkItemClient; clock?: () => Date }) {
+  constructor(options: {
+    client: MeegleWorkItemClient;
+    clock?: () => Date;
+    diagnosticLogger?: CreatedSyncDiagnosticLogger;
+  }) {
     this.client = options.client;
     this.clock = options.clock ?? (() => new Date());
+    this.diagnosticLogger = options.diagnosticLogger ?? new NoopCreatedSyncDiagnosticLogger();
   }
 
   async listAccountWorkItems(input: {
@@ -107,6 +141,7 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     accountKey?: string;
     tenantKey?: string;
     syncSessionKey?: string;
+    refreshMode?: "manual" | "automatic";
   }): Promise<AccountWorkItemQueryResult> {
     const profile = await this.captureProfile();
     if (input.syncSessionKey && input.syncSessionKey !== profile) {
@@ -117,22 +152,40 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
       throw new WorkItemProviderError("provider_unauthorized");
     }
 
-    const [results, created] = await Promise.all([
-      this.fetchActions(profile),
-      this.fetchCreated(profile, before.user_key),
-    ]);
+    const mode = input.refreshMode ?? "manual";
+    let created: CreatedFetchResult | undefined;
+    let batchCompleted = false;
+    try {
+      const fetched = await Promise.all([
+        this.fetchActions(profile),
+        this.fetchCreated(profile, before.user_key, mode),
+      ]);
+      const results = fetched[0];
+      created = fetched[1];
 
-    const knownSimpleNames = new Map<string, string>();
-    for (const result of created.results) {
-      if (result.project) knownSimpleNames.set(result.project.project_key, result.project.simple_name);
+      const knownSimpleNames = new Map<string, string>();
+      for (const result of created.results) {
+        if (result.project) knownSimpleNames.set(result.project.project_key, result.project.simple_name);
+      }
+      const projectSimpleNames = await this.resolveProjectSimpleNames(profile, results, knownSimpleNames);
+      const afterProfile = await this.captureProfile();
+      const after = await this.captureIdentity(profile);
+      if (afterProfile !== profile || after.user_key !== before.user_key) {
+        throw new WorkItemProviderError("provider_unauthorized");
+      }
+      const normalized = this.normalize(results, created, projectSimpleNames);
+      if (created.commitToken) this.createdSyncScheduler.commit(created.commitToken);
+      batchCompleted = true;
+      return normalized;
+    } finally {
+      if (created) {
+        try {
+          this.diagnosticLogger.completed({ ...created.diagnostic, batchCompleted });
+        } catch {
+          // Diagnostics must never change synchronization behavior.
+        }
+      }
     }
-    const projectSimpleNames = await this.resolveProjectSimpleNames(profile, results, knownSimpleNames);
-    const afterProfile = await this.captureProfile();
-    const after = await this.captureIdentity(profile);
-    if (afterProfile !== profile || after.user_key !== before.user_key) {
-      throw new WorkItemProviderError("provider_unauthorized");
-    }
-    return this.normalize(results, created, projectSimpleNames);
   }
 
   private async fetchActions(profile: string): Promise<ActionResult[]> {
@@ -186,7 +239,11 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     throw new WorkItemProviderError("provider_unavailable");
   }
 
-  private async fetchCreated(profile: string, userKey: string): Promise<CreatedFetchResult> {
+  private async fetchCreated(
+    profile: string,
+    userKey: string,
+    mode: "manual" | "automatic",
+  ): Promise<CreatedFetchResult> {
     let directory: CreatedDirectory;
     try {
       directory = await this.getCreatedDirectory(profile, userKey);
@@ -195,6 +252,15 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         authoritativeProjectScopePrefixes: [],
         discoveredProjects: [],
         authoritativeProjectIds: [],
+        authoritativeScopeInventories: [],
+        coverage: { catalog: "unavailable", mode, scannedTypeCount: 0, complete: false },
+        diagnostic: {
+          mode,
+          catalog: "unavailable",
+          totalTypeCount: 0,
+          scannedTypeCount: 0,
+          attemptedIdentityHashes: [],
+        },
         results: [{
           outcome: "error",
           projectExternalId: "account:created",
@@ -205,6 +271,24 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     }
 
     const results: CreatedResult[] = [...directory.errors];
+    const available = directory.errors.length === 0;
+    const byIdentity = new Map(directory.projects.flatMap(({ project, workItemTypes }) =>
+      workItemTypes.map((workItemType) => [
+        createdScopeKey(project, workItemType),
+        { project, workItemType },
+      ] as const)));
+    const allTypes = [...byIdentity.values()].map(({ project, workItemType }) => ({
+      projectKey: project.project_key,
+      typeKey: workItemType.type_key,
+    }));
+    const selection = { identityKey: `${profile}\0${userKey}`, types: allTypes };
+    const batch = mode === "automatic"
+      ? this.createdSyncScheduler.select({ ...selection, mode: "automatic" })
+      : this.createdSyncScheduler.select({ ...selection, mode: "manual" });
+    const requests = batch.selected.flatMap(({ projectKey, typeKey }) => {
+      const request = byIdentity.get(`${projectKey}\0${typeKey}`);
+      return request ? [request] : [];
+    });
     let reportedCreatedCount = 0;
     const reserveCreatedCount = (count: number) => {
       reportedCreatedCount += count;
@@ -212,53 +296,72 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         throw new WorkItemProviderError("provider_unavailable");
       }
     };
-    let claimedQueries = 0;
-    for (const entry of directory.projects) {
-      const requests = entry.workItemTypes.map((workItemType) => ({
-        project: entry.project,
-        workItemType,
-      }));
-      if (claimedQueries + requests.length > maximumCreatedTypeQueriesPerSync) {
-        results.push(...requests.map((request): CreatedResult => ({
-          outcome: "error",
-          ...request,
-          projectExternalId: request.project.project_key,
-          providerItemType: `created:${request.workItemType.type_key}`,
-          errorCode: "provider_unavailable",
-        })));
-        continue;
-      }
-      claimedQueries += requests.length;
-      let nextIndex = 0;
-      const worker = async () => {
-        while (nextIndex < requests.length) {
-          const request = requests[nextIndex++];
-          if (!request) return;
-          try {
-            const items = await this.fetchCreatedType(
-              profile, request.project, request.workItemType, reserveCreatedCount,
-            );
-            results.push({ outcome: "success", ...request, items });
-          } catch (error) {
-            results.push({
-              outcome: "error",
-              ...request,
-              projectExternalId: request.project.project_key,
-              providerItemType: `created:${request.workItemType.type_key}`,
-              errorCode: providerErrorCode(error),
-            });
-          }
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < requests.length) {
+        const request = requests[nextIndex++];
+        if (!request) return;
+        try {
+          const items = await this.fetchCreatedType(
+            profile, request.project, request.workItemType, reserveCreatedCount,
+          );
+          results.push({ outcome: "success", ...request, items });
+        } catch (error) {
+          results.push({
+            outcome: "error",
+            ...request,
+            projectExternalId: request.project.project_key,
+            providerItemType: `created:${request.workItemType.type_key}`,
+            errorCode: providerErrorCode(error),
+          });
         }
+      }
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(createdConcurrency, Math.max(1, requests.length)) },
+      () => worker(),
+    ));
+
+    const coverage: CreatedSyncCoverage = available
+      ? {
+        catalog: "available",
+        mode,
+        scannedTypeCount: requests.length,
+        totalTypeCount: allTypes.length,
+        complete: mode === "manual" || (allTypes.length <= maximumCreatedTypeQueriesPerSync
+          && requests.length === allTypes.length),
+      }
+      : {
+        catalog: "partial",
+        mode,
+        scannedTypeCount: requests.length,
+        knownTypeCount: allTypes.length,
+        failedProjectCount: directory.errors.length,
+        complete: false,
       };
-      await Promise.all(Array.from(
-        { length: Math.min(createdConcurrency, Math.max(1, requests.length)) },
-        () => worker(),
-      ));
-    }
+    const authoritativeScopeInventories = directory.projects
+      .map(({ project, workItemTypes }) => ({
+        projectExternalId: project.project_key,
+        providerItemTypePrefix: "created:",
+        providerItemTypes: [...new Set(workItemTypes.map(({ type_key }) => `created:${type_key}`))]
+          .sort((left, right) => left.localeCompare(right)),
+      }))
+      .sort((left, right) => left.projectExternalId.localeCompare(right.projectExternalId));
     return {
       authoritativeProjectScopePrefixes: ["created:"],
       discoveredProjects: directory.discoveredProjects,
       authoritativeProjectIds: directory.projects.map(({ project }) => project.project_key),
+      authoritativeScopeInventories,
+      coverage,
+      diagnostic: {
+        mode,
+        catalog: coverage.catalog,
+        totalTypeCount: allTypes.length,
+        scannedTypeCount: requests.length,
+        attemptedIdentityHashes: batch.selected.map(({ projectKey, typeKey }) =>
+          createdSyncIdentityHash(projectKey, typeKey)),
+      },
+      ...(batch.mode === "automatic" ? { commitToken: batch.commitToken } : {}),
       results,
     };
   }
@@ -325,22 +428,33 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
     project: MeegleProject,
     workItemType: MeegleWorkItemType,
     reserveCount: (count: number) => void,
-  ): Promise<CreatedRow[]> {
-    const first = await this.client.queryCreatedWorkItems(profile, project, workItemType);
-    if (first.list === null) {
-      reserveCount(0);
-      return [];
+  ): Promise<CreatedItemData[]> {
+    const baseQuery = await this.client.queryCreatedBaseWorkItems(profile, project, workItemType);
+    const baseItems = parseCreatedQuery(baseQuery, false);
+    reserveCount(baseItems.length);
+    const activeItems = baseItems.filter((item) =>
+      mapStateStage(`${item.statusKey} ${item.statusLabel}`) !== "done");
+    const completedItems = baseItems.filter((item) =>
+      mapStateStage(`${item.statusKey} ${item.statusLabel}`) === "done");
+    if (completedItems.length === 0) return activeItems;
+
+    try {
+      const completionQuery = await this.client.queryCreatedCompletionWorkItems(
+        profile, project, workItemType,
+      );
+      const enrichment = parseCreatedQuery(completionQuery, true);
+      if (!sameCreatedIds(baseItems, enrichment)) return activeItems;
+      const finishTimes = new Map(enrichment.map((item) => [item.externalId, item.finishTime]));
+      return [
+        ...activeItems,
+        ...completedItems.flatMap((item) => {
+          const finishTime = normalizedDate(finishTimes.get(item.externalId));
+          return finishTime ? [{ ...item, finishTime }] : [];
+        }),
+      ];
+    } catch {
+      return activeItems;
     }
-    const group = createdGroup(first);
-    if (group.count > createdPageSize) {
-      throw new WorkItemProviderError("provider_unavailable");
-    }
-    reserveCount(group.count);
-    const items = [...createdRows(first, group.groupId)];
-    if (items.length !== group.count || items.length > createdPageSize) {
-      throw new WorkItemProviderError("provider_unavailable");
-    }
-    return items;
   }
 
   private async resolveProjectSimpleNames(
@@ -536,6 +650,10 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
         projectExternalId,
         providerItemTypePrefix: "created:",
       })),
+      ...(created.authoritativeScopeInventories.length > 0
+        ? { authoritativeScopeInventories: created.authoritativeScopeInventories }
+        : {}),
+      createdSyncCoverage: created.coverage,
     };
   }
 
@@ -556,13 +674,87 @@ export class MeegleWorkItemProvider implements AccountScopedWorkItemProvider {
   }
 }
 
-function createdGroup(query: NonEmptyCreatedQuery) {
-  const group = query.list[0].group_infos[0];
-  return { count: query.list[0].count, groupId: group.group_id };
+function parseCreatedQuery(
+  query: MeegleCreatedBaseQuery | MeegleCreatedCompletionQuery,
+  completion: boolean,
+): CreatedItemData[] {
+  if (!query || typeof query !== "object") throw invalidCreatedResponse();
+  if (query.list === null) {
+    if (!query.data || Object.keys(query.data).length !== 0) throw invalidCreatedResponse();
+    return [];
+  }
+  if (!Array.isArray(query.list) || query.list.length !== 1) throw invalidCreatedResponse();
+  const summary = query.list[0];
+  const rows = query.data?.["1"];
+  if (!summary || !Array.isArray(rows)
+    || summary.count !== rows.length || rows.length > createdPageSize) {
+    throw invalidCreatedResponse();
+  }
+  const expectedKeys = completion
+    ? ["finish_time", "name", "work_item_id", "work_item_status"]
+    : ["name", "work_item_id", "work_item_status"];
+  const parsed = rows.map((row) => {
+    if (!row || typeof row !== "object" || !Array.isArray(row.moql_field_list)) {
+      throw invalidCreatedResponse();
+    }
+    const fields = row.moql_field_list as Array<Record<string, unknown>>;
+    const keys = fields.map((field) => field.key).sort();
+    if (keys.length !== expectedKeys.length
+      || keys.some((key, index) => key !== expectedKeys[index])) {
+      throw invalidCreatedResponse();
+    }
+    const byKey = new Map(fields.map((field) => [field.key, field]));
+    const id = nestedValue(byKey.get("work_item_id"), "long_value");
+    const title = nestedValue(byKey.get("name"), "string_value");
+    const statusValues = nestedValue(byKey.get("work_item_status"), "key_label_value_list");
+    const status = Array.isArray(statusValues) ? statusValues[0] : undefined;
+    const statusKey = status && typeof status === "object" ? Reflect.get(status, "key") : undefined;
+    const statusLabel = status && typeof status === "object" ? Reflect.get(status, "label") : undefined;
+    if (!Number.isSafeInteger(id) || (id as number) < 0
+      || typeof title !== "string" || !title.trim()
+      || typeof statusKey !== "string" || !statusKey.trim()
+      || typeof statusLabel !== "string" || !statusLabel.trim()) {
+      throw invalidCreatedResponse();
+    }
+    const item: CreatedItemData = {
+      externalId: String(id),
+      title: title.trim(),
+      statusKey: statusKey.trim(),
+      statusLabel: statusLabel.trim(),
+    };
+    if (completion) {
+      const field = byKey.get("finish_time");
+      const value = field && typeof field === "object" ? Reflect.get(field, "value") : undefined;
+      if (value !== null) {
+        const finishTime = value && typeof value === "object"
+          ? Reflect.get(value, "string_value")
+          : undefined;
+        if (typeof finishTime !== "string" || !finishTime) throw invalidCreatedResponse();
+        item.finishTime = finishTime;
+      }
+    }
+    return item;
+  });
+  if (new Set(parsed.map(({ externalId }) => externalId)).size !== parsed.length) {
+    throw invalidCreatedResponse();
+  }
+  return parsed;
 }
 
-function createdRows(query: NonEmptyCreatedQuery, groupId: "1") {
-  return query.data[groupId];
+function nestedValue(field: unknown, key: string): unknown {
+  if (!field || typeof field !== "object") return undefined;
+  const value = Reflect.get(field, "value");
+  return value && typeof value === "object" ? Reflect.get(value, key) : undefined;
+}
+
+function invalidCreatedResponse() {
+  return new WorkItemProviderError("provider_unavailable");
+}
+
+function sameCreatedIds(left: CreatedItemData[], right: CreatedItemData[]) {
+  if (left.length !== right.length) return false;
+  const ids = new Set(left.map(({ externalId }) => externalId));
+  return right.every(({ externalId }) => ids.has(externalId));
 }
 
 function createdScopeKey(project: MeegleProject, workItemType: MeegleWorkItemType) {
@@ -570,24 +762,11 @@ function createdScopeKey(project: MeegleProject, workItemType: MeegleWorkItemTyp
 }
 
 function normalizeCreatedItem(
-  raw: CreatedRow,
+  raw: CreatedItemData,
   project: MeegleProject,
   workItemType: MeegleWorkItemType,
 ): WorkItem | undefined {
-  let externalId = "";
-  let title = "";
-  let statusKey = "";
-  let statusLabel = "";
-  let finishTime: string | undefined;
-  for (const field of raw.moql_field_list) {
-    if (field.key === "work_item_id") externalId = String(field.value.long_value);
-    if (field.key === "name") title = field.value.string_value.trim();
-    if (field.key === "work_item_status") {
-      statusKey = field.value.key_label_value_list[0]?.key.trim() ?? "";
-      statusLabel = field.value.key_label_value_list[0]?.label.trim() ?? "";
-    }
-    if (field.key === "finish_time") finishTime = field.value?.string_value;
-  }
+  const { externalId, title, statusKey, statusLabel, finishTime } = raw;
   const projectExternalId = project.project_key.trim();
   const projectName = project.name.trim();
   const providerItemType = workItemType.type_key.trim();

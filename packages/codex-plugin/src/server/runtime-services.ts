@@ -18,6 +18,10 @@ import { ProviderRegistry } from "../providers/provider-registry.js";
 import { ProviderLoginCoordinator } from "../providers/provider-login-coordinator.js";
 import { SystemBrowserLauncher } from "../providers/system-browser-launcher.js";
 import { JsonStderrProviderLoginOperationLogger } from "../observability/provider-login-operation-logger.js";
+import {
+  JsonStderrCreatedSyncDiagnosticLogger,
+  type CreatedSyncDiagnosticLogger,
+} from "../observability/created-sync-diagnostic-logger.js";
 import { WorkItemService, type WorkItemSynchronizer } from "../work-items/work-item-service.js";
 import { createDefaultGitLabService, type GitLabOperations } from "../gitlab/gitlab-service.js";
 import { createExecutionStore } from "../executions/create-execution-store.js";
@@ -49,11 +53,17 @@ export interface RuntimeServices {
 
 export function createDefaultRuntimeServices(
   now: () => Date = () => new Date(),
+  options: { createdSyncDiagnosticLogger?: CreatedSyncDiagnosticLogger } = {},
 ): RuntimeServices {
   const client = new MeegleCliClient({ clock: now });
   const auth = new MeegleAuthService({ client, clock: now });
   const login = new MeegleLoginDriver(client);
-  const workItems = new MeegleWorkItemProvider({ client, clock: now });
+  const workItems = new MeegleWorkItemProvider({
+    client,
+    clock: now,
+    diagnosticLogger: options.createdSyncDiagnosticLogger
+      ?? new JsonStderrCreatedSyncDiagnosticLogger(),
+  });
   const details = new MeegleWorkItemDetailProvider({ client });
   const workItemService = new WorkItemService(
     workItems,
