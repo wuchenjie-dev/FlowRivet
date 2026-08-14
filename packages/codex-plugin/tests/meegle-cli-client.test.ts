@@ -160,6 +160,40 @@ describe("Meegle CLI client", () => {
     expect(runner.run.mock.calls[0]![0].args).not.toContain("--page-size");
   });
 
+  it("reads exactly one work item field with the verified fields argv", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        pagination: { has_more: false, page_size: 100, total: 0 },
+        work_item_attribute: {
+          create_by: { key: "creator", name: "Creator", email: "" }, create_time: "now",
+          owned_project: { key: "PROJ", name: "Project", simple_name: "project" },
+          template: { id: 1, name: "Template" }, update_time: "now",
+          updated_by: { key: "creator", name: "Creator", email: "" },
+          work_item_id: "wi-1", work_item_mod: "work_item", work_item_name: "Item",
+          work_item_status: { key: "open", name: "Open" },
+          work_item_type: { key: "story", name: "Story" },
+        },
+        work_item_fields: [{ key: "result", name: "Result", value: "done" }],
+      }), exitCode: 0,
+    });
+
+    await expect(client(runner).getWorkItemFields("profile", "PROJ", "wi-1", ["result"]))
+      .resolves.toMatchObject({ work_item_fields: [{ key: "result", value: "done" }] });
+    expect(runner.run.mock.calls[0]![0].args).toEqual([
+      "workitem", "get", "--project-key", "PROJ", "--work-item-id", "wi-1",
+      "--fields", "result", "--profile", "profile", "--format", "json",
+    ]);
+  });
+
+  it("rejects unverified multi-field read formatting before running the CLI", async () => {
+    const runner = new FakeRunner();
+    await expect(client(runner).getWorkItemFields(
+      "profile", "PROJ", "wi-1", ["result", "summary"],
+    )).rejects.toMatchObject({ code: "provider_invalid_response" });
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
   it("accepts additive detail fields from newer official CLI responses", async () => {
     const runner = new FakeRunner();
     runner.run.mockResolvedValue({
@@ -394,5 +428,108 @@ describe("Meegle CLI client", () => {
       .catch((caught) => caught as MeegleCliError);
     expect(error.code).toBe("provider_unavailable");
     expect(error.message).toBe("provider_unavailable");
+  });
+
+  it.each([
+    [new CommandRunnerError("provider_command_failed", { exitCode: 1, failureKind: "provider_unauthorized" }), "provider_unauthorized"],
+    [new CommandRunnerError("provider_command_failed", { exitCode: 1 }), "provider_unavailable"],
+    [new CommandRunnerError("provider_command_failed", { exitCode: 2 }), "provider_unavailable"],
+    [new CommandRunnerError("provider_timeout"), "provider_timeout"],
+    [new Error("runner threw"), "provider_unavailable"],
+  ] as const)("maps write runner failures without leaking content", async (failure, code) => {
+    const runner = new FakeRunner();
+    runner.run.mockRejectedValue(failure);
+    const error = await client(runner).createComment("profile", "PROJ", "wi-1", "secret")
+      .catch((caught) => caught as MeegleCliError);
+    expect(error).toMatchObject({ code, message: code });
+    expect(error.message).not.toContain("secret");
+  });
+
+  it("maps malformed write JSON to a stable invalid-response error", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({ stdout: "not-json", exitCode: 0 });
+    await expect(client(runner).createComment("profile", "PROJ", "wi-1", "content"))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it.each([
+    { comment_id: "comment-1", extra: true },
+    {},
+  ])("rejects unproved comment mutation response shapes", async (response) => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({ stdout: JSON.stringify(response), exitCode: 0 });
+    await expect(client(runner).createComment("profile", "PROJ", "wi-1", "content"))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it("rejects unknown fields in strict metadata wrappers and entries", async () => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({
+      stdout: JSON.stringify({
+        pagination: { has_more: false, extra: true },
+        list: [{ key: "result", name: "Result", type: "text" }],
+      }), exitCode: 0,
+    });
+    await expect(client(runner).listFieldMetadataPage("profile", "PROJ", "story", 1))
+      .rejects.toMatchObject({ code: "provider_invalid_response" });
+  });
+
+  it("uses the verified Meegle 1.0.19 write argv contracts", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ pagination: { has_more: false }, list: [] }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ comment_id: "comment-1" }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ comment_id: "comment-1" }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({}), exitCode: 0 });
+    const meegle = client(runner);
+    const content = "line 1; $(not-shell)\n--profile attacker";
+
+    await meegle.listCommentsPage("profile", "PROJ", "wi-1", 1);
+    await meegle.createComment("profile", "PROJ", "wi-1", content);
+    await meegle.updateComment("profile", "PROJ", "wi-1", "comment-1", content);
+    await meegle.updateWorkItemField("profile", "PROJ", "wi-1", "result", { option_id: "done" });
+
+    expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
+      ["--profile", "profile", "comment", "list", "--project-key", "PROJ", "--work-item-id", "wi-1", "--page-num", "1", "--format", "json"],
+      ["--profile", "profile", "comment", "add", "--project-key", "PROJ", "--work-item-id", "wi-1", "--action", "create", "--content", content, "--format", "json"],
+      ["--profile", "profile", "comment", "add", "--project-key", "PROJ", "--work-item-id", "wi-1", "--action", "update", "--comment-id", "comment-1", "--content", content, "--format", "json"],
+      ["--profile", "profile", "workitem", "update", "--project-key", "PROJ", "--work-item-id", "wi-1", "--fields", JSON.stringify([{ field_key: "result", field_value: { option_id: "done" } }]), "--format", "json"],
+    ]);
+  });
+
+  it("propagates type and user key through metadata argv", async () => {
+    const runner = new FakeRunner();
+    runner.run
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ pagination: { has_more: false }, list: [] }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ pagination: { has_more: false }, list: [] }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ list: [] }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ list: [] }), exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ list: [] }), exitCode: 0 });
+    const meegle = client(runner);
+
+    await meegle.listFieldMetadataPage("profile", "PROJ", "story", 1);
+    await meegle.listRoleMetadataPage("profile", "PROJ", "story", 1);
+    await meegle.listStateTransitions("profile", "PROJ", "wi-1", "story", "user-1");
+    await meegle.listStateRequired("profile", "PROJ", "wi-1", "done");
+    await meegle.getNodeFieldMetadata("profile", "PROJ", "story");
+
+    expect(runner.run.mock.calls.map(([input]) => input.args)).toEqual([
+      ["--profile", "profile", "workitem", "meta-fields", "--project-key", "PROJ", "--work-item-type", "story", "--page-num", "1", "--format", "json"],
+      ["--profile", "profile", "workitem", "meta-roles", "--project-key", "PROJ", "--work-item-type", "story", "--page-num", "1", "--format", "json"],
+      ["--profile", "profile", "workflow", "list-state-transitions", "--project-key", "PROJ", "--work-item-id", "wi-1", "--work-item-type", "story", "--user-key", "user-1", "--format", "json"],
+      ["--profile", "profile", "workflow", "list-state-required", "--project-key", "PROJ", "--work-item-id", "wi-1", "--state-key", "done", "--format", "json"],
+      ["--profile", "profile", "workflow", "meta-node-fields", "--project-key", "PROJ", "--work-item-type", "story", "--format", "json"],
+    ]);
+  });
+
+  it.each([
+    ["transition", (meegle: MeegleCliClient) => meegle.listStateTransitions("profile", "PROJ", "wi-1", "story", "user-1"), { list: [{ state_key: 3 }] }],
+    ["required field", (meegle: MeegleCliClient) => meegle.listStateRequired("profile", "PROJ", "wi-1", "done"), { list: [{ field_key: "required" }] }],
+    ["node field", (meegle: MeegleCliClient) => meegle.getNodeFieldMetadata("profile", "PROJ", "story"), { list: [{ field_key: "node" }] }],
+    ["role", (meegle: MeegleCliClient) => meegle.listRoleMetadataPage("profile", "PROJ", "story", 1), { pagination: { has_more: false }, list: [{ role_key: "owner" }] }],
+  ] as const)("rejects malformed %s metadata entries", async (_name, operation, response) => {
+    const runner = new FakeRunner();
+    runner.run.mockResolvedValue({ stdout: JSON.stringify(response), exitCode: 0 });
+    await expect(operation(client(runner))).rejects.toMatchObject({ code: "provider_invalid_response" });
   });
 });

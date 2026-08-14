@@ -99,17 +99,25 @@ describe("shared bounded command runner", () => {
     );
   });
 
-  it("rejects an argument containing a line break before spawning", async () => {
-    const spawn = vi.fn();
+  it("allows line breaks in shell-free argv but rejects NUL before spawning", async () => {
+    const child = new FakeChild();
+    const spawn = fakeSpawn(child, () => child.emit("close", 0, null));
     const runner = new BoundedCommandRunner({ spawn: spawn as SpawnProcess });
 
-    const error = await runner.run({
+    await expect(runner.run({
       executablePath: "/usr/bin/glab",
       args: ["repo", "list\nmalicious"],
       timeoutMs: 1_000,
-    }).catch((caught) => caught as CommandRunnerError);
+    })).resolves.toMatchObject({ exitCode: 0 });
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/glab", ["repo", "list\nmalicious"], expect.objectContaining({ shell: false }),
+    );
 
-    expect(error).toMatchObject({ code: "provider_unavailable" });
-    expect(spawn).not.toHaveBeenCalled();
+    const nulSpawn = vi.fn();
+    const nulRunner = new BoundedCommandRunner({ spawn: nulSpawn as SpawnProcess });
+    await expect(nulRunner.run({
+      executablePath: "/usr/bin/glab", args: ["bad\0arg"], timeoutMs: 1_000,
+    })).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect(nulSpawn).not.toHaveBeenCalled();
   });
 });

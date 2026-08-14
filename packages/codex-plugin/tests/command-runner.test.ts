@@ -40,19 +40,79 @@ describe("bounded command runner", () => {
     })).resolves.toBe("C:\\tools\\meegle.exe");
   });
 
-  it("uses shell false for native executables and a fixed cmd invocation for cmd shims", () => {
+  it("uses shell false for native executables and fails closed for script shims", () => {
     expect(createSpawnInvocation("C:\\tools\\meegle.exe", ["auth", "status"], "win32"))
       .toEqual({
         command: "C:\\tools\\meegle.exe",
         args: ["auth", "status"],
         shell: false,
       });
-    expect(createSpawnInvocation("C:\\tools\\meegle.cmd", ["auth", "status"], "win32"))
-      .toEqual({
-        command: process.env.ComSpec ?? "cmd.exe",
-        args: ["/d", "/s", "/c", '""C:\\tools\\meegle.cmd" "auth" "status""'],
-        shell: false,
-      });
+    expect(() => createSpawnInvocation("C:\\tools\\meegle.cmd", ["auth", "status"], "win32"))
+      .toThrowError(expect.objectContaining({ code: "provider_cli_missing" }));
+    expect(() => createSpawnInvocation("C:\\tools\\meegle.ps1", ["auth", "status"], "win32"))
+      .toThrowError(expect.objectContaining({ code: "provider_cli_missing" }));
+  });
+
+  it("resolves a known Meegle npm shim to package bin JavaScript", async () => {
+    const files = new Set([
+      "C:\\npm\\meegle.cmd",
+      "C:\\npm\\node_modules\\@lark-project\\meegle\\package.json",
+      "C:\\npm\\node_modules\\@lark-project\\meegle\\dist\\cli.js",
+    ]);
+    await expect(resolveExecutable({
+      command: "meegle", platform: "win32", pathValue: "C:\\npm",
+      fileExists: async (candidate) => files.has(candidate),
+      readTextFile: async () => JSON.stringify({ bin: { meegle: "dist/cli.js" } }),
+    })).resolves.toBe("C:\\npm\\node_modules\\@lark-project\\meegle\\dist\\cli.js");
+  });
+
+  it("resolves an explicit Meegle cmd shim to package bin JavaScript", async () => {
+    const files = new Set([
+      "C:\\npm\\meegle.cmd",
+      "C:\\npm\\node_modules\\@lark-project\\meegle\\package.json",
+      "C:\\npm\\node_modules\\@lark-project\\meegle\\dist\\cli.js",
+    ]);
+    await expect(resolveExecutable({
+      command: "meegle", platform: "win32", explicitPath: "C:\\npm\\meegle.cmd",
+      fileExists: async (candidate) => files.has(candidate),
+      readTextFile: async () => JSON.stringify({ bin: { meegle: "dist/cli.js" } }),
+    })).resolves.toBe("C:\\npm\\node_modules\\@lark-project\\meegle\\dist\\cli.js");
+  });
+
+  it("uses the requested platform path rules for explicit native paths", async () => {
+    await expect(resolveExecutable({
+      command: "meegle", platform: "linux", explicitPath: "/opt/meegle",
+      fileExists: async (candidate) => candidate === "/opt/meegle",
+    })).resolves.toBe("/opt/meegle");
+    await expect(resolveExecutable({
+      command: "meegle", platform: "linux", explicitPath: "C:\\tools\\meegle.exe",
+      fileExists: async () => true,
+    })).rejects.toMatchObject({ code: "provider_cli_missing" });
+  });
+
+  it("fails closed for an unknown npm cmd shim while preserving native exe preference", async () => {
+    const files = new Set(["C:\\tools\\unknown.cmd", "C:\\tools\\glab.exe", "C:\\tools\\glab.cmd"]);
+    await expect(resolveExecutable({
+      command: "unknown", platform: "win32", pathValue: "C:\\tools",
+      fileExists: async (candidate) => files.has(candidate),
+    })).rejects.toMatchObject({ code: "provider_cli_missing" });
+    await expect(resolveExecutable({
+      command: "glab", platform: "win32", pathValue: "C:\\tools",
+      fileExists: async (candidate) => files.has(candidate),
+    })).resolves.toBe("C:\\tools\\glab.exe");
+  });
+
+  it("rejects a package bin path that escapes the Meegle package directory", async () => {
+    const files = new Set([
+      "C:\\npm\\meegle.cmd",
+      "C:\\npm\\node_modules\\@lark-project\\meegle\\package.json",
+      "C:\\npm\\node_modules\\@lark-project\\evil.js",
+    ]);
+    await expect(resolveExecutable({
+      command: "meegle", platform: "win32", pathValue: "C:\\npm",
+      fileExists: async (candidate) => files.has(candidate),
+      readTextFile: async () => JSON.stringify({ bin: { meegle: "../evil.js" } }),
+    })).rejects.toMatchObject({ code: "provider_cli_missing" });
   });
 
   it("captures bounded stdout while keeping a fixed argument array", async () => {
@@ -76,26 +136,14 @@ describe("bounded command runner", () => {
     );
   });
 
-  it("passes cmd shim quoting through without Node CRT re-escaping", async () => {
-    const child = new FakeChild();
-    const spawn = fakeSpawn(child, () => {
-      child.stdout.end("1.0.19\n");
-      child.stderr.end();
-      child.emit("close", 0, null);
+  it("passes dangerous and multiline argv through a real shell-free child unchanged", async () => {
+    const args = ["quote\"", "&|<>%!", "line 1\r\nline 2", "中文"];
+    const result = await new BoundedCommandRunner().run({
+      executablePath: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", ...args],
+      timeoutMs: 5_000,
     });
-    const runner = new BoundedCommandRunner({ spawn, platform: "win32" });
-
-    await runner.run({
-      executablePath: "C:\\Program Files\\nodejs\\meegle.cmd",
-      args: ["--version"],
-      timeoutMs: 1_000,
-    });
-
-    expect(spawn).toHaveBeenCalledWith(
-      process.env.ComSpec ?? "cmd.exe",
-      ["/d", "/s", "/c", '""C:\\Program Files\\nodejs\\meegle.cmd" "--version""'],
-      expect.objectContaining({ windowsVerbatimArguments: true }),
-    );
+    expect(JSON.parse(result.stdout)).toEqual(args);
   });
 
   it.each([
@@ -183,5 +231,23 @@ describe("bounded command runner", () => {
     }).catch((caught) => caught as CommandRunnerError);
     expect(error).toMatchObject({ code: "provider_command_failed", exitCode: 7 });
     expect(error.message).toBe("provider_command_failed");
+  });
+
+  it.each([
+    [JSON.stringify({ code: 401 }), "provider_unauthorized"],
+    [JSON.stringify({ error: "auth_required" }), "provider_unauthorized"],
+    [JSON.stringify({ code: "not_found" }), undefined],
+    [JSON.stringify({ code: "validation_failed" }), undefined],
+    ["unknown failure", undefined],
+  ])("classifies exit one only with explicit auth evidence", async (stderr, failureKind) => {
+    const child = new FakeChild();
+    const runner = new BoundedCommandRunner({ spawn: fakeSpawn(child, () => {
+      child.stderr.end(stderr);
+      child.stdout.end();
+      child.emit("close", 1, null);
+    }) });
+    const error = await runner.run({ executablePath: "/opt/meegle", args: [], timeoutMs: 1_000 })
+      .catch((caught) => caught as CommandRunnerError);
+    expect(error).toMatchObject({ code: "provider_command_failed", exitCode: 1, failureKind });
   });
 });

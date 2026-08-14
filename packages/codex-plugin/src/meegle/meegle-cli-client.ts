@@ -20,6 +20,16 @@ import {
   type MeegleUser,
   type MeegleWorkItemDetail,
 } from "./meegle-cli-contracts.js";
+import {
+  meegleCommentMutationSchema,
+  meegleMutationSchema,
+  meegleCommentListSchema,
+  meegleFieldMetadataListSchema,
+  meegleNodeFieldListSchema,
+  meegleRequiredFieldListSchema,
+  meegleRoleMetadataListSchema,
+  meegleTransitionListSchema,
+} from "./meegle-write-contracts.js";
 
 export type MeegleCliErrorCode =
   | "provider_cli_missing"
@@ -167,14 +177,137 @@ export class MeegleCliClient {
     projectKey: string,
     workItemId: string,
   ): Promise<MeegleWorkItemDetail> {
+    return this.getWorkItemFields(profile, projectKey, workItemId, ["_all"]);
+  }
+
+  async getWorkItemFields(
+    profile: string,
+    projectKey: string,
+    workItemId: string,
+    fieldKeys: readonly string[],
+  ): Promise<MeegleWorkItemDetail> {
+    if (fieldKeys.length !== 1) {
+      throw new MeegleCliError("provider_invalid_response");
+    }
+    const fields = validateOpaqueKey(fieldKeys[0]!);
     return this.runJson([
       "workitem", "get",
       "--project-key", validateOpaqueKey(projectKey),
       "--work-item-id", validateOpaqueKey(workItemId),
-      "--fields", "_all",
+      "--fields", fields,
       "--profile", validateProfile(profile),
       "--format", "json",
     ], meegleWorkItemDetailSchema, { timeoutMs: 30_000 });
+  }
+
+  async listCommentsPage(
+    profile: string, projectKey: string, workItemId: string, pageNum: number,
+  ) {
+    return this.runJsonWithByteLength([
+      "--profile", validateProfile(profile), "comment", "list",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-id", validateOpaqueKey(workItemId),
+      "--page-num", validatePageNum(pageNum), "--format", "json",
+    ], meegleCommentListSchema, { timeoutMs: 30_000 });
+  }
+
+  async listFieldMetadataPage(
+    profile: string, projectKey: string, workItemType: string, pageNum: number,
+  ) {
+    return this.runJsonWithByteLength([
+      "--profile", validateProfile(profile), "workitem", "meta-fields",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-type", validateOpaqueKey(workItemType),
+      "--page-num", validatePageNum(pageNum), "--format", "json",
+    ], meegleFieldMetadataListSchema, { timeoutMs: 30_000 });
+  }
+
+  async listRoleMetadataPage(
+    profile: string, projectKey: string, workItemType: string, pageNum: number,
+  ) {
+    return this.runJsonWithByteLength([
+      "--profile", validateProfile(profile), "workitem", "meta-roles",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-type", validateOpaqueKey(workItemType),
+      "--page-num", validatePageNum(pageNum), "--format", "json",
+    ], meegleRoleMetadataListSchema, { timeoutMs: 30_000 });
+  }
+
+  async listStateTransitions(
+    profile: string, projectKey: string, workItemId: string,
+    workItemType: string, userKey: string,
+  ) {
+    return this.runJsonWithByteLength([
+      "--profile", validateProfile(profile), "workflow", "list-state-transitions",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-id", validateOpaqueKey(workItemId),
+      "--work-item-type", validateOpaqueKey(workItemType),
+      "--user-key", validateOpaqueKey(userKey), "--format", "json",
+    ], meegleTransitionListSchema, { timeoutMs: 30_000 });
+  }
+
+  async listStateRequired(
+    profile: string, projectKey: string, workItemId: string, stateKey: string,
+  ) {
+    return this.runJsonWithByteLength([
+      "--profile", validateProfile(profile), "workflow", "list-state-required",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-id", validateOpaqueKey(workItemId),
+      "--state-key", validateOpaqueKey(stateKey), "--format", "json",
+    ], meegleRequiredFieldListSchema, { timeoutMs: 30_000 });
+  }
+
+  async getNodeFieldMetadata(
+    profile: string, projectKey: string, workItemType: string,
+  ) {
+    return this.runJsonWithByteLength([
+      "--profile", validateProfile(profile), "workflow", "meta-node-fields",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-type", validateOpaqueKey(workItemType), "--format", "json",
+    ], meegleNodeFieldListSchema, { timeoutMs: 30_000 });
+  }
+
+  async createComment(
+    profile: string, projectKey: string, workItemId: string, content: string,
+  ): Promise<z.infer<typeof meegleCommentMutationSchema>> {
+    return this.mutateComment(profile, projectKey, workItemId, [
+      "--action", "create", "--content", validateContent(content),
+    ]);
+  }
+
+  async updateComment(
+    profile: string, projectKey: string, workItemId: string,
+    commentId: string, content: string,
+  ): Promise<z.infer<typeof meegleCommentMutationSchema>> {
+    return this.mutateComment(profile, projectKey, workItemId, [
+      "--action", "update", "--comment-id", validateOpaqueKey(commentId),
+      "--content", validateContent(content),
+    ]);
+  }
+
+  async updateWorkItemField(
+    profile: string, projectKey: string, workItemId: string,
+    fieldKey: string, fieldValue: unknown,
+  ): Promise<Record<string, unknown>> {
+    const fields = JSON.stringify([{
+      field_key: validateOpaqueKey(fieldKey), field_value: fieldValue,
+    }]);
+    return this.runJson([
+      "--profile", validateProfile(profile), "workitem", "update",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-id", validateOpaqueKey(workItemId),
+      "--fields", fields, "--format", "json",
+    ], meegleMutationSchema, { timeoutMs: 30_000 });
+  }
+
+  private mutateComment(
+    profile: string, projectKey: string, workItemId: string, mutationArgs: string[],
+  ) {
+    return this.runJson([
+      "--profile", validateProfile(profile), "comment", "add",
+      "--project-key", validateOpaqueKey(projectKey),
+      "--work-item-id", validateOpaqueKey(workItemId), ...mutationArgs, "--format", "json",
+    ], meegleCommentMutationSchema, { timeoutMs: 30_000 });
   }
 
   async initializeDeviceLogin(
@@ -255,6 +388,25 @@ export class MeegleCliClient {
     return validated.data;
   }
 
+  private async runJsonWithByteLength<T extends z.ZodType>(
+    args: string[], schema: T,
+    options: Omit<CommandRunInput, "args" | "executablePath">,
+  ): Promise<z.infer<T> & { rawByteLength: number }> {
+    const result = await this.run(args, options);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(result.stdout);
+    } catch {
+      throw new MeegleCliError("provider_invalid_response");
+    }
+    const validated = schema.safeParse(parsed);
+    if (!validated.success) throw new MeegleCliError("provider_invalid_response");
+    return {
+      ...(validated.data as Record<string, unknown>),
+      rawByteLength: Buffer.byteLength(result.stdout, "utf8"),
+    } as z.infer<T> & { rawByteLength: number };
+  }
+
   private async run(
     args: string[],
     options: Omit<CommandRunInput, "args" | "executablePath">,
@@ -280,9 +432,8 @@ function mapRunnerError(error: unknown) {
     case "provider_output_limit":
       return new MeegleCliError(error.code);
     case "provider_command_failed":
-      return new MeegleCliError(error.exitCode === 1
-        ? "provider_unauthorized"
-        : "provider_unavailable");
+      return new MeegleCliError(error.failureKind === "provider_unauthorized"
+        ? "provider_unauthorized" : "provider_unavailable");
     default:
       return new MeegleCliError("provider_unavailable");
   }
@@ -298,6 +449,18 @@ function validateOpaqueKey(value: string) {
     throw new MeegleCliError("provider_invalid_response");
   }
   return value;
+}
+
+function validatePageNum(pageNum: number) {
+  if (!Number.isInteger(pageNum) || pageNum < 1 || pageNum > 100) {
+    throw new MeegleCliError("provider_invalid_response");
+  }
+  return String(pageNum);
+}
+
+function validateContent(content: string) {
+  if (content.includes("\0")) throw new MeegleCliError("provider_invalid_response");
+  return content;
 }
 
 function isSafeProfile(profile: string) {
